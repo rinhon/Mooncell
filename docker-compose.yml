@@ -1,0 +1,28 @@
+name: mooncell
+
+services:
+  backend:
+    build: ./backend
+    restart: unless-stopped
+    environment:
+      MOONCELL_ENVIRONMENT: production
+      MOONCELL_DATABASE_URL: sqlite+aiosqlite:////app/data/mooncell.db
+      MOONCELL_SECRET_KEY: ${MOONCELL_SECRET_KEY:?请在 .env 中设置 MOONCELL_SECRET_KEY}
+      MOONCELL_ALLOWED_ORIGINS: http://localhost:3000
+      MOONCELL_MEDIA_LIBRARY_ROOT: /library
+      TZ: ${TZ:-Asia/Shanghai}
+    volumes:
+      - ./data:/app/data
+      - ${MOONCELL_DOWNLOADS_PATH:-./data/downloads}:/downloads
+      - ${MOONCELL_LIBRARY_PATH:-./data/library}:/library
+    ports:
+      - "127.0.0.1:8000:8000"
+
+  frontend:
+    build: ./frontend
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "3000:80"

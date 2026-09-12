@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256" fill="none">
+  <title>Mooncell</title>
+  <desc>Minimal hollow isometric cube with a smaller cubic core. Transparent background.</desc>
+  <g stroke="#99183d" stroke-width="12" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M128 24 218 76V180L128 232 38 180V76Z"/>
+    <path d="M128 24V76M38 180 83 154M218 180 173 154"/>
+    <path d="M128 88 163 108V148L128 168 93 148V108Z"/>
+    <path d="m93 108 35 20 35-20M128 128V168"/>
+  </g>
+</svg>

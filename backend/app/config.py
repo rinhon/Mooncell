@@ -1,0 +1,46 @@
+"""应用配置：统一从环境变量和根目录 `.env` 读取运行参数。"""
+
+from functools import lru_cache
+
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class Settings(BaseSettings):
+    """Mooncell 运行时配置；环境变量统一使用 `MOONCELL_` 前缀。"""
+
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_prefix="MOONCELL_",
+        extra="ignore",
+    )
+
+    app_name: str = "Mooncell"
+    environment: str = "development"
+    database_url: str = "sqlite+aiosqlite:///./data/mooncell.db"
+    secret_key: str = "development-only-change-me"
+    session_cookie_name: str = "mooncell_session"
+    session_cookie_secure: bool = False
+    session_days: int = 30
+    allowed_origins: str = "http://localhost:5173,http://localhost:3000"
+    rss_timeout_seconds: float = 20.0
+    rss_user_agent: str = "Mooncell/0.1 (+self-hosted RSS reader)"
+    tmdb_base_url: str = "https://www.themoviedb.org"
+    tmdb_language: str = "zh-CN"
+    tmdb_timeout_seconds: float = 20.0
+    tmdb_user_agent: str = "Mozilla/5.0 (compatible; Mooncell/0.1; +self-hosted)"
+    media_library_root: str = "./data/library"
+    calendar_cache_path: str = "./data/calendar"
+
+    @property
+    def origin_list(self) -> list[str]:
+        """把逗号分隔的 CORS 白名单转换为 FastAPI 可使用的列表。"""
+        return [origin.strip() for origin in self.allowed_origins.split(",") if origin.strip()]
+
+
+@lru_cache
+def get_settings() -> Settings:
+    """缓存配置实例，避免每个请求重复读取环境变量和 `.env`。"""
+    return Settings()
+
+
+settings = get_settings()
