@@ -15,6 +15,10 @@ DASH_EPISODE_RE = re.compile(
     r"\s[-–—]\s*(?P<episode>\d+(?:\.\d+)?)(?:v(?P<revision>\d+))?(?=\s|\[|$)",
     re.IGNORECASE,
 )
+BRACKET_EPISODE_RE = re.compile(
+    r"\[(?P<episode>\d{1,3}(?:\.\d+)?)(?:v(?P<revision>[1-9]\d*))?]",
+    re.IGNORECASE,
+)
 RANGE_RE = re.compile(r"\b(?:E)?(?P<start>\d{1,3})\s*[-~]\s*(?:E)?(?P<end>\d{1,3})\b")
 RESOLUTION_RE = re.compile(r"\b(2160|1440|1080|720|480)[pP]\b")
 BRACKET_RE = re.compile(r"\[[^\]]+]|【[^】]+】")
@@ -80,7 +84,9 @@ def parse_release_title(raw_title: str) -> ParsedRelease:
         revision = int(episode_match.group("revision") or 1)
         evidence.extend(["season", "episode"])
     else:
-        episode_match = DASH_EPISODE_RE.search(raw)
+        episode_match = DASH_EPISODE_RE.search(raw) or BRACKET_EPISODE_RE.search(
+            raw, group_match.end() if group_match else 0
+        )
         if episode_match:
             episode_start = float(episode_match.group("episode"))
             revision = int(episode_match.group("revision") or 1)

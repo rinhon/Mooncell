@@ -65,6 +65,7 @@ export type LogEntry = {
   scope: string; event_type: string; message: string
 }
 export type DownloadTask = {
+  review_required?: boolean
   source_id: number
   automation_state?: string | null
   automation_error?: string | null

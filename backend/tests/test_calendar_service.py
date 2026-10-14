@@ -1,4 +1,5 @@
 import json
+import ssl
 from datetime import datetime
 
 import httpx
@@ -82,6 +83,72 @@ async def test_failed_fetch_not_cached_and_throttled(monkeypatch, tmp_path, reco
     assert [event[0] for event in recorded] == ["calendar.fetch.started", "calendar.fetch.failed"]
     assert "ConnectError" in recorded[1][2]["error"]
     assert not (tmp_path / "202601" / "season.json").exists()
+
+
+async def test_certificate_failure_retries_direct_and_persists(monkeypatch, tmp_path, recorded):
+    monkeypatch.setattr(service.settings, "calendar_cache_path", str(tmp_path))
+    monkeypatch.setattr(service, "_failures", {})
+    original_client = httpx.AsyncClient
+    options = []
+    requests = []
+    html = '''<div class="post-body"><td class="date2">周一</td>
+    <div><div class="div_date"><img src="https://i0.hdslb.com/a.jpg"></div>
+    <table><tr><td>测试番剧</td></tr></table></div></div>'''
+
+    def make_client(**kwargs):
+        options.append(kwargs)
+        direct = kwargs.get("trust_env") is False
+
+        async def respond(request):
+            requests.append((str(request.url), direct))
+            if not direct:
+                try:
+                    raise ssl.SSLCertVerificationError(1, "certificate has expired")
+                except ssl.SSLCertVerificationError as exc:
+                    raise httpx.ConnectError("TLS failed", request=request) from exc
+            if request.url.host == "yuc.wiki":
+                return httpx.Response(200, text=html)
+            return httpx.Response(200, content=b"cover", headers={"content-type": "image/jpeg"})
+
+        return original_client(transport=httpx.MockTransport(respond), **kwargs)
+
+    monkeypatch.setattr(service.httpx, "AsyncClient", make_client)
+    result = await service.ensure_season("202601")
+    assert result["items"][0]["title"] == "测试番剧"
+    assert (tmp_path / "202601" / "season.json").exists()
+    assert (tmp_path / "202601" / "1.img").read_bytes() == b"cover"
+    assert requests == [
+        ("https://yuc.wiki/202601/", False), ("https://yuc.wiki/202601/", True),
+        ("https://i0.hdslb.com/a.jpg", False), ("https://i0.hdslb.com/a.jpg", True),
+    ]
+    assert all(option.get("verify", True) is True for option in options)
+    assert all(option["follow_redirects"] is True for option in options)
+    assert "202601" not in service._failures
+    assert recorded[-1][0] == "calendar.fetch.completed"
+
+
+async def test_direct_certificate_failure_still_returns_503(monkeypatch, tmp_path, recorded):
+    from fastapi import HTTPException
+
+    monkeypatch.setattr(service.settings, "calendar_cache_path", str(tmp_path))
+    monkeypatch.setattr(service, "_failures", {})
+    calls = []
+
+    async def fail(self, url, **kwargs):
+        calls.append(url)
+        try:
+            raise ssl.SSLCertVerificationError(1, "certificate has expired")
+        except ssl.SSLCertVerificationError as exc:
+            raise httpx.ConnectError("TLS failed") from exc
+
+    monkeypatch.setattr(httpx.AsyncClient, "get", fail)
+    with pytest.raises(HTTPException) as error:
+        await service.read_calendar("202601", session=None)
+    assert error.value.status_code == 503
+    assert "证书" in error.value.detail
+    assert len(calls) == 2
+    assert not (tmp_path / "202601" / "season.json").exists()
+    assert recorded[-1][0] == "calendar.fetch.failed"
 
 
 @pytest.mark.parametrize("season", ["202602", "202613", "../202601", "209901"])

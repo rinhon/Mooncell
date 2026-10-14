@@ -1,4 +1,5 @@
 import { SubscriptionSettingsSection } from "@/components/subscription-settings"
+import { TmdbSettingsSection } from "@/components/tmdb-settings"
 import { useEffect } from "react"
 import { useLocation } from "react-router-dom"
 import { useQuery } from "@tanstack/react-query"
@@ -28,10 +29,11 @@ export function SettingsPage() {
     enabled: Boolean(root),
   })
   return <>
-    <PageHeading eyebrow="Configuration" title="设置" description="集中管理下载器连接、保存路径和标题解析。"/>
+    <PageHeading eyebrow="Configuration" title="设置" description="集中管理下载器连接、TMDB、保存路径和标题解析。"/>
     <div className="grid gap-6">
       <DownloaderSettingsSection/>
       <SubscriptionSettingsSection/>
+      <TmdbSettingsSection/>
       <section aria-label="保存路径">
         <Card>
           <CardHeader><div><CardTitle>保存路径</CardTitle><CardDescription>选择媒体库根目录，预览最终目录与文件名。</CardDescription></div><FolderTree size={20} className="text-[var(--muted)]"/></CardHeader>
@@ -41,19 +43,19 @@ export function SettingsPage() {
                 <div className="flex flex-wrap items-center gap-2"><Input className="min-w-0 flex-1 basis-48" value={root} readOnly placeholder={library.isPending ? "正在读取保存路径…" : "请选择文件夹"}/><FolderPicker value={root} onSaved={() => {}}/></div>
                 {library.error && <p role="alert" className="mt-1 text-xs text-[var(--danger)]">{library.error.message}</p>}
               </Field>
-              <p className="mt-3 text-xs leading-6 text-[var(--muted)]">选择后自动保存。目录结构兼容 Plex、Jellyfin 与 Emby。</p>
+              <p className="mt-3 text-[13px] leading-6 text-[var(--muted)]">选择后自动保存。目录结构兼容 Plex、Jellyfin 与 Emby。</p>
             </div>
             <div className="min-w-0">
               <p className="mb-2 text-sm font-medium text-[var(--ink)]">目录预览</p>
-              {preview.data ? <div className="rounded-xl bg-[var(--surface)]/20 p-3 font-mono text-xs leading-6 text-[var(--ink)] ring-1 ring-[var(--border)]">
-                <div className="overflow-x-auto whitespace-nowrap">
+              {preview.data ? <div className="rounded-[2px] bg-[var(--surface)]/20 p-3 font-mono text-xs leading-6 text-[var(--ink)] ring-1 ring-[var(--border)]">
+                <div className="whitespace-normal break-all">
                   <p>{preview.data.library_root}{preview.data.library_root.endsWith(preview.data.separator) ? "" : preview.data.separator}</p>
                   <p>└── <span className="text-[var(--accent)]">{preview.data.folder_name}</span>{preview.data.separator}</p>
-                  <p>　　└── <span className="text-sky-300">{preview.data.season_folder}</span>{preview.data.separator}</p>
+                  <p>　　└── <span className="text-[var(--accent)]">{preview.data.season_folder}</span>{preview.data.separator}</p>
                   <p>　　　　└── <span className="text-[var(--ink)]">{preview.data.filename}</span></p>
                 </div>
                 <p className="mt-2 break-all border-t border-[var(--border)] pt-2 text-[var(--muted)]">{preview.data.full_path}</p>
-              </div> : <div className="rounded-xl border border-dashed border-[var(--border)] p-4 text-sm text-[var(--muted)]"><p>{preview.error ? "预览加载失败" : root ? "正在加载目录示例…" : "选择路径后显示目录结构"}</p>{preview.error && <p className="mt-2 break-words text-xs">{preview.error.message}</p>}</div>}
+              </div> : <div className="rounded-[2px] border border-dashed border-[var(--border)] p-4 text-sm text-[var(--muted)]"><p>{preview.error ? "预览加载失败" : root ? "正在加载目录示例…" : "选择路径后显示目录结构"}</p>{preview.error && <p className="mt-2 break-words text-[13px]">{preview.error.message}</p>}</div>}
             </div>
           </CardContent>
         </Card>

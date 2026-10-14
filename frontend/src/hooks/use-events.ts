@@ -11,10 +11,16 @@ export function useEvents(enabled: boolean) {
     const refresh = () => {
       void queryClient.invalidateQueries({ queryKey: ["dashboard"] })
       void queryClient.invalidateQueries({ queryKey: ["feeds"] })
+      void queryClient.invalidateQueries({ queryKey: ["reviews"] })
+      void queryClient.invalidateQueries({ queryKey: ["downloads"] })
     }
     stream.addEventListener("feed.refresh.completed", refresh)
+    stream.addEventListener("feed.updated", refresh)
     stream.addEventListener("feed.refresh.failed", refresh)
     stream.addEventListener("item.discovered", refresh)
+    stream.addEventListener("review.approved", refresh)
+    stream.addEventListener("review.ignored", refresh)
+    stream.addEventListener("review.reparsed", refresh)
     return () => stream.close()
   }, [enabled, queryClient])
 }

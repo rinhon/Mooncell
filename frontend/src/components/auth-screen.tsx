@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from "react"
 import { useMutation, useQueryClient } from "@tanstack/react-query"
-import { ArrowRight, LoaderCircle, MoonStar } from "lucide-react"
+import { ArrowRight, MoonStar } from "lucide-react"
+import { Button } from "@/components/ui/button"
 import { api, type AuthStatus } from "@/lib/api"
 import { Input } from "@/components/ui/input"
 import { Field } from "@/components/field"
@@ -32,8 +33,8 @@ export function AuthScreen({ initialized }: { initialized: boolean }) {
           <div className="mt-8 grid gap-5">
             <Field label="用户名"><Input value={username} onChange={(e) => setUsername(e.target.value)} autoComplete="username" required /></Field>
             <Field label="密码"><Input type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete={initialized ? "current-password" : "new-password"} minLength={10} required /></Field>
-            {mutation.error && <p className="rounded-xl bg-red-500/10 px-3 py-2 text-sm text-[var(--danger)]">{mutation.error.message}</p>}
-            <button type="submit" className="auth-submit" data-login={initialized && !mutation.isPending ? "true" : undefined} disabled={mutation.isPending} aria-busy={mutation.isPending}><span>{mutation.isPending ? (initialized ? "LOGGING IN…" : "创建中…") : initialized ? "LOGIN" : "创建账户并继续"}</span><span className="auth-submit-icon" aria-hidden="true">{mutation.isPending ? <LoaderCircle size={18} className="motion-safe:animate-spin"/> : <ArrowRight size={18}/>}</span></button>
+            {mutation.error && <p className="rounded-[2px] bg-[var(--danger-soft)] px-3 py-2 text-sm text-[var(--danger)]">{mutation.error.message}</p>}
+            <Button type="submit" size="lg" className="mt-2 w-full" icon={ArrowRight} pending={mutation.isPending} pendingLabel={initialized ? "登录中…" : "创建中…"}>{initialized ? "登录" : "创建账户并继续"}</Button>
           </div>
         </form>
       </section>

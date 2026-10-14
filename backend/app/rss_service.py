@@ -216,7 +216,9 @@ class FeedRefreshService:
 
             created = 0
             duplicates = 0
-            excluded_keywords = [value.casefold() for value in source.excluded_keywords or [] if value]
+            excluded_keywords = [
+                value.casefold() for value in source.excluded_keywords or [] if value
+            ]
             fingerprints = set(await self.session.scalars(
                 select(FeedItem.fingerprint).where(FeedItem.source_id == source.id)
             ))
@@ -295,11 +297,15 @@ class FeedRefreshService:
             raise
 
     async def _enqueue_downloads(self, source: FeedSource) -> None:
-        from .download_queue import enqueue_source
+        from .download_queue import enqueue_source, queue_lock
 
+        # 先释放 RSS 入库事务，避免持有 SQLite 写锁等待下载队列。
+        await self.session.commit()
         try:
-            async with self.session.begin_nested():
-                await enqueue_source(self.session, source)
+            async with queue_lock:
+                async with self.session.begin_nested():
+                    await enqueue_source(self.session, source)
+                await self.session.commit()
         except Exception as exc:
             from .events import _redact
 

@@ -25,6 +25,13 @@ def utcnow() -> datetime:
     return datetime.now(UTC)
 
 
+class TmdbSettings(Base):
+    __tablename__ = "tmdb_settings"
+    id: Mapped[int] = mapped_column(primary_key=True, default=1)
+    encrypted_read_access_token: Mapped[str | None] = mapped_column(Text, nullable=True)
+    encrypted_api_key: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
 class SubscriptionSettings(Base):
     __tablename__ = "subscription_settings"
     id: Mapped[int] = mapped_column(primary_key=True, default=1)

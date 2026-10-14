@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator
+from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator, model_validator
 
 
 class ApiMessage(BaseModel):
@@ -124,12 +124,36 @@ class FeedCreate(BaseModel):
 
 
 class FeedUpdate(BaseModel):
+    excluded_keywords: list[str] | None = Field(default=None, max_length=20)
     season: int | None = Field(default=None, ge=0, le=99)
     name: str | None = Field(default=None, min_length=1, max_length=160)
     url: HttpUrl | None = None
     kind: Literal["mikan", "standard"] | None = None
     active: bool | None = None
     refresh_interval_minutes: int | None = Field(default=None, ge=1, le=1440)
+
+    @model_validator(mode="before")
+    @classmethod
+    def reject_null_fields(cls, values):
+        if isinstance(values, dict):
+            for key in ("name", "url", "kind", "active", "refresh_interval_minutes",
+                        "excluded_keywords"):
+                if key in values and values[key] is None:
+                    raise ValueError(f"{key} 不能为 null")
+        return values
+
+    @field_validator("name")
+    @classmethod
+    def normalize_name(cls, value: str) -> str:
+        name = value.strip()
+        if not name:
+            raise ValueError("订阅名称不能为空")
+        return name
+
+    @field_validator("excluded_keywords")
+    @classmethod
+    def normalize_keywords(cls, values: list[str]) -> list[str]:
+        return FeedCreate.normalize_excluded_keywords(values)
 
 
 class FeedRead(BaseModel):
@@ -276,6 +300,7 @@ class DownloaderTestResult(BaseModel):
 
 
 class DownloadTaskRead(BaseModel):
+    review_required: bool = False
     source_id: int
     automation_state: str | None = None
     automation_error: str | None = None

@@ -1,0 +1,8 @@
+.auth-screen { min-height: 100vh; display: grid; place-items: center; padding: 24px; background: transparent; }
+.auth-panel { display: grid; grid-template-columns: 1fr 1fr; width: 100%; max-width: 980px; overflow: hidden; border: 1px solid rgba(237,240,238,.15); border-radius: 4px; background: var(--surface); box-shadow: 0 20px 65px rgba(0,0,0,.5); }
+.auth-intro { display: flex; flex-direction: column; justify-content: space-between; min-height: 600px; padding: 42px; color: var(--ink); background: #102219; border-right: 1px solid rgba(237,240,238,.1); }
+.auth-brand { display: flex; align-items: center; gap: 12px; font-size: var(--fs-small); letter-spacing: .18em; }
+.auth-intro-copy h1 { margin: 22px 0; font-size: clamp(40px,4.5vw,58px); font-weight: 300; line-height: 1.25; letter-spacing: 0; }
+.auth-intro-copy > p:last-child, .auth-intro-footer { font-size: var(--fs-small); color: var(--muted); }
+.auth-intro-footer { padding-top: 20px; border-top: 1px solid rgba(237,240,238,.12); }
+.auth-form-panel { display: flex; align-items: center; padding: 48px; background: var(--surface); }

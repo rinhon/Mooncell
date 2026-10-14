@@ -36,8 +36,19 @@ def event_log_fields(event_type: str, payload: dict) -> tuple[str, str, str]:
         "organize": "organizer",
         "artwork": "scraper",
         "calendar": "calendar",
+        "review": "review",
     }.get(event_type.split(".", 1)[0], "system")
-    if event_type == "calendar.fetch.started":
+    if event_type.startswith("review."):
+        action = {"review.approved": "已批准", "review.ignored": "已忽略",
+                  "review.reparsed": "已重新解析"}.get(event_type, "审核已更新")
+        message = f"{action}：{payload.get('title', '')}"
+    elif event_type == "download.retry.requested":
+        message = f"已请求重新下载，等待投递至 qBittorrent：{payload.get('info_hash', '')}"
+    elif event_type == "download.superseded":
+        message = f"已被更高修订版取代，不再投递：{payload.get('title', '')}"
+    elif event_type == "download.upgraded":
+        message = f"修订版替换完成，已清理旧任务和旧文件：{payload.get('title', '')}"
+    elif event_type == "calendar.fetch.started":
         message = f"开始获取季度新番：{payload.get('season', '')}"
     elif event_type == "calendar.fetch.completed":
         message = f"季度新番已保存：{payload.get('season', '')} · {payload.get('count', 0)} 条"
@@ -51,6 +62,8 @@ def event_log_fields(event_type: str, payload: dict) -> tuple[str, str, str]:
             f"季度新番封面缓存不完整：{payload.get('season', '')} · "
             f"{payload.get('count', 0)} 张失败 · {payload.get('error') or '未知错误'}"
         )
+    elif event_type == "feed.updated":
+        message = f"RSS 订阅已修改：{payload.get('name', '未知订阅')}"
     elif event_type == "feed.refresh.started":
         message = f"开始刷新 RSS：{payload.get('name', '未知订阅')}"
     elif event_type == "feed.refresh.completed":

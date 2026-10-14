@@ -23,6 +23,23 @@ def test_revision_does_not_change_episode_identity() -> None:
     assert release.revision == 2
 
 
+@pytest.mark.parametrize("marker,episode,revision", [
+    ("01", 1, 1), ("01v2", 1, 2), ("06V3", 6, 3), ("12.5v2", 12.5, 2),
+])
+def test_bracket_episode_and_revision(marker, episode, revision):
+    release = parse_release_title(f"[Group] 中文 / Example [{marker}][1080P][简体内嵌]")
+    assert release.title == "中文 / Example"
+    assert release.episode_start == episode
+    assert release.revision == revision
+    assert release.confidence >= 0.9
+    assert not release.warnings
+
+
+def test_numeric_group_and_encoding_tags_are_not_episodes():
+    release = parse_release_title("[123] Example [1080P][10bit][2026]")
+    assert release.episode_start is None
+
+
 def test_special_uses_season_zero() -> None:
     release = parse_release_title("[Group] Example Show OVA - 01 [1080p]")
     assert release.media_type == "ova"

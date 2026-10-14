@@ -64,19 +64,7 @@ function Resolve-Executable {
     return $null
 }
 
-function Stop-ProcessTree {
-    param(
-        [Parameter(Mandatory)]
-        [System.Diagnostics.Process]$Process
-    )
-
-    if ($Process.HasExited) {
-        return
-    }
-
-    # Both uvicorn --reload and pnpm create child processes.
-    & "$env:SystemRoot\System32\taskkill.exe" /PID $Process.Id /T /F 2>$null | Out-Null
-}
+. (Join-Path $PSScriptRoot "dev-process.ps1")
 
 if (-not (Test-Path -LiteralPath $PythonPath -PathType Leaf)) {
     throw @"
@@ -113,44 +101,49 @@ if ($SelectedFrontendPort -ne $FrontendPort) {
 # while FastAPI uses the second value for its development CORS allowlist.
 $env:MOONCELL_DEV_BACKEND_URL = "http://127.0.0.1:$BackendPort"
 $env:MOONCELL_ALLOWED_ORIGINS = "http://localhost:$FrontendPort,http://127.0.0.1:$FrontendPort"
+$env:PYTHONUNBUFFERED = "1"
+$env:PYTHONIOENCODING = "utf-8"
 
-$Processes = @()
+$LogDirectory = Join-Path $ProjectRoot (".cache\dev\" + [guid]::NewGuid().ToString("N"))
+$null = New-Item -ItemType Directory -Path $LogDirectory -Force
+$Services = @()
 
 try {
     Write-Host "Starting Mooncell development services..." -ForegroundColor Cyan
 
-    $BackendProcess = Start-Process `
+    $BackendService = Start-DevService -Name "backend" `
         -FilePath $PythonPath `
-        -ArgumentList @(
-            "-m", "uvicorn", "app.main:app", "--reload",
+        -Arguments @(
+            (Join-Path $PSScriptRoot "dev_backend.py"),
+            "--reload-dir", "app", "--reload-delay", "1",
             "--host", $ListenAddress, "--port", $BackendPort
         ) `
         -WorkingDirectory $BackendDirectory `
-        -NoNewWindow `
-        -PassThru
-    $Processes += $BackendProcess
+        -LogDirectory $LogDirectory
+    $Services += $BackendService
 
-    $FrontendProcess = Start-Process `
+    $FrontendService = Start-DevService -Name "frontend" `
         -FilePath $PnpmPath `
-        -ArgumentList @(
+        -Arguments @(
             "dev", "--host", $ListenAddress, "--port", $FrontendPort, "--strictPort"
         ) `
         -WorkingDirectory $FrontendDirectory `
-        -NoNewWindow `
-        -PassThru
-    $Processes += $FrontendProcess
+        -LogDirectory $LogDirectory
+    $Services += $FrontendService
 
     Write-Host ""
     Write-Host "Mooncell is running:" -ForegroundColor Green
     Write-Host "  WebUI:  http://localhost:$FrontendPort"
     Write-Host "  API:    http://localhost:$BackendPort/docs"
+    Write-Host "  Logs:   $LogDirectory"
     Write-Host "  Press Ctrl+C to stop both services."
     Write-Host ""
 
     while ($true) {
-        foreach ($Process in $Processes) {
-            if ($Process.HasExited) {
-                throw "Service process $($Process.Id) exited with code $($Process.ExitCode)."
+        foreach ($Service in $Services) {
+            Write-DevOutput -Service $Service
+            if ($Service.Process.HasExited) {
+                throw "$($Service.Name) process $($Service.Process.Id) exited with code $($Service.Process.ExitCode). See logs: $LogDirectory"
             }
         }
 
@@ -158,10 +151,11 @@ try {
     }
 }
 finally {
-    if ($Processes.Count -gt 0) {
+    if ($Services.Count -gt 0) {
         Write-Host "`nStopping Mooncell development services..." -ForegroundColor Yellow
-        foreach ($Process in $Processes) {
-            Stop-ProcessTree -Process $Process
+        foreach ($Service in $Services) {
+            Stop-ProcessTree -Process $Service.Process
+            Write-DevOutput -Service $Service
         }
         Write-Host "Both services have stopped." -ForegroundColor Green
     }

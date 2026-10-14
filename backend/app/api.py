@@ -11,6 +11,7 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy import delete, func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .artwork_service import (
@@ -22,12 +23,14 @@ from .artwork_service import (
 from .config import settings
 from .database import get_session
 from .dependencies import optional_user, require_user
+from .download_queue import queue_lock, remote_root
 from .downloader_service import extract_info_hash, get_qbittorrent_snapshot, test_downloader
 from .events import EventMessage, broker, event_log_fields
 from .library import get_library_root
 from .models import (
     DomainEvent,
     DownloaderConfig,
+    DownloadJob,
     FeedItem,
     FeedSource,
     ShowArtwork,
@@ -298,7 +301,7 @@ async def inspect_feed_endpoint(
 async def tmdb_search_endpoint(
     data: TmdbSearchRequest, _user: User = Depends(require_user)
 ) -> list[TmdbCandidate]:
-    """返回 TMDB 搜索页中的电视和电影候选列表。"""
+    """通过 TMDB API 返回电视和电影候选列表。"""
     try:
         return await search_tmdb(data.query.strip())
     except Exception as exc:
@@ -309,7 +312,7 @@ async def tmdb_search_endpoint(
 async def tmdb_detail_endpoint(
     media_type: str, tmdb_id: int, _user: User = Depends(require_user)
 ) -> TmdbMetadata:
-    """按搜索结果 href 中的媒体类型与数字 ID 刮削详情。"""
+    """按媒体类型与数字 ID 从 TMDB API 获取详情。"""
     if media_type not in {"tv", "movie"}:
         raise HTTPException(status_code=422, detail="TMDB 类型必须是 tv 或 movie")
     try:
@@ -328,10 +331,32 @@ async def update_feed(
     source = await session.get(FeedSource, source_id)
     if source is None:
         raise HTTPException(status_code=404, detail="RSS 源不存在")
-    for key, value in data.model_dump(exclude_unset=True).items():
+    values = data.model_dump(exclude_unset=True)
+    new_url = str(values["url"]) if "url" in values else source.url
+    if new_url != source.url:
+        duplicate = await session.scalar(select(FeedSource.id).where(
+            FeedSource.url == new_url, FeedSource.id != source_id,
+        ))
+        if duplicate is not None:
+            raise HTTPException(status_code=409, detail="该 RSS 源已经存在")
+    if (new_url != source.url or ("excluded_keywords" in values
+            and values["excluded_keywords"] != source.excluded_keywords)):
+        # 新地址/筛选条件必须重新拉取完整 RSS，不能复用旧的 304 缓存。
+        source.etag = None
+        source.last_modified = None
+        source.last_checked_at = None
+        source.connection_status = "unknown"
+        source.last_error = None
+    for key, value in values.items():
         setattr(source, key, str(value) if key == "url" else value)
-    await session.commit()
+    try:
+        await session.commit()
+    except IntegrityError as exc:
+        await session.rollback()
+        raise HTTPException(status_code=409, detail="该 RSS 源已经存在") from exc
     await session.refresh(source)
+    await _record_and_publish_event(session, "feed.updated", "feed_source", str(source.id),
+                                    {"name": source.name})
     return source
 
 
@@ -713,6 +738,81 @@ def _download_status(state: str | None, progress: float) -> str:
     return "downloading"
 
 
+@router.post("/downloads/{item_id}/retry", response_model=ApiMessage, status_code=202)
+async def retry_download(
+    item_id: int,
+    _user: User = Depends(require_user),
+    session: AsyncSession = Depends(get_session),
+) -> ApiMessage:
+    """用户确认重新投递缺失的种子；与队列串行，避免重复创建或覆盖进度。"""
+    async with queue_lock:
+        item = await session.get(FeedItem, item_id)
+        if item is None:
+            raise HTTPException(404, "下载记录不存在")
+        source = await session.get(FeedSource, item.source_id)
+        if not source or not source.active:
+            raise HTTPException(409, "请先启用对应的 RSS 订阅")
+        info_hash = item.info_hash or extract_info_hash(item.download_url)
+        if not item.download_url or not info_hash:
+            raise HTTPException(422, "下载地址缺少有效的 info-hash，无法重新投递")
+        if item.parse_status != "parsed":
+            raise HTTPException(409, "请先审核发布信息，再重新下载")
+        try:
+            parsed = ParsedRelease.model_validate_json(item.parse_data)
+        except ValueError as exc:
+            raise HTTPException(422, "发布解析信息无效，请重新解析后再下载") from exc
+        season = parsed.season if "manual_review" in parsed.evidence else (
+            source.season if source.season is not None else parsed.season
+        )
+        if season is None or parsed.episode_start is None:
+            raise HTTPException(422, "缺少季度或集数，无法自动下载")
+        job = await session.scalar(select(DownloadJob).where(DownloadJob.info_hash == info_hash))
+        if job and job.plan:
+            replacement = json.loads(job.plan).get("replacement", {})
+            if replacement and replacement.get("phase") not in {"done", "rolled_back"}:
+                raise HTTPException(409, "修订版替换尚未结束，请先恢复原下载任务")
+        if job and job.item_id != item.id:
+            raise HTTPException(409, "同一种子已有其他下载记录，请在原记录上重试")
+        config = (await session.get(DownloaderConfig, job.downloader_id) if job else
+                  await session.scalar(select(DownloaderConfig).where(
+                      DownloaderConfig.active.is_(True), DownloaderConfig.kind == "qbittorrent",
+                      DownloaderConfig.organize_strategy == "downloader_managed",
+                  ).order_by(DownloaderConfig.id)))
+        if not config or not config.active or config.kind != "qbittorrent":
+            raise HTTPException(409, "请先配置并启用 qBittorrent 下载器")
+        if config.organize_strategy != "downloader_managed":
+            raise HTTPException(409, "请将下载器整理策略设为下载器管理")
+        try:
+            snapshot = await get_qbittorrent_snapshot(
+                config.base_url, config.username, decrypt_secret(config.encrypted_secret),
+                config.verify_tls, [info_hash],
+            )
+        except Exception as exc:
+            raise HTTPException(503, "无法连接 qBittorrent，请检查下载器连接后重试") from exc
+        if info_hash in snapshot.torrents:
+            raise HTTPException(409, "该任务已在 qBittorrent 中，无需重新添加")
+        if job is None:
+            try:
+                root = remote_root(await get_library_root(session, config.library_root), config)
+            except ValueError as exc:
+                raise HTTPException(422, str(exc)) from exc
+            job = DownloadJob(
+                item_id=item.id, info_hash=info_hash, downloader_id=config.id,
+                target_root=root, title=safe_folder_name(
+                    parsed.title if "manual_review" in parsed.evidence else source.name
+                ), season=season,
+            )
+            session.add(job)
+        job.state = "queued"
+        job.plan = None
+        job.last_error = None
+        await _record_and_publish_event(
+            session, "download.retry.requested", "feed_item", str(item.id),
+            {"info_hash": info_hash},
+        )
+    return ApiMessage(message="已重新加入下载队列，将在下一轮投递至 qBittorrent")
+
+
 @router.get("/downloads", response_model=DownloadCenterRead)
 async def download_center(
     _user: User = Depends(require_user),
@@ -754,8 +854,6 @@ async def download_center(
             error = f"{exc.__class__.__name__}: {str(exc).strip()}".rstrip(": ")
 
     tasks: list[DownloadTaskRead] = []
-    from .models import DownloadJob
-
     jobs = {job.item_id: job for job in await session.scalars(select(DownloadJob))}
     for item, source_name, info_hash in records:
         job = jobs.get(item.id)
@@ -768,8 +866,13 @@ async def download_center(
         downloaded = max(0, min(size, size - remaining))
         tasks.append(
             DownloadTaskRead(
+                review_required=item.parse_status != "ignored" and (
+                    item.parse_status == "needs_review" or bool(job and job.state == "needs_review")
+                ),
                 source_id=item.source_id,
-                automation_state=job.state if job else None,
+                automation_state=job.state if job else (
+                    "superseded" if item.parse_status == "superseded" else None
+                ),
                 automation_error=job.last_error if job else None,
                 id=item.id,
                 title=item.title,
@@ -842,7 +945,11 @@ async def dashboard(
     discovered_items = int(await session.scalar(select(func.count(FeedItem.id))) or 0)
     needs_review = int(
         await session.scalar(
-            select(func.count(FeedItem.id)).where(FeedItem.parse_status == "needs_review")
+            select(func.count(FeedItem.id)).outerjoin(
+                DownloadJob, DownloadJob.item_id == FeedItem.id,
+            ).where(FeedItem.parse_status != "ignored", (
+                (FeedItem.parse_status == "needs_review") | (DownloadJob.state == "needs_review")
+            ))
         )
         or 0
     )

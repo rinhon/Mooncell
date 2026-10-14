@@ -33,7 +33,7 @@ function FolderNode({ directory, selected, onSelect }: {
       </NativeButton>
       <NativeButton type="button" aria-pressed={active} onClick={() => onSelect(directory.path)} title={directory.path} className="flex min-w-0 flex-1 items-center gap-2 py-2 pr-3 text-left text-sm focus-visible:outline-2">
         {expanded ? <FolderOpen size={16} className="shrink-0"/> : <Folder size={16} className="shrink-0"/>}
-        <span className="truncate">{directory.name}</span>{active && <Check size={14} className="ml-auto shrink-0"/>}
+        <span className="min-w-0 break-all">{directory.name}</span>{active && <Check size={14} className="ml-auto shrink-0"/>}
       </NativeButton>
     </div>
     {expanded && <ul className="ml-4 border-l border-[var(--border)] pl-3">
@@ -59,11 +59,11 @@ export function FolderPicker({ value, onSaved }: { value: string; onSaved: (path
     },
   })
   return <>
-    <ActionButton icon={FolderOpen} className="folder-action" pendingLabel="读取中…" aria-haspopup="dialog" aria-expanded={open} onClick={() => { setSelected(value); save.reset(); setOpen(true) }}>选择文件夹</ActionButton>
+    <ActionButton icon={FolderOpen} emphasis="secondary" pendingLabel="读取中…" aria-haspopup="dialog" aria-expanded={open} onClick={() => { setSelected(value); save.reset(); setOpen(true) }}>选择文件夹</ActionButton>
     <Dialog open={open} onOpenChange={next => { if (!save.isPending) setOpen(next) }}>
       <DialogContent className="max-w-xl">
         <DialogHeader><DialogTitle>选择媒体库文件夹</DialogTitle><DialogDescription>浏览服务器上的文件夹，选择后保存为媒体库根目录。</DialogDescription></DialogHeader>
-        <fieldset disabled={save.isPending} className="h-80 min-w-0 overflow-auto rounded-sm border border-[var(--border)] bg-[var(--surface)]/30 p-3" aria-label="服务器文件夹">
+        <fieldset disabled={save.isPending} className="h-80 min-w-0 overflow-y-auto overflow-x-hidden rounded-sm border border-[var(--border)] bg-[var(--surface)]/30 p-3" aria-label="服务器文件夹">
           {roots.isPending && <p className="p-2 text-sm text-[var(--muted)]">正在读取磁盘…</p>}
           {roots.error && <p role="alert" className="p-2 text-sm text-[var(--danger)]">{roots.error.message}<NativeButton type="button" className="ml-2 underline" onClick={() => roots.refetch()}>重试</NativeButton></p>}
           <ul>{roots.data?.children.map(directory => <FolderNode key={directory.path} directory={directory} selected={selected} onSelect={path => { setSelected(path); save.reset() }}/>)}</ul>

@@ -128,15 +128,15 @@ export function LogsPage() {
         <div ref={logViewport} onScroll={(event) => {
           const viewport = event.currentTarget
           followLatest.current = viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight <= 24
-        }} className="max-h-[65vh] overflow-y-auto rounded-2xl bg-[var(--surface)]/20 ring-1 ring-[var(--border)] font-mono text-xs">
+        }} className="max-h-[65vh] overflow-y-auto rounded-[2px] bg-[var(--surface)]/20 ring-1 ring-[var(--border)] font-mono text-xs">
           {logs.map((item) => <div key={item.id} className="grid gap-2 border-b border-[var(--border)] px-4 py-3 sm:grid-cols-[76px_72px_110px_1fr]">
             <span className="text-[var(--muted)]">{new Date(item.occurred_at).toLocaleTimeString("zh-CN", { hour12: false })}</span>
             <Badge className="log-level-badge h-6 w-[72px] shrink-0 self-start justify-center whitespace-nowrap px-0 py-0" tone={item.level === "error" ? "danger" : item.level === "warning" ? "warning" : "neutral"}>{item.level}</Badge>
-            <span className="text-sky-300">{item.scope}</span>
+            <span className="text-[var(--ink-2)]">{item.scope}</span>
             <span className="leading-5 text-[var(--ink)]"><span className="mr-2 text-[var(--muted)]">{item.event_type}</span>{item.message}</span>
           </div>)}
-          {history.isLoading && <div className="grid min-h-48 place-items-center text-[var(--muted)]">正在读取日志…</div>}
-          {!history.isLoading && !logs.length && <div className="grid min-h-48 place-items-center gap-2 text-[var(--muted)]"><TerminalSquare/><span>{level !== "all" || query.trim() ? "没有匹配的日志，请调整类型或搜索关键词。" : "暂无真实事件，刷新一次 RSS 后会实时显示。"}</span></div>}
+          {history.isLoading && <div className="grid min-h-48 place-items-center text-[13px] text-[var(--muted)]">正在读取日志…</div>}
+          {!history.isLoading && !logs.length && <div className="grid min-h-48 place-items-center gap-2 text-[13px] text-[var(--muted)]"><TerminalSquare/><span>{level !== "all" || query.trim() ? "没有匹配的日志，请调整类型或搜索关键词。" : "暂无真实事件，刷新一次 RSS 后会实时显示。"}</span></div>}
         </div>
       </CardContent>
     </Card>

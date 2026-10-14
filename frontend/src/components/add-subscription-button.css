@@ -1,0 +1,16 @@
+.add-subscription-button { gap: 0; height: 2.5rem; min-width: 8.5rem; padding: 0; text-decoration: none; transition: color 180ms ease, border-color 180ms ease, transform 120ms ease; }
+.add-subscription-button::before { content: ""; position: absolute; inset: 0; z-index: -1; pointer-events: none; background: var(--accent); transform: scaleX(0); transform-origin: left; transition: transform 240ms cubic-bezier(.2,.7,.3,1); }
+.add-subscription-icon { display: inline-grid; place-items: center; flex-shrink: 0; align-self: stretch; width: 2.4rem; border-right: 1px solid currentColor; }
+.add-subscription-label { display: inline-flex; flex: 1; align-items: center; justify-content: center; padding-inline: .875rem; }
+.add-subscription-button:focus-visible { color: var(--on-accent); }
+.add-subscription-button:focus-visible::before { transform: scaleX(1); }
+.add-subscription-button:not(:disabled):active { transform: scale(.98); }
+@media (hover: hover) and (pointer: fine) {
+  .add-subscription-button:not(:disabled):hover { color: var(--on-accent); }
+  .add-subscription-button:not(:disabled):hover::before { transform: scaleX(1); }
+  .add-subscription-button:not(:disabled):hover .add-subscription-icon > svg { transform: rotate(90deg); transition: transform 350ms ease; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .add-subscription-button, .add-subscription-button::before, .add-subscription-icon > svg { transition: none; }
+  .add-subscription-button:not(:disabled):active, .add-subscription-button:not(:disabled):hover .add-subscription-icon > svg { transform: none; }
+}

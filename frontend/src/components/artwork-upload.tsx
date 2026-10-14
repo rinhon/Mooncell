@@ -34,7 +34,7 @@ function UploadField({ show, kind }: { show: Show; kind: Kind }) {
   const existing = show[`${kind}_ready`] ? `/api/v1/shows/${show.id}/artwork/${kind}?v=${encodeURIComponent(show.artwork_version ?? "")}` : null
   return <section className="grid gap-3 border border-[var(--border)] bg-[var(--paper)] p-4">
     <h3 className="text-sm font-medium">{labels[kind]}</h3>
-    <div className="grid h-32 place-items-center overflow-hidden bg-black/5">{preview || existing ? <img src={preview ?? existing!} alt={`${labels[kind]}预览`} className="max-h-32 max-w-full object-contain"/> : <span className="text-xs text-[var(--muted)]">暂无图片</span>}</div>
+    <div className="grid h-32 place-items-center overflow-hidden bg-white/[.04]">{preview || existing ? <img src={preview ?? existing!} alt={`${labels[kind]}预览`} className="max-h-32 max-w-full object-contain"/> : <span className="text-xs text-[var(--muted)]">暂无图片</span>}</div>
     <input type="file" aria-label={`选择${labels[kind]}`} accept="image/jpeg,image/png,image/webp" disabled={upload.isPending} className="w-full min-w-0 text-xs" onChange={event => {
       const image = event.target.files?.[0]
       if (!image) return

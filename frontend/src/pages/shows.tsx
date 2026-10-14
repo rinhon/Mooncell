@@ -10,6 +10,8 @@ import { Link, useSearchParams } from "react-router-dom"
 import { api, type Show } from "@/lib/api"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { Skeleton } from "@/components/ui/skeleton"
+import { ShowCover } from "@/components/show-cover"
 import { Card, CardContent } from "@/components/ui/card"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
@@ -55,12 +57,12 @@ function useArtworkReady(shows: Show[] | undefined) {
 function ShowsSkeleton() {
   return <div role="status" aria-label="正在加载番剧订阅" aria-busy="true">
     <span className="sr-only">正在加载番剧数据和图片…</span>
-    <div aria-hidden="true" className="motion-safe:animate-pulse">
-      <div className="mb-4 flex min-h-[94px] items-end justify-between gap-6"><div className="grid gap-3"><div className="h-3 w-24 bg-black/10"/><div className="h-14 w-64 bg-black/10"/><div className="h-4 w-72 max-w-full bg-black/5"/></div><div className="hidden h-10 w-[136px] shrink-0 bg-black/10 sm:block"/></div>
-      <div className="mb-5 h-[66px] border border-[var(--border)] bg-black/5"/>
+    <div aria-hidden="true">
+      <div className="mb-4 flex min-h-[94px] items-end justify-between gap-6"><div className="grid gap-3"><Skeleton className="h-3 w-24"/><Skeleton className="h-14 w-64"/><Skeleton className="h-4 w-72 max-w-full"/></div><Skeleton className="hidden h-10 w-[136px] shrink-0 sm:block"/></div>
+      <Skeleton className="mb-5 h-[66px] border border-[var(--border)]"/>
       <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3">{Array.from({ length: 6 }, (_, index) => <div key={index} className="overflow-hidden rounded-[2px] border border-[var(--border)]">
-        <div className="relative h-52 bg-black/10"><div className="absolute bottom-4 left-4 h-32 w-22 bg-[var(--surface)]/30"/><div className="absolute bottom-5 left-30 right-4 h-6 bg-[var(--surface)]/30"/></div>
-        <div className="grid gap-4 p-5"><div className="h-5 w-28 bg-black/10"/><div className="grid gap-2"><div className="h-3 w-full bg-black/5"/><div className="h-3 w-3/4 bg-black/5"/></div><div className="h-16 bg-black/5"/><div className="h-10 bg-black/10"/></div>
+        <Skeleton className="h-52"/>
+        <div className="grid gap-4 p-5"><Skeleton className="h-5 w-28"/><div className="grid gap-2"><Skeleton className="h-3 w-full"/><Skeleton className="h-3 w-3/4"/></div><Skeleton className="h-16"/><Skeleton className="h-10"/></div>
       </div>)}</div>
     </div>
   </div>
@@ -80,7 +82,7 @@ function DiscoveredItemsButton({ show, onClick }: { show: Show; onClick: () => v
 
 /** 将 RSS 订阅、TMDB 元数据和本地三图组合成真实番剧媒体库。 */
 export function ShowsPage() {
-  const [params] = useSearchParams()
+  const [params, setParams] = useSearchParams()
   const [query, setQuery] = useState(() => params.get("q") ?? "")
   const [view, setView] = useState<"cards" | "table">("cards")
   const [uploadId, setUploadId] = useState<number | null>(null)
@@ -113,10 +115,11 @@ export function ShowsPage() {
   })
   const shows = useMemo(() => {
     const normalized = query.trim().toLowerCase()
+    const selectedId = params.get("id")
     return (showsQuery.data ?? []).filter((show) =>
-      `${show.name}${show.metadata_title ?? ""}`.toLowerCase().includes(normalized),
+      (!selectedId || String(show.id) === selectedId) && `${show.name}${show.metadata_title ?? ""}`.toLowerCase().includes(normalized),
     )
-  }, [query, showsQuery.data])
+  }, [query, showsQuery.data, params])
 
   if (showsQuery.isPending || (!showsQuery.isError && !artworkReady && uploadId === null)) return <ShowsSkeleton/>
 
@@ -129,15 +132,16 @@ export function ShowsPage() {
           <DialogDescription>RSS 中已发现的原始标题，共 {itemsShow?.discovered_items ?? 0} 条。</DialogDescription>
         </DialogHeader>
         {itemTitlesQuery.isPending && <div role="status" className="flex min-h-32 items-center justify-center gap-2 text-sm text-[var(--muted)]"><LoaderCircle size={16} className="animate-spin"/>正在读取标题…</div>}
-        {itemTitlesQuery.isError && <div role="alert" className="rounded-xl bg-red-500/10 p-4 text-sm text-[var(--danger)]">读取失败：{itemTitlesQuery.error.message}<button type="button" className="ml-2 underline" onClick={() => void itemTitlesQuery.refetch()}>重试</button></div>}
+        {itemTitlesQuery.isError && <div role="alert" className="rounded-[2px] bg-[var(--danger-soft)] p-4 text-sm text-[var(--danger)]">读取失败：{itemTitlesQuery.error.message}<button type="button" className="ml-2 underline" onClick={() => void itemTitlesQuery.refetch()}>重试</button></div>}
         {itemTitlesQuery.isSuccess && itemTitlesQuery.data.length === 0 && <p className="py-10 text-center text-sm text-[var(--muted)]">暂无 RSS 标题。</p>}
-        {itemTitlesQuery.isSuccess && itemTitlesQuery.data.length > 0 && <ul className="max-h-[60vh] divide-y divide-zinc-200 overflow-y-auto border-y border-[var(--border)]">{itemTitlesQuery.data.map((title, index) => <li key={`${index}-${title}`} className="break-words py-3 text-sm leading-6 text-[var(--ink)]">{title}</li>)}</ul>}
+        {itemTitlesQuery.isSuccess && itemTitlesQuery.data.length > 0 && <ul className="max-h-[60vh] divide-y divide-[var(--border-soft)] overflow-y-auto border-y border-[var(--border)]">{itemTitlesQuery.data.map((title, index) => <li key={`${index}-${title}`} className="break-words py-3 text-sm leading-6 text-[var(--ink)]">{title}</li>)}</ul>}
       </DialogContent>
     </Dialog>
     <PageHeading eyebrow="Subscriptions" title="番剧订阅" description="订阅数据来自数据库；海报、背景图和透明 Logo 保存在对应番剧目录。" action={<AddSubscriptionButton to="/feeds"/>}/>
     <div className="mb-5 flex items-center gap-3 rounded-[2px] border border-[var(--border)] bg-[var(--paper)] p-3">
-      <div className="relative flex-1"><Search className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--muted)]" size={16}/><Input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索订阅名称或 TMDB 名称" className="pl-9"/></div>
-      <div className="flex shrink-0 rounded-[2px] border border-[var(--border-soft)] bg-black/[.03] p-1"><NativeButton onClick={() => setView("cards")} className={`grid size-8 place-items-center rounded-[2px] transition-colors ${view === "cards" ? "bg-black/[.08] text-[var(--ink)]" : "text-[var(--muted)] "}`} aria-label="卡片视图"><Grid2X2 size={15}/></NativeButton><NativeButton onClick={() => setView("table")} className={`grid size-8 place-items-center rounded-[2px] transition-colors ${view === "table" ? "bg-black/[.08] text-[var(--ink)]" : "text-[var(--muted)] "}`} aria-label="列表视图"><List size={15}/></NativeButton></div>
+      {params.has("id") && <Button variant="secondary" size="sm" onClick={() => { setQuery(""); setParams(new URLSearchParams()) }}>全部番剧</Button>}
+      <div className="relative flex-1"><Search className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--muted)]" size={16}/><Input value={query} onChange={(event) => { setQuery(event.target.value); if (params.has("id")) { const next = new URLSearchParams(params); next.delete("id"); setParams(next) } }} placeholder="搜索订阅名称或 TMDB 名称" className="pl-9"/></div>
+      <div className="flex shrink-0 rounded-[2px] border border-[var(--border-soft)] bg-[var(--surface)] p-1"><NativeButton onClick={() => setView("cards")} className={`grid size-8 place-items-center rounded-[2px] transition-colors ${view === "cards" ? "bg-[var(--surface-raised)] text-[var(--ink)]" : "text-[var(--muted)] "}`} aria-label="卡片视图"><Grid2X2 size={15}/></NativeButton><NativeButton onClick={() => setView("table")} className={`grid size-8 place-items-center rounded-[2px] transition-colors ${view === "table" ? "bg-[var(--surface-raised)] text-[var(--ink)]" : "text-[var(--muted)] "}`} aria-label="列表视图"><List size={15}/></NativeButton></div>
     </div>
 
     {showsQuery.isError && <Card><CardContent className="p-8 text-center text-sm text-[var(--danger)]">读取番剧失败：{showsQuery.error.message}</CardContent></Card>}
@@ -146,10 +150,10 @@ export function ShowsPage() {
     {view === "cards" && <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3">{shows.map((show) => <Card key={show.id} className="group min-w-0 overflow-hidden transition duration-200  hover:shadow-lg">
       <div className="relative h-52 overflow-hidden bg-[#222825]">
         {show.fanart_ready && <img src={artworkUrl(show, "fanart")} alt="" className="absolute inset-0 size-full object-cover transition duration-500 group-hover:scale-105"/>}
-        <div className="absolute inset-0 bg-black/25"/>
+        <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/25 to-transparent"/>
         <div className="absolute inset-x-4 bottom-4 flex items-end gap-4">
-          <div className="h-32 w-22 shrink-0 overflow-hidden rounded-xl bg-[var(--surface-raised)] shadow-xl ring-1 ring-white/30">
-            {(show.poster_ready || show.poster_url) ? <img src={show.poster_ready ? artworkUrl(show, "poster") : show.poster_url} alt={`${show.name} 海报`} className="size-full object-cover"/> : <div className="grid size-full place-items-center"><ImageOff className="text-[var(--muted)]"/></div>}
+          <div className="h-32 w-22 shrink-0 overflow-hidden rounded-[2px] bg-[var(--surface-raised)] shadow-xl ring-1 ring-white/30">
+            {(show.poster_ready || show.poster_url) ? <img src={show.poster_ready ? artworkUrl(show, "poster") : show.poster_url} alt={`${show.name} 海报`} className="size-full object-cover"/> : <ShowCover title={show.name}/>}
           </div>
           <div className="min-w-0 flex-1 pb-1 text-white">
             {show.clearlogo_ready && <img src={artworkUrl(show, "clearlogo")} alt="" className="mb-3 max-h-12 max-w-48 object-contain object-left drop-shadow"/>}
@@ -161,11 +165,11 @@ export function ShowsPage() {
       <CardContent className="p-5">
         <div className="flex items-center gap-2">{show.tmdb_id && <TmdbLink show={show}/>}{show.rating != null && <span className="flex items-center gap-1 text-xs text-[var(--muted)]"><Star size={13} className="fill-amber-400 text-amber-400"/>{show.rating.toFixed(1)}</span>}<DropdownMenu><DropdownMenuTrigger asChild><Button size="icon" variant="ghost" className="ml-auto size-8" aria-label="更多操作"><MoreHorizontal size={17}/></Button></DropdownMenuTrigger><DropdownMenuContent align="end"><DropdownMenuItem onSelect={() => setUploadId(show.id)}><Upload size={15}/>上传图片</DropdownMenuItem><DropdownMenuItem disabled={rescrape.isPending && rescrape.variables === show.id} onSelect={() => rescrape.mutate(show.id)}>{rescrape.isPending && rescrape.variables === show.id ? <LoaderCircle size={15} className="animate-spin"/> : <RefreshCw size={15}/>}重新刮削</DropdownMenuItem></DropdownMenuContent></DropdownMenu></div>
         <p className="mt-4 line-clamp-2 min-h-10 text-sm leading-5 text-[var(--muted)]">{show.overview || "暂无剧情简介"}</p>
-        <div className="mt-4 grid grid-cols-2 gap-3 rounded-xl bg-[var(--surface)]/20 p-3 text-xs ring-1 ring-[var(--border)]"><div><p className="text-[var(--muted)]">已发现发布</p><div className="mt-1"><DiscoveredItemsButton show={show} onClick={() => setItemsShow(show)}/></div></div><div><p className="text-[var(--muted)]">TMDB 集数</p><p className="mt-1 font-semibold">{show.episode_count ?? "未知"}</p></div></div>
-        <ActionButton icon={FolderOpen} className="folder-action mt-4 w-full" pending={openFolder.isPending && openFolder.variables === show.id} pendingLabel="打开中…" onClick={() => openFolder.mutate(show.id)}>打开文件夹</ActionButton>
+        <div className="mt-4 grid grid-cols-2 gap-3 rounded-[2px] bg-[var(--surface)]/20 p-3 text-xs ring-1 ring-[var(--border)]"><div><p className="text-[var(--muted)]">已发现发布</p><div className="mt-1"><DiscoveredItemsButton show={show} onClick={() => setItemsShow(show)}/></div></div><div><p className="text-[var(--muted)]">TMDB 集数</p><p className="mt-1 font-semibold">{show.episode_count ?? "未知"}</p></div></div>
+        <ActionButton icon={FolderOpen} emphasis="secondary" className="mt-4 w-full" pending={openFolder.isPending && openFolder.variables === show.id} pendingLabel="打开中…" onClick={() => openFolder.mutate(show.id)}>打开文件夹</ActionButton>
       </CardContent>
     </Card>)}</div>}
 
-    {view === "table" && shows.length > 0 && <Card><CardContent className="overflow-x-auto p-0"><table className="w-full min-w-[760px] text-left text-sm"><thead className="border-b border-[var(--border)] text-xs text-[var(--muted)]"><tr><th className="p-4 font-medium">番剧</th><th className="p-4 font-medium">TMDB</th><th className="p-4 font-medium">已发现</th><th className="p-4"></th></tr></thead><tbody>{shows.map((show) => <tr key={show.id} className="border-b border-[var(--border)] transition "><td className="p-4"><div className="flex items-center gap-3"><div className="h-14 w-10 shrink-0 overflow-hidden rounded-md bg-[var(--surface-raised)]">{(show.poster_ready || show.poster_url) ? <img src={show.poster_ready ? artworkUrl(show, "poster") : show.poster_url} className="size-full object-cover" alt=""/> : null}</div><div className="min-w-0"><p className="max-w-80 truncate font-medium">{show.name}</p><p className="mt-1 max-w-80 truncate text-xs text-[var(--muted)]">{show.metadata_title ?? "未关联元数据"}</p></div></div></td><td className="p-4 text-xs text-[var(--muted)]">{show.tmdb_id ? <TmdbLink show={show}/> : "—"}</td><td className="p-4"><DiscoveredItemsButton show={show} onClick={() => setItemsShow(show)}/></td><td className="p-4 text-right"><div className="flex justify-end gap-2"><ActionButton icon={FolderOpen} className="folder-action folder-action-compact" pending={openFolder.isPending && openFolder.variables === show.id} pendingLabel="打开中…" onClick={() => openFolder.mutate(show.id)}>文件夹</ActionButton><DropdownMenu><DropdownMenuTrigger asChild><Button size="icon" variant="ghost" aria-label="更多操作"><MoreHorizontal size={17}/></Button></DropdownMenuTrigger><DropdownMenuContent align="end"><DropdownMenuItem onSelect={() => setUploadId(show.id)}><Upload size={15}/>上传图片</DropdownMenuItem><DropdownMenuItem onSelect={() => rescrape.mutate(show.id)}><RefreshCw size={15}/>重新刮削</DropdownMenuItem></DropdownMenuContent></DropdownMenu></div></td></tr>)}</tbody></table></CardContent></Card>}
+    {view === "table" && shows.length > 0 && <Card><CardContent className="shows-table-container p-0"><table className="shows-table w-full text-left text-sm"><thead className="border-b border-[var(--border)] text-xs text-[var(--muted)]"><tr><th className="p-4 font-medium">番剧</th><th className="p-4 font-medium">TMDB</th><th className="p-4 font-medium">已发现</th><th className="p-4"></th></tr></thead><tbody>{shows.map((show) => <tr key={show.id} className="border-b border-[var(--border)] transition "><td className="p-4"><div className="flex items-center gap-3"><div className="h-14 w-10 shrink-0 overflow-hidden rounded-[2px] bg-[var(--surface-raised)]">{(show.poster_ready || show.poster_url) ? <img src={show.poster_ready ? artworkUrl(show, "poster") : show.poster_url} className="size-full object-cover" alt=""/> : null}</div><div className="min-w-0"><p className="max-w-80 truncate font-medium">{show.name}</p><p className="mt-1 max-w-80 truncate text-[13px] text-[var(--muted)]">{show.metadata_title ?? "未关联元数据"}</p></div></div></td><td className="p-4 text-xs text-[var(--muted)]">{show.tmdb_id ? <TmdbLink show={show}/> : "—"}</td><td className="p-4"><DiscoveredItemsButton show={show} onClick={() => setItemsShow(show)}/></td><td className="p-4 text-right"><div className="flex justify-end gap-2"><ActionButton icon={FolderOpen} emphasis="secondary" size="sm" pending={openFolder.isPending && openFolder.variables === show.id} pendingLabel="打开中…" onClick={() => openFolder.mutate(show.id)}>文件夹</ActionButton><DropdownMenu><DropdownMenuTrigger asChild><Button size="icon" variant="ghost" aria-label="更多操作"><MoreHorizontal size={17}/></Button></DropdownMenuTrigger><DropdownMenuContent align="end"><DropdownMenuItem onSelect={() => setUploadId(show.id)}><Upload size={15}/>上传图片</DropdownMenuItem><DropdownMenuItem onSelect={() => rescrape.mutate(show.id)}><RefreshCw size={15}/>重新刮削</DropdownMenuItem></DropdownMenuContent></DropdownMenu></div></td></tr>)}</tbody></table></CardContent></Card>}
   </>
 }

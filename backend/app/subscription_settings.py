@@ -67,8 +67,9 @@ async def refresh_due_feeds() -> None:
     for source_id in ids:
         async with SessionFactory() as session:
             source = await session.get(FeedSource, source_id)
-            options = await get_options(session)
-            if source and source.active and is_due(source, options.refresh_interval_minutes, datetime.now(UTC)):
+            if source and source.active and is_due(
+                source, source.refresh_interval_minutes, datetime.now(UTC)
+            ):
                 try:
                     await FeedRefreshService(session).refresh(source)
                 except Exception as exc:

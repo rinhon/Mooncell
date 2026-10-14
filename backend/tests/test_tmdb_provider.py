@@ -1,62 +1,75 @@
-from app.providers.tmdb import (
-    parse_tmdb_detail_html,
-    parse_tmdb_image_page,
-    parse_tmdb_search_html,
-)
+import httpx
+import pytest
+
+from app.providers import tmdb
 
 
-def test_parse_tmdb_search_results() -> None:
-    html = """
-    <section class="panel"><div class="search_results tv"><div class="results flex">
-      <div class="media-card-list">
-        <div class="comp:media-card">
-          <a data-media-type="tv" href="/tv/30984-bleach?language=zh-CN">
-            <img class="poster" src="https://media.example/bleach.jpg">
-          </a>
-          <a href="/tv/30984-bleach?language=zh-CN">
-            <h2><span>死神</span><span> (BLEACH)</span></h2>
-          </a>
-          <span class="release_date">2004 年 10 月 05 日</span>
-          <div class="mt-4"><p>故事简介</p></div>
-        </div>
-      </div>
-    </div></div></section>
-    """
-    results = parse_tmdb_search_html(html)
-    assert len(results) == 1
-    assert results[0].tmdb_id == 30984
-    assert results[0].media_type == "tv"
-    assert results[0].title == "死神"
-    assert results[0].original_title == "BLEACH"
-    assert results[0].href == "https://www.themoviedb.org/tv/30984-bleach?language=zh-CN"
+def test_detail_tv_and_movie_fields():
+    tv = tmdb.parse_tmdb_detail({"name": "死神", "number_of_episodes": 416,
+        "first_air_date": "2004-10-05", "genres": [{"id": 16, "name": "动画"}],
+        "vote_average": 8.4, "poster_path": "/poster.jpg"}, 30984, "tv")
+    assert tv.episode_count == 416
+    assert tv.genres == ["动画"]
+    assert tv.poster_url == "https://image.tmdb.org/t/p/original/poster.jpg"
+    assert tv.release_date == "2004-10-05"
+    movie = tmdb.parse_tmdb_detail({"title": "电影", "release_date": "2026-01-01",
+                                  "number_of_episodes": 99}, 1, "movie")
+    assert movie.title == "电影"
+    assert movie.episode_count is None
+    assert movie.poster_url is None
 
 
-def test_parse_tmdb_json_ld_detail() -> None:
-    html = """
-    <script type="application/ld+json">
-    /* <![CDATA[ */
-    {"@type":"TVSeries","name":"死神","description":"故事简介",\
-"image":"https://image.tmdb.org/poster.jpg","startDate":"2004-10-05T00:00:00Z",\
-"numberOfEpisodes":416,"genre":["动画","动作冒险"],\
-"aggregateRating":{"ratingValue":8.4,"ratingCount":2243},\
-"url":"https://www.themoviedb.org/tv/30984-bleach"}
-    /* ]]> */
-    </script>
-    """
-    result = parse_tmdb_detail_html(html, 30984, "tv")
-    assert result.tmdb_id == 30984
-    assert result.title == "死神"
-    assert result.release_date == "2004-10-05"
-    assert result.episode_count == 416
-    assert result.rating == 8.4
-    assert result.genres == ["动画", "动作冒险"]
+@pytest.mark.asyncio
+@pytest.mark.parametrize("token,key", [("read-token", "key-secret"), (None, "key-secret")])
+async def test_api_auth_search_details_images(monkeypatch, token, key):
+    async def credentials():
+        return token, key
+    monkeypatch.setattr(tmdb, "get_credentials", credentials)
+    requests = []
+    def handler(request):
+        requests.append(request)
+        if token:
+            assert request.headers["Authorization"] == "Bearer read-token"
+            assert "api_key" not in request.url.params
+        else:
+            assert "Authorization" not in request.headers
+            assert request.url.params["api_key"] == key
+        if request.url.path.endswith("/search/multi"):
+            return httpx.Response(200, json={"results": [
+                {"id": 1, "media_type": "person", "name": "演员"},
+                {"id": 2, "media_type": "tv", "name": "番剧", "poster_path": "/p.jpg"}]})
+        if request.url.path.endswith("/images"):
+            assert "language" not in request.url.params
+            return httpx.Response(200, json={"logos": [
+                {"file_path": "/en.png", "iso_639_1": "en", "vote_average": 9},
+                {"file_path": "/zh.png", "iso_639_1": "zh", "vote_average": 1}],
+                "backdrops": [{"file_path": "/bg.jpg", "iso_639_1": None}]})
+        return httpx.Response(200, json={"name": "番剧", "number_of_episodes": 12})
+    original = httpx.AsyncClient
+    monkeypatch.setattr(tmdb.httpx, "AsyncClient", lambda **kw:
+                        original(transport=httpx.MockTransport(handler), **kw))
+    assert [item.tmdb_id for item in await tmdb.search_tmdb("番剧")] == [2]
+    assert (await tmdb.scrape_tmdb(2, "tv")).episode_count == 12
+    images = await tmdb.scrape_tmdb_artwork_urls(2, "tv", "https://example.com/poster.jpg")
+    assert images.clearlogo.endswith("/zh.png")
+    assert images.fanart.endswith("/bg.jpg")
+    assert images.poster == "https://example.com/poster.jpg"
+    assert len(requests) == 3
 
 
-def test_parse_tmdb_image_page_returns_first_original() -> None:
-    html = """
-    <ul class="images backdrops">
-      <li><a href="https://image.tmdb.org/t/p/original/first.jpg">第一张</a></li>
-      <li><a href="https://image.tmdb.org/t/p/original/second.jpg">第二张</a></li>
-    </ul>
-    """
-    assert parse_tmdb_image_page(html) == "https://image.tmdb.org/t/p/original/first.jpg"
+@pytest.mark.asyncio
+async def test_missing_credentials_and_sanitized_errors(monkeypatch):
+    async def missing():
+        return None, None
+    monkeypatch.setattr(tmdb, "get_credentials", missing)
+    with pytest.raises(ValueError, match="请先在设置中配置"):
+        await tmdb.scrape_tmdb(1, "tv")
+    async def credentials():
+        return None, "private-key"
+    monkeypatch.setattr(tmdb, "get_credentials", credentials)
+    original = httpx.AsyncClient
+    monkeypatch.setattr(tmdb.httpx, "AsyncClient", lambda **kw: original(
+        transport=httpx.MockTransport(lambda request: httpx.Response(401)), **kw))
+    with pytest.raises(ValueError, match="认证失败") as error:
+        await tmdb.scrape_tmdb(1, "tv")
+    assert "private-key" not in str(error.value)

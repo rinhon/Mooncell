@@ -1,21 +1,17 @@
-"""无需 API Key 的 TMDB HTML 搜索与详情页刮削适配器。"""
-
+"""通过 TMDB 官方 v3 API 搜索作品、读取元数据与图片。"""
 import asyncio
-import json
-import re
-import time
 from dataclasses import dataclass
 from typing import Literal
-from urllib.parse import urlencode, urljoin
 
 import httpx
-from bs4 import BeautifulSoup
 
 from ..config import settings
 from ..schemas import TmdbCandidate, TmdbMetadata
+from ..tmdb_settings import get_credentials
 
 MediaType = Literal["tv", "movie"]
-_DETAIL_PATH = re.compile(r"^/(tv|movie)/(\d+)(?:-|\?|$)")
+API_BASE = "https://api.themoviedb.org/3"
+IMAGE_BASE = "https://image.tmdb.org/t/p/original"
 
 
 @dataclass(slots=True)
@@ -25,150 +21,107 @@ class TmdbArtworkUrls:
     clearlogo: str | None
 
 
-def parse_tmdb_image_page(content: str) -> str | None:
-    """从 TMDB 图片列表选择第一张原图链接。"""
-    soup = BeautifulSoup(content, "html.parser")
-    anchor = soup.select_one('ul.images a[href*="image.tmdb.org/t/p/original/"]')
-    return str(anchor.get("href")) if anchor and anchor.get("href") else None
+def image_url(path: str | None) -> str | None:
+    return f"{IMAGE_BASE}{path}" if path else None
 
 
-def parse_tmdb_search_html(content: str) -> list[TmdbCandidate]:
-    """从 TMDB 搜索结果的媒体卡片中提取候选项。"""
-    soup = BeautifulSoup(content, "html.parser")
-    candidates: list[TmdbCandidate] = []
-    seen: set[tuple[str, int]] = set()
-
-    for card in soup.select("div.media-card-list > div"):
-        anchor = card.find("a", href=_DETAIL_PATH)
-        if anchor is None:
-            continue
-        href = str(anchor.get("href", ""))
-        match = _DETAIL_PATH.match(href)
-        if match is None:
-            continue
-        media_type, raw_id = match.groups()
-        key = (media_type, int(raw_id))
-        if key in seen:
-            continue
-        seen.add(key)
-
-        heading = card.find("h2")
-        if heading is None:
-            continue
-        title_parts = [part.get_text(" ", strip=True) for part in heading.find_all("span")]
-        title = title_parts[0] if title_parts else heading.get_text(" ", strip=True)
-        original_title = None
-        if len(title_parts) > 1:
-            original_title = title_parts[1].strip().removeprefix("(").removesuffix(")") or None
-        date_node = card.select_one(".release_date")
-        overview_node = card.select_one(".mt-4 p")
-        poster_node = card.select_one("img.poster")
-        candidates.append(
-            TmdbCandidate(
-                tmdb_id=key[1],
-                media_type=media_type,
-                title=title,
-                original_title=original_title,
-                release_date=date_node.get_text(" ", strip=True) if date_node else None,
-                overview=overview_node.get_text(" ", strip=True) if overview_node else None,
-                poster_url=str(poster_node.get("src"))
-                if poster_node and poster_node.get("src")
-                else None,
-                href=urljoin(settings.tmdb_base_url, href),
-            )
-        )
-    return candidates
-
-
-def parse_tmdb_detail_html(content: str, tmdb_id: int, media_type: MediaType) -> TmdbMetadata:
-    """详情页优先读取 TMDB 自带的 JSON-LD，减少对展示层级的依赖。"""
-    soup = BeautifulSoup(content, "html.parser")
-    script = soup.find("script", attrs={"type": "application/ld+json"})
-    if script is None:
-        raise ValueError("TMDB 详情页缺少 JSON-LD 元数据")
-    raw_json = script.get_text().replace("/* <![CDATA[ */", "").replace("/* ]]> */", "").strip()
-    data = json.loads(raw_json)
-    start_date = data.get("startDate") or data.get("datePublished")
-    rating = data.get("aggregateRating") or {}
-    genres = data.get("genre") or []
-    if isinstance(genres, str):
-        genres = [genres]
-    return TmdbMetadata(
-        tmdb_id=tmdb_id,
-        media_type=media_type,
-        title=str(data.get("name") or "").strip(),
-        overview=str(data.get("description") or "").strip() or None,
-        poster_url=data.get("image"),
-        release_date=str(start_date)[:10] if start_date else None,
-        genres=[str(item) for item in genres],
-        episode_count=data.get("numberOfEpisodes"),
-        rating=rating.get("ratingValue"),
-        vote_count=rating.get("ratingCount"),
-        href=str(data.get("url") or f"{settings.tmdb_base_url}/{media_type}/{tmdb_id}"),
-    )
-
-
-def _get_html_sync(url: str) -> str:
-    """使用同步传输获取页面，规避 Windows 上 AsyncClient 的偶发 TLS 握手失败。"""
-    headers = {"User-Agent": settings.tmdb_user_agent, "Accept-Language": settings.tmdb_language}
-    for attempt in range(8):
-        # 每次重试都重建连接池，避免继续复用已被中间代理关闭的 TLS 连接。
-        with httpx.Client(
-            timeout=settings.tmdb_timeout_seconds,
-            follow_redirects=True,
-            headers=headers,
-        ) as client:
+async def _get_json(path: str, params: dict | None = None) -> dict:
+    token, key = await get_credentials()
+    if not token and not key:
+        raise ValueError("请先在设置中配置 TMDB API 读访问令牌或 API 密钥")
+    headers = {"Accept": "application/json", "User-Agent": settings.tmdb_user_agent}
+    query = dict(params or {})
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    else:
+        query["api_key"] = key
+    # 不传播 httpx 原始异常，避免带 api_key 的请求 URL 进入界面或日志。
+    async with httpx.AsyncClient(timeout=settings.tmdb_timeout_seconds) as client:
+        for attempt in range(3):
             try:
-                response = client.get(url)
-                response.raise_for_status()
-                return response.text
+                response = await client.get(f"{API_BASE}{path}", params=query, headers=headers)
             except httpx.TransportError:
-                if attempt == 7:
-                    raise
-        time.sleep(min(0.35 * (2**attempt), 1.5))
-    raise RuntimeError("TMDB 请求失败")
-
-
-async def _get_html(url: str) -> str:
-    """在线程中执行同步 TLS 请求，避免阻塞 FastAPI 的事件循环。"""
-    return await asyncio.to_thread(_get_html_sync, url)
+                if attempt == 2:
+                    raise RuntimeError("无法连接 TMDB API，请检查网络后重试") from None
+                await asyncio.sleep(0.5 * (attempt + 1))
+                continue
+            if response.status_code == 429 or response.status_code >= 500:
+                if attempt < 2:
+                    await asyncio.sleep(0.5 * (attempt + 1))
+                    continue
+            if response.status_code in (401, 403):
+                raise ValueError("TMDB API 认证失败，请检查设置中的令牌或密钥")
+            if response.status_code == 404:
+                raise ValueError("TMDB 条目不存在，请检查关联的 ID 和类型")
+            if not response.is_success:
+                raise RuntimeError(f"TMDB API 请求失败（HTTP {response.status_code}）")
+            try:
+                data = response.json()
+            except ValueError:
+                raise RuntimeError("TMDB API 返回了无效的 JSON 数据") from None
+            if not isinstance(data, dict):
+                raise RuntimeError("TMDB API 返回了无效的数据格式")
+            return data
+    raise RuntimeError("TMDB API 请求失败")
 
 
 async def search_tmdb(query: str) -> list[TmdbCandidate]:
-    """通过 TMDB 公开搜索页查询影视条目。"""
-    query_string = urlencode({"query": query, "language": settings.tmdb_language})
-    url = f"{settings.tmdb_base_url}/search?{query_string}"
-    return parse_tmdb_search_html(await _get_html(url))
+    data = await _get_json("/search/multi", {"query": query, "language": settings.tmdb_language,
+                                           "include_adult": "false"})
+    results = []
+    for item in data.get("results", []):
+        media_type = item.get("media_type")
+        if media_type not in ("tv", "movie"):
+            continue
+        results.append(TmdbCandidate(
+            tmdb_id=item["id"], media_type=media_type,
+            title=item.get("name") or item.get("title") or "",
+            original_title=item.get("original_name") or item.get("original_title"),
+            release_date=item.get("first_air_date") or item.get("release_date") or None,
+            overview=item.get("overview") or None, poster_url=image_url(item.get("poster_path")),
+            href=f"{settings.tmdb_base_url}/{media_type}/{item['id']}",
+        ))
+    return results
+
+
+def parse_tmdb_detail(data: dict, tmdb_id: int, media_type: MediaType) -> TmdbMetadata:
+    return TmdbMetadata(
+        tmdb_id=tmdb_id, media_type=media_type,
+        title=data.get("name" if media_type == "tv" else "title") or "",
+        overview=data.get("overview") or None,
+        poster_url=image_url(data.get("poster_path")),
+        release_date=data.get("first_air_date" if media_type == "tv" else "release_date") or None,
+        genres=[item["name"] for item in data.get("genres", [])],
+        episode_count=data.get("number_of_episodes") if media_type == "tv" else None,
+        rating=data.get("vote_average"), vote_count=data.get("vote_count"),
+        href=f"{settings.tmdb_base_url}/{media_type}/{tmdb_id}",
+    )
 
 
 async def scrape_tmdb(tmdb_id: int, media_type: MediaType) -> TmdbMetadata:
-    """按用户选择的媒体类型和 TMDB ID 刮削详情。"""
-    query_string = urlencode({"language": settings.tmdb_language})
-    url = f"{settings.tmdb_base_url}/{media_type}/{tmdb_id}?{query_string}"
-    return parse_tmdb_detail_html(await _get_html(url), tmdb_id, media_type)
+    data = await _get_json(f"/{media_type}/{tmdb_id}", {"language": settings.tmdb_language})
+    return parse_tmdb_detail(data, tmdb_id, media_type)
+
+
+def select_image(images: list[dict]) -> str | None:
+    language = settings.tmdb_language.split("-")[0]
+    preferences = list(dict.fromkeys([language, None, "en", "ja"]))
+    usable = [item for item in images if item.get("file_path")]
+    usable.sort(key=lambda item: (
+        preferences.index(item.get("iso_639_1"))
+        if item.get("iso_639_1") in preferences else len(preferences),
+        -(item.get("vote_average") or 0), -(item.get("width") or 0),
+    ))
+    return image_url(usable[0]["file_path"]) if usable else None
 
 
 async def scrape_tmdb_artwork_urls(
-    tmdb_id: int,
-    media_type: MediaType,
-    poster_url: str | None,
+    tmdb_id: int, media_type: MediaType, poster_url: str | None,
 ) -> TmdbArtworkUrls:
-    """读取 TMDB 的背景图与 Logo 图片页，返回三张原图地址。"""
-    query_string = urlencode({"language": settings.tmdb_language})
-    base = f"{settings.tmdb_base_url}/{media_type}/{tmdb_id}/images"
-    async def image_from(path: str) -> str | None:
-        try:
-            return parse_tmdb_image_page(await _get_html(path))
-        except httpx.TransportError:
-            return None
-
-    # 两类图片并发且独立请求：缩短 TUN 连接异常时的总等待时间。
-    fanart, clearlogo = await asyncio.gather(
-        image_from(f"{base}/backdrops?{query_string}"),
-        image_from(f"{base}/logos?{query_string}"),
-    )
+    # 不传 language：取得全部语言图片，在本地优先中文，其次无文字、英文和日文。
+    data = await _get_json(f"/{media_type}/{tmdb_id}/images")
     return TmdbArtworkUrls(
-        poster=poster_url,
-        fanart=fanart,
-        clearlogo=clearlogo,
+        poster=select_image(data.get("posters", [])) or poster_url,
+        fanart=select_image(data.get("backdrops", [])),
+        clearlogo=select_image(data.get("logos", [])),
     )

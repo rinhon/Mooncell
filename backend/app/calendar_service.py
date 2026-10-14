@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import re
+import ssl
 from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import urljoin, urlparse
@@ -13,7 +14,7 @@ from bs4 import BeautifulSoup
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
-from sqlalchemy import select, delete
+from sqlalchemy import delete, select
 from sqlalchemy.dialects.sqlite import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -105,6 +106,28 @@ def cache_dir() -> Path:
     return Path(settings.calendar_cache_path)
 
 
+def is_certificate_error(exc: BaseException) -> bool:
+    while exc is not None:
+        if isinstance(exc, ssl.SSLCertVerificationError):
+            return True
+        exc = exc.__cause__ or exc.__context__
+    return False
+
+
+async def fetch_resource(client: httpx.AsyncClient, url: str, **kwargs) -> httpx.Response:
+    """环境代理的证书校验失败时，保留 TLS 校验并尝试直连一次。"""
+    try:
+        return await client.get(url, **kwargs)
+    except httpx.ConnectError as exc:
+        if not is_certificate_error(exc):
+            raise
+        logger.warning("日历请求证书校验失败，尝试通过直连重新获取：%s", url)
+        async with httpx.AsyncClient(
+            timeout=client.timeout, follow_redirects=client.follow_redirects, trust_env=False,
+        ) as direct:
+            return await direct.get(url, **kwargs)
+
+
 async def download_covers(client: httpx.AsyncClient, season: str, items: list[dict]) -> None:
     semaphore = asyncio.Semaphore(4)
     errors = []
@@ -122,7 +145,7 @@ async def download_covers(client: httpx.AsyncClient, season: str, items: list[di
             return
         async with semaphore:
             try:
-                response = await client.get(url, follow_redirects=False)
+                response = await fetch_resource(client, url, follow_redirects=False)
                 response.raise_for_status()
                 if not response.headers.get("content-type", "").startswith("image/"):
                     raise ValueError("源站返回的内容不是图片")
@@ -152,7 +175,7 @@ async def ensure_season(season: str) -> dict:
         try:
             await record_calendar_event("calendar.fetch.started", season)
             async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
-                response = await client.get(f"https://yuc.wiki/{season}/")
+                response = await fetch_resource(client, f"https://yuc.wiki/{season}/")
                 response.raise_for_status()
                 items = parse_calendar(response.text, season)
                 path.parent.mkdir(parents=True, exist_ok=True)
@@ -203,6 +226,11 @@ async def read_calendar(season: str | None = None, session: AsyncSession = Depen
     try:
         data = await ensure_season(season)
     except (httpx.HTTPError, ValueError, OSError) as exc:
+        if is_certificate_error(exc):
+            raise HTTPException(
+                503, "日历源站 HTTPS 证书校验失败，直连重试也未成功。"
+                "请检查系统时间和代理证书；15 分钟后自动重试，重启后端可立即重试。",
+            ) from exc
         raise HTTPException(503, "季度新番暂时获取失败，稍后自动重试。") from exc
     favorites = set(await session.scalars(select(CalendarFavorite.item_id).where(
         CalendarFavorite.season == season,

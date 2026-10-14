@@ -179,6 +179,105 @@ async def test_inactive_and_review_items_not_enqueued(database):
         assert await session.scalar(select(DownloadJob)) is None
 
 
+@pytest.mark.parametrize("previous_state", [None, "metadata", "done", "needs_review"])
+async def test_manual_retry_creates_or_resets_job_and_submits(
+    database, monkeypatch, previous_state,
+):
+    from app import api
+
+    async def snapshot(*args):
+        return SimpleNamespace(torrents={})
+
+    monkeypatch.setattr(api, "get_qbittorrent_snapshot", snapshot)
+    async with database() as session:
+        if previous_state:
+            await download_queue.enqueue_source(session, await session.get(FeedSource, 1))
+            job = await session.scalar(select(DownloadJob))
+            job.state = previous_state
+            job.plan = '{"old": true}'
+            job.last_error = "下载器中不存在"
+            await session.commit()
+        for _ in range(2):
+            result = await api.retry_download(1, _user=None, session=session)
+            assert "队列" in result.message
+        jobs = list(await session.scalars(select(DownloadJob)))
+        assert len(jobs) == 1
+        assert jobs[0].state == "queued"
+        assert jobs[0].last_error is None
+        assert jobs[0].plan is None
+        assert jobs[0].season == 2
+
+    calls = []
+
+    def respond(request):
+        endpoint = request.url.path.rsplit("/", 1)[-1]
+        calls.append(endpoint)
+        if endpoint == "info":
+            return httpx.Response(200, json=[])
+        return httpx.Response(200, text="Ok.")
+
+    original_client = httpx.AsyncClient
+    monkeypatch.setattr(download_queue.httpx, "AsyncClient", lambda **kwargs: original_client(
+        base_url="http://qb.test", transport=httpx.MockTransport(respond),
+    ))
+    await download_queue.process_queue()
+    assert calls.count("add") == 1
+    async with database() as session:
+        job = await session.scalar(select(DownloadJob))
+        assert job.state == "metadata"
+        assert job.last_error is None
+
+
+@pytest.mark.parametrize("offline", [False, True])
+async def test_manual_retry_keeps_state_when_existing_or_offline(database, monkeypatch, offline):
+    from fastapi import HTTPException
+
+    from app import api
+
+    async def snapshot(*args):
+        if offline:
+            raise httpx.ConnectError("offline")
+        return SimpleNamespace(torrents={HASH: {"state": "downloading"}})
+
+    monkeypatch.setattr(api, "get_qbittorrent_snapshot", snapshot)
+    async with database() as session:
+        await download_queue.enqueue_source(session, await session.get(FeedSource, 1))
+        job = await session.scalar(select(DownloadJob))
+        job.state = "done"
+        job.plan = '{"keep": true}'
+        await session.commit()
+        with pytest.raises(HTTPException) as error:
+            await api.retry_download(1, _user=None, session=session)
+        assert error.value.status_code == (503 if offline else 409)
+        assert job.state == "done"
+        assert job.plan == '{"keep": true}'
+
+
+@pytest.mark.parametrize("invalid", ["disabled", "review", "no_hash", "bad_parse", "no_config"])
+async def test_manual_retry_rejects_invalid_records(database, invalid):
+    from fastapi import HTTPException
+
+    from app import api
+
+    async with database() as session:
+        item = await session.get(FeedItem, 1)
+        if invalid == "disabled":
+            (await session.get(FeedSource, 1)).active = False
+        elif invalid == "review":
+            item.parse_status = "needs_review"
+        elif invalid == "no_hash":
+            item.download_url = "https://example.test/file.torrent"
+        elif invalid == "bad_parse":
+            item.parse_data = "invalid"
+        else:
+            (await session.get(DownloaderConfig, 1)).active = False
+        await session.commit()
+        with pytest.raises(HTTPException) as error:
+            await api.retry_download(1, _user=None, session=session)
+        assert error.value.status_code in {409, 422}
+        assert await session.scalar(select(DownloadJob)) is None
+
+
 @pytest.mark.parametrize("simple,traditional", [
     ("CHS", "CHT"), ("GB", "BIG5"), ("简中", "繁中"), ("簡體", "繁體"),
     ("zh-Hans", "zh-Hant"), ("SC", "TC"),

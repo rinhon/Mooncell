@@ -13,8 +13,10 @@ from .config import settings
 from .database import init_database
 from .download_queue import download_queue_loop
 from .library import router as library_router
+from .review import router as review_router
 from .subscription_settings import router as subscription_router
 from .subscription_settings import subscription_refresh_loop
+from .tmdb_settings import router as tmdb_settings_router
 
 
 @asynccontextmanager
@@ -52,8 +54,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.include_router(router)
+app.include_router(review_router)
 app.include_router(library_router)
 app.include_router(subscription_router)
+app.include_router(tmdb_settings_router)
 app.include_router(calendar_router)
 
 
