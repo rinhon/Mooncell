@@ -64,6 +64,8 @@ def pending(item, job):
 
 def require_replacement_settled(job):
     if job and job.plan:
+        if "season_change" in json.loads(job.plan):
+            raise HTTPException(409, "媒体库迁移尚未完成，请先在下载中心检查迁移状态")
         phase = json.loads(job.plan).get("replacement", {}).get("phase")
         if phase in {"backup", "promote", "cleanup", "rollback"}:
             raise HTTPException(409, "旧版替换事务尚未结束，请先恢复下载器中的任务和目录")
@@ -178,7 +180,8 @@ async def ignore(item_id: int, session: AsyncSession = Depends(get_session)):
 @router.post("/{item_id}/reparse", response_model=ApiMessage)
 async def reparse(item_id: int, session: AsyncSession = Depends(get_session)):
     async with queue_lock:
-        item, source, _ = await load_pending(session, item_id)
+        item, source, job = await load_pending(session, item_id)
+        require_replacement_settled(job)
         parsed = parse_release_title(item.title)
         if source.season is not None:
             parsed.season = source.season
@@ -222,6 +225,9 @@ async def approve(item_id: int, data: ReviewApproval,
                 plan = build_plan(files, title, data.season, parsed, overrides)
             except ValueError as exc:
                 raise HTTPException(422, str(exc)) from exc
+            previous_tag = json.loads(job.plan).get("show_tag") if job.plan else None
+            if previous_tag:
+                plan["show_tag"] = previous_tag
             job.plan = json.dumps(plan, ensure_ascii=False)
             job.title, job.season = title, data.season
             job.state, job.last_error = "organizing", None

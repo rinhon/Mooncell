@@ -10,6 +10,7 @@ from sqlalchemy import select
 from .models import DomainEvent, DownloadJob, FeedItem, FeedSource
 from .release_versions import release_identity
 from .schemas import ParsedRelease
+from .staging_cleanup import cleanup_temporary_directories
 
 
 def paused(torrent):
@@ -76,7 +77,8 @@ async def begin_upgrade(session, client, job, item, config, torrent, files, conf
                     or release_identity(previous, source, parsed) != key
                     or parsed.revision >= current.revision):
                 return False
-        return any(c.state in {"moving", "upgrading", "replacing"} for c in conflicts)
+        return any(c.state in {"moving", "upgrading", "replacing", "season_changing"}
+                   for c in conflicts)
     old = conflicts[0]
     if (old.downloader_id != job.downloader_id
             or old.info_hash == job.info_hash):
@@ -91,7 +93,7 @@ async def begin_upgrade(session, client, job, item, config, torrent, files, conf
     if (key is None or key != release_identity(previous, source, old_release)
             or new_release.revision <= old_release.revision):
         return False
-    if old.state in {"moving", "upgrading", "replacing"}:
+    if old.state in {"moving", "upgrading", "replacing", "season_changing"}:
         return True  # 等待前一个整理/替换事务结束，再读取其最终位置。
     if old.state != "done":
         return False
@@ -275,6 +277,7 @@ async def advance_upgrade(session, client, job, config, torrent, files):
         if upgrade["old_was_running"]:
             await set_running(client, old.info_hash, True)
         old.state = "done"
+        await cleanup_temporary_directories(client, job.target_root, config)
         upgrade["phase"] = "rolled_back"
         job.plan = json.dumps(plan, ensure_ascii=False)
         job.state = "needs_review"
@@ -305,6 +308,7 @@ async def advance_upgrade(session, client, job, config, torrent, files):
         previous = await session.get(FeedItem, old.item_id)
         previous.parse_status = "superseded"
         await set_running(client, job.info_hash, True)
+        await cleanup_temporary_directories(client, job.target_root, config)
         job.state = "done"
         upgrade["phase"] = "done"
         job.plan = json.dumps(plan, ensure_ascii=False)

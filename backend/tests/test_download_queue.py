@@ -117,7 +117,10 @@ async def test_queue_add_rename_move_and_restart(
         if endpoint == "add":
             assert data["contentLayout"] == "Original"
             assert data["stopCondition"] == "MetadataReceived"
-            state["torrent"] = {"save_path": data["savepath"], "state": "metaDL"}
+            assert data["tags"] == "番名"
+            assert "rename" not in data
+            state["torrent"] = {"save_path": data["savepath"], "state": "metaDL",
+                                "name": "原始种子名称", "tags": data["tags"]}
             return httpx.Response(200, text="Ok.")
         if endpoint == "files":
             return httpx.Response(200, json=state["files"])
@@ -153,6 +156,9 @@ async def test_queue_add_rename_move_and_restart(
     for _ in range(10):  # 每一轮都用新的数据库会话，模拟进程恢复后的持久化进度。
         await download_queue.process_queue()
     assert calls.count("add") == 1
+    assert "rename" not in calls
+    assert state["torrent"]["name"] == "原始种子名称"
+    assert state["torrent"]["tags"] == "番名"
     assert calls.count("renameFolder") == int(wrapper)
     assert calls.count("renameFile") == 1 + int(transient_failure and not bilingual)
     assert calls.count("filePrio") == (1 + int(transient_failure) if bilingual else 0)
@@ -164,6 +170,7 @@ async def test_queue_add_rename_move_and_restart(
         assert job.state == "done"
         assert job.last_error is None
         assert json.loads(job.plan)["season_folder"] == "Season 02"
+        assert json.loads(job.plan)["show_tag"] == "番名"
 
 
 async def test_inactive_and_review_items_not_enqueued(database):
@@ -177,6 +184,49 @@ async def test_inactive_and_review_items_not_enqueued(database):
         source.active = False
         await download_queue.enqueue_source(session, source)
         assert await session.scalar(select(DownloadJob)) is None
+
+
+@pytest.mark.parametrize("existing", [False, True])
+async def test_first_submission_tags_and_does_not_touch_external_torrent(
+    database, monkeypatch, existing,
+):
+    async with database() as session:
+        source = await session.get(FeedSource, 1)
+        source.name = "Hello, World"
+        await download_queue.enqueue_source(session, source)
+        await session.commit()
+    calls = []
+
+    def handle(request):
+        endpoint = request.url.path.rsplit("/", 1)[-1]
+        data = {key: values[0] for key, values in parse_qs(request.content.decode()).items()}
+        calls.append((endpoint, data))
+        if endpoint == "info":
+            return httpx.Response(200, json=[{
+                "save_path": "/manual-downloads", "state": "downloading",
+                "name": "用户自己的任务", "tags": "手动标签",
+            }] if existing else [])
+        if endpoint == "add":
+            assert data["tags"] == "Hello， World"
+            assert "rename" not in data
+        else:
+            assert endpoint == "login"
+        return httpx.Response(200, text="Ok.")
+
+    original_client = httpx.AsyncClient
+    monkeypatch.setattr(download_queue.httpx, "AsyncClient", lambda **kwargs: original_client(
+        base_url="http://qb.test", transport=httpx.MockTransport(handle),
+    ))
+    await download_queue.process_queue()
+    assert [endpoint for endpoint, _ in calls] == (["login", "info"] if existing else
+                                                 ["login", "info", "add"])
+    async with database() as session:
+        job = await session.scalar(select(DownloadJob))
+        assert job.state == ("existing" if existing else "metadata")
+        if existing:
+            assert job.plan is None
+        else:
+            assert json.loads(job.plan) == {"show_tag": "Hello， World"}
 
 
 @pytest.mark.parametrize("previous_state", [None, "metadata", "done", "needs_review"])

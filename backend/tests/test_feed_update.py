@@ -1,3 +1,4 @@
+import json
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock
 
@@ -63,7 +64,7 @@ async def feed_edit_app():
     await engine.dispose()
 
 
-async def test_edit_persists_fields_and_preserves_metadata_and_download(feed_edit_app):
+async def test_edit_preserves_metadata_and_schedules_download_season_change(feed_edit_app):
     app, sessions = feed_edit_app
     values = {
         "name": " 修改后的番名 ", "url": "https://example.test/new-rss", "kind": "standard",
@@ -89,8 +90,12 @@ async def test_edit_persists_fields_and_preserves_metadata_and_download(feed_edi
         item = await session.get(FeedItem, 1)
         assert item.title == "已入库发布" and item.parse_status == "parsed"
         job = await session.get(DownloadJob, 1)
-        assert (job.title, job.season, job.state) == ("原番名", 1, "done")
-        assert job.plan == '{"existing": true}'
+        assert (job.title, job.season, job.state) == ("修改后的番名", 0, "season_changing")
+        migration = json.loads(job.plan)["season_change"]
+        assert migration["previous_title"] == "原番名"
+        assert migration["previous_season"] == 1
+        assert migration["previous_plan"] == {"existing": True}
+        assert json.loads(item.parse_data)["season"] == 0
         assert await session.scalar(select(DomainEvent).where(
             DomainEvent.event_type == "feed.updated",
         )) is not None

@@ -391,10 +391,17 @@ async def update_feed(
     _user: User = Depends(require_user),
     session: AsyncSession = Depends(get_session),
 ) -> FeedSource:
+    async with queue_lock:
+        return await _update_feed(source_id, data, session)
+
+
+async def _update_feed(source_id: int, data: FeedUpdate, session: AsyncSession) -> FeedSource:
     source = await session.get(FeedSource, source_id)
     if source is None:
         raise HTTPException(status_code=404, detail="RSS 源不存在")
     values = data.model_dump(exclude_unset=True)
+    previous_season = source.season
+    previous_name = source.name
     new_url = str(values["url"]) if "url" in values else source.url
     if new_url != source.url:
         duplicate = await session.scalar(select(FeedSource.id).where(
@@ -412,6 +419,24 @@ async def update_feed(
         source.last_error = None
     for key, value in values.items():
         setattr(source, key, str(value) if key == "url" else value)
+    migrating = 0
+    name_changed = source.name != previous_name
+    season_changed = "season" in values and values["season"] != previous_season
+    if name_changed or season_changed:
+        from .season_change import schedule_season_change
+
+        try:
+            migrating = await schedule_season_change(
+                session, source, source.season, rename_to=source.name if name_changed else None,
+                change_season=season_changed,
+            )
+            if name_changed:
+                from .artwork_relocation import copy_artwork_for_rename
+
+                await copy_artwork_for_rename(source)
+        except (ValueError, OSError) as exc:
+            await session.rollback()
+            raise HTTPException(409, str(exc)) from exc
     try:
         await session.commit()
     except IntegrityError as exc:
@@ -419,7 +444,7 @@ async def update_feed(
         raise HTTPException(status_code=409, detail="该 RSS 源已经存在") from exc
     await session.refresh(source)
     await _record_and_publish_event(session, "feed.updated", "feed_source", str(source.id),
-                                    {"name": source.name})
+                                    {"name": source.name, "library_migrations": migrating})
     return source
 
 
@@ -849,6 +874,8 @@ async def retry_download(
         if season is None or parsed.episode_start is None:
             raise HTTPException(422, "缺少季度或集数，无法自动下载")
         job = await session.scalar(select(DownloadJob).where(DownloadJob.info_hash == info_hash))
+        if job and job.plan and "season_change" in json.loads(job.plan):
+            raise HTTPException(409, "媒体库迁移尚未完成，请先在下载中心检查迁移状态")
         if job and job.plan:
             replacement = json.loads(job.plan).get("replacement", {})
             if replacement and replacement.get("phase") not in {"done", "rolled_back"}:

@@ -153,6 +153,7 @@ async def test_job_review_file_corrections_and_skip(context, monkeypatch):
     await add_downloader(sessions, job=True)
     async with sessions() as session:
         (await session.get(FeedItem, 1)).parse_status = "parsed"
+        (await session.scalar(select(DownloadJob))).plan = json.dumps({"show_tag": "番名"})
         await session.commit()
     files = [{"name": "Batch/a.mkv", "index": 4}, {"name": "Batch/b.mkv", "index": 9}]
     calls = mock_files(monkeypatch, files)
@@ -170,6 +171,7 @@ async def test_job_review_file_corrections_and_skip(context, monkeypatch):
         plan = json.loads(job.plan)
         assert plan["skip_file_ids"] == [9]
         assert plan["files"][0]["new"] == "Season 00/修正番名 S00E08.mkv"
+        assert plan["show_tag"] == "番名"  # 后台确认新标签后才移除这个旧标签。
 
 
 async def test_file_collisions_stale_files_and_all_skipped_rejected(context, monkeypatch):

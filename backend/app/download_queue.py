@@ -5,6 +5,7 @@ import json
 import logging
 import re
 from pathlib import Path, PurePosixPath, PureWindowsPath
+from time import monotonic
 
 import httpx
 from sqlalchemy import select
@@ -15,10 +16,12 @@ from .database import SessionFactory
 from .downloader_service import extract_info_hash
 from .library import get_library_root
 from .models import DomainEvent, DownloaderConfig, DownloadJob, FeedItem, FeedSource
+from .qb_tags import show_tag, sync_show_tag
 from .release_parser import parse_release_title
 from .release_versions import release_identity, select_revisions
 from .schemas import ParsedRelease
 from .security import decrypt_secret
+from .staging_cleanup import cleanup_stale_temporary_directories, cleanup_temporary_directories
 
 logger = logging.getLogger(__name__)
 VIDEO_EXTENSIONS = {".mkv", ".mp4", ".ts", ".m2ts", ".avi", ".mov", ".webm"}
@@ -226,6 +229,12 @@ async def process_job(session, job, config, item):
             raise ValueError("qBittorrent 拒绝登录，请检查凭据")
         response = await request(client, "GET", "torrents/info", params={"hashes": job.info_hash})
         torrents = response.json()
+        if job.plan and "season_change" in json.loads(job.plan):
+            from .season_change import advance_season_change
+
+            await advance_season_change(session, client, job, config, item,
+                                        torrents[0] if torrents else None)
+            return
         if not torrents:
             if job.state != "queued":
                 raise ValueError("下载任务已从下载器移除，不会自动重新添加")
@@ -234,11 +243,12 @@ async def process_job(session, job, config, item):
             added = await request(client, "POST", "torrents/add", data={
                 "urls": item.download_url, "savepath": staging, "autoTMM": "false",
                 "contentLayout": "Original", "paused": "false", "stopped": "false",
-                "stopCondition": "MetadataReceived",
+                "stopCondition": "MetadataReceived", "tags": show_tag(job.title),
             })
             if not added.text.strip().startswith("Ok"):
                 raise ValueError("qBittorrent 未接受下载任务")
             job.state = "metadata"
+            job.plan = json.dumps({"show_tag": show_tag(job.title)}, ensure_ascii=False)
             await session.commit()
             return
         torrent = torrents[0]
@@ -257,23 +267,30 @@ async def process_job(session, job, config, item):
         files = response.json()
         if not files:
             return
-        if job.plan and json.loads(job.plan).get("replacement"):
+        plan = json.loads(job.plan) if job.plan else {}
+        if (not plan.get("replacement")
+                and (not plan.get("files") or plan.get("selection_version"))
+                and not str(torrent.get("state", "")).startswith(("paused", "stopped"))):
+            await set_running(client, job.info_hash, False)
+            return  # 确认暂停后才筛选、重命名，失败时不继续下载全部版本。
+        if not await sync_show_tag(client, job.info_hash, torrent, job.title,
+                                   plan.get("show_tag")):
+            return
+        plan["show_tag"] = show_tag(job.title)
+        job.plan = json.dumps(plan, ensure_ascii=False)
+        if plan.get("replacement"):
             from .revision_upgrade import advance_upgrade
 
             await advance_upgrade(session, client, job, config, torrent, files)
             return
-        if (not job.plan or json.loads(job.plan).get("selection_version")) and not str(
-            torrent.get("state", "")
-        ).startswith(("paused", "stopped")):
-            await set_running(client, job.info_hash, False)
-            return  # 确认暂停后才筛选、重命名，失败时不继续下载全部版本。
-        if not job.plan:
+        if not plan.get("files"):
             try:
                 plan = build_plan(files, job.title, job.season,
                                   ParsedRelease.model_validate_json(item.parse_data))
             except ValueError:
                 job.state = "needs_review"
                 raise
+            plan["show_tag"] = show_tag(job.title)
             job.plan = json.dumps(plan, ensure_ascii=False)
             job.state = "organizing"
             await session.commit()
@@ -321,7 +338,7 @@ async def process_job(session, job, config, item):
             DownloadJob.id != job.id, DownloadJob.target_root == job.target_root,
             DownloadJob.season == job.season,
             DownloadJob.plan.is_not(None),
-            DownloadJob.state.in_(["moving", "done", "upgrading", "replacing"]),
+            DownloadJob.state.in_(["moving", "done", "upgrading", "replacing", "season_changing"]),
         )))
         video_names = {PurePosixPath(f["new"]).name.casefold() for f in plan["files"]
                        if PurePosixPath(f["new"]).suffix.lower() in VIDEO_EXTENSIONS}
@@ -331,9 +348,11 @@ async def process_job(session, job, config, item):
         for other in other_jobs:
             other_item = await session.get(FeedItem, other.item_id)
             same_release = key is not None and key == release_identity(other_item, source)
+            other_plan = json.loads(other.plan)
+            other_plan = other_plan.get("season_change", {}).get("target_plan") or other_plan
             if same_release or (other.title.casefold() == job.title.casefold() and any(
                 PurePosixPath(f["new"]).name.casefold() in video_names
-                for f in json.loads(other.plan)["files"]
+                for f in other_plan.get("files", [])
             )):
                 conflicts.append(other)
         if conflicts:
@@ -371,6 +390,7 @@ async def process_job(session, job, config, item):
             return
         if plan.get("selection_version"):
             await set_running(client, job.info_hash, True)
+        await cleanup_temporary_directories(client, job.target_root, config)
         job.state = "done"
 
 
@@ -379,7 +399,7 @@ async def process_queue():
         async with SessionFactory() as session:
             ids = list(await session.scalars(select(DownloadJob.id).where(
                 DownloadJob.state.in_(["queued", "metadata", "organizing", "moving",
-                                       "upgrading"]),
+                                       "upgrading", "season_changing"]),
             ).order_by(DownloadJob.id)))
         for job_id in ids:
             async with SessionFactory() as session:
@@ -387,7 +407,22 @@ async def process_queue():
                 config = await session.get(DownloaderConfig, job.downloader_id)
                 item = await session.get(FeedItem, job.item_id)
                 source = await session.get(FeedSource, item.source_id) if item else None
-                if not config or not config.active or not source or not source.active:
+                migrating = job.state == "season_changing"
+                if not config or not config.active or not source:
+                    if migrating:
+                        job.last_error = "请启用此任务对应的下载器，媒体库迁移将在后台继续"
+                        await session.commit()
+                    continue
+                if migrating and config.kind != "qbittorrent":
+                    job.last_error = "媒体库迁移需要此任务原有的 qBittorrent 下载器配置"
+                    await session.commit()
+                    continue
+                if not source.active and not migrating:
+                    continue
+                if (migrating and not source.active
+                        and json.loads(job.plan)["season_change"]["previous_state"] == "queued"):
+                    job.last_error = "请启用订阅后继续尚未投递任务的季度同步"
+                    await session.commit()
                     continue
                 await session.commit()
                 try:
@@ -407,9 +442,13 @@ async def process_queue():
 
 
 async def download_queue_loop():
+    next_cleanup = 0
     while True:
         try:
             await process_queue()
+            if monotonic() >= next_cleanup:
+                next_cleanup = monotonic() + 60
+                await cleanup_stale_temporary_directories()
         except Exception:
             logger.exception("下载队列处理失败")
         await asyncio.sleep(5)

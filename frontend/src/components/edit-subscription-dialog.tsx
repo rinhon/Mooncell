@@ -32,7 +32,9 @@ export function EditSubscriptionDialog({ feed, onClose }: { feed: Feed; onClose:
       for (const key of ["feeds", "shows", "dashboard", "downloads", "reviews"]) {
         void client.invalidateQueries({ queryKey: [key] })
       }
-      toast("RSS 订阅已修改")
+      toast("RSS 订阅已修改", name.trim() !== feed.name || season !== (feed.season == null ? "" : String(feed.season))
+        ? { description: "已有下载将在后台同步番剧标签、文件名和保存路径，保留 qB 任务名与集数。" }
+        : undefined)
       onClose()
     },
   })
@@ -47,7 +49,7 @@ export function EditSubscriptionDialog({ feed, onClose }: { feed: Feed; onClose:
         <DialogDescription>修改此订阅的发布源和下载筛选条件。</DialogDescription>
       </DialogHeader>
       <form onSubmit={submit} className="grid gap-4">
-        <Field label="番剧名称" hint="修改后用于后续下载的媒体库命名，已有文件保留。">
+        <Field label="番剧名称" hint="修改后同步已有下载的文件名、番剧目录与 qB 番剧标签，保留原任务名；和季度同时修改时按新番名生成目标路径。">
           <Input value={name} onChange={(event) => setName(event.target.value)} required maxLength={160} disabled={save.isPending}/>
         </Field>
         <Field label="RSS 地址">
@@ -57,7 +59,7 @@ export function EditSubscriptionDialog({ feed, onClose }: { feed: Feed; onClose:
           <TagInput value={excludedKeywords} onChange={setExcludedKeywords} label="编辑排除关键词" disabled={save.isPending}/>
         </Field>
         <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="季度" hint="留空自动识别；0 表示特别篇。">
+          <Field label="季度" hint="修改后同步已有下载的季度、文件名和保存路径，集数不变。留空按原始发布标题识别；0 表示特别篇。">
             <Input type="number" min={0} max={99} step={1} value={season} onChange={(event) => setSeason(event.target.value)} placeholder="自动识别" disabled={save.isPending}/>
           </Field>
           <Field label="刷新间隔（分钟）" hint="仅用于此订阅；修改全局间隔会统一覆盖。">

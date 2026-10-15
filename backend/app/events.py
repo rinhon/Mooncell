@@ -73,6 +73,17 @@ def event_log_fields(event_type: str, payload: dict) -> tuple[str, str, str]:
         )
     elif event_type == "feed.updated":
         message = f"RSS 订阅已修改：{payload.get('name', '未知订阅')}"
+        if payload.get("library_migrations"):
+            message += f"，{payload['library_migrations']} 个下载任务等待同步番名和季度"
+        elif payload.get("season_migrations"):
+            message += f"，{payload['season_migrations']} 个下载任务等待同步季度"
+    elif event_type == "download.season.changed":
+        message = (f"下载季度已同步：{payload.get('title', '')} · "
+                   f"第 {payload.get('previous_season')} 季 → 第 {payload.get('season')} 季")
+    elif event_type == "download.library.changed":
+        message = (f"媒体库名称和季度已同步：{payload.get('previous_title', '')} "
+                   f"S{payload.get('previous_season', 0):02d} → "
+                   f"{payload.get('title', '')} S{payload.get('season', 0):02d}")
     elif event_type == "feed.refresh.started":
         message = f"开始刷新 RSS：{payload.get('name', '未知订阅')}"
     elif event_type == "feed.refresh.completed":

@@ -187,14 +187,15 @@ class FakeQB:
         if endpoint == "login":
             return httpx.Response(200, text="Ok.")
         if endpoint == "info":
-            return httpx.Response(200, json=[deepcopy(self.torrents[info_hash])]
-                                  if info_hash in self.torrents else [])
+            values = ([self.torrents[info_hash]] if info_hash in self.torrents else []) \
+                if info_hash else list(self.torrents.values())
+            return httpx.Response(200, json=deepcopy(values))
         if endpoint == "files":
             return httpx.Response(200, json=deepcopy(self.files[request.url.params["hash"]]))
         if endpoint == "add":
             info_hash = NEW_HASH
             self.torrents[info_hash] = {"save_path": data["savepath"], "state": "stoppedDL",
-                                        "progress": 0, "amount_left": 100}
+                                        "progress": 0, "amount_left": 100, "tags": data["tags"]}
             self.files[info_hash] = [{"name": ("Pack/" if self.wrapper else "") + "video.mkv",
                                       "priority": 1, "progress": 0}]
             path = self.file_path(info_hash, self.files[info_hash][0]["name"])
@@ -310,6 +311,9 @@ async def test_upgrade_completion_cleanup_and_rollback(
             assert old_path.read_text(encoding="utf-8") == "old"
             assert not fake.deleted_paths
             assert fake.torrents[OLD_HASH]["state"] == "downloading"
+            temporary = fake.root / ".mooncell"
+            assert not (temporary / "replaced").exists()
+            assert (temporary / NEW_HASH).is_dir()  # 新版仍留在暂存目录等待审核。
         else:
             assert old.state == "superseded"
             assert new.state == "done"
@@ -317,6 +321,7 @@ async def test_upgrade_completion_cleanup_and_rollback(
             assert len(fake.deleted_paths) == 1
             assert (old_path.parent / "番名 S01E01.mkv").read_text(encoding="utf-8") == "new"
             assert OLD_HASH not in fake.torrents
+            assert not (fake.root / ".mooncell").exists()
             assert await session.scalar(select(DomainEvent).where(
                 DomainEvent.event_type == "download.upgraded",
             )) is not None

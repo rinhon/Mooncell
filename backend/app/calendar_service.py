@@ -27,6 +27,7 @@ from .models import CalendarFavorite, DomainEvent
 router = APIRouter(prefix="/api/v1/calendar", dependencies=[Depends(require_user)])
 logger = logging.getLogger(__name__)
 CHINA = timezone(timedelta(hours=8))
+CALENDAR_CACHE_VERSION = 2
 _lock = asyncio.Lock()
 _failures: dict[str, datetime] = {}
 
@@ -72,7 +73,7 @@ def parse_calendar(html: str, season: str) -> list[dict]:
     items = []
     weekday = None
     seen = set()
-    for node in body.select(".date2, .div_date"):
+    for node in body.select(".date2, .div_date, .div_date_"):
         if "date2" in node.get("class", []):
             match = re.search(r"周([一二三四五六日天])", node.get_text())
             weekday = "一二三四五六日".find(match[1].replace("天", "日")) if match else None
@@ -84,9 +85,12 @@ def parse_calendar(html: str, season: str) -> list[dict]:
         if title_node is None:
             continue
         title = title_node.get_text(" ", strip=True)
-        time_node = node.select_one('p[class^="imgtext"]')
-        broadcast = time_node.get_text(" ", strip=True) if time_node else "时间待定"
-        key = (weekday, title, broadcast)
+        time_nodes = node.select('p[class^="imgtext"]') or card.select('p[class^="pmfs"]')
+        times = dict.fromkeys(text for time_node in time_nodes
+                              if (text := time_node.get_text(" ", strip=True)))
+        broadcast = " / ".join(times) or "时间待定"
+        item_weekday = None if "div_date_" in node.get("class", []) else weekday
+        key = (item_weekday, title, broadcast)
         if not title or key in seen:
             continue
         seen.add(key)
@@ -95,7 +99,7 @@ def parse_calendar(html: str, season: str) -> list[dict]:
         src = (img.get("data-src") or img.get("src")) if img else None
         src = src or (link.get("href") if link else None)
         cover = urljoin(f"https://yuc.wiki/{season}/", src) if src else None
-        items.append({"id": len(items) + 1, "title": title, "weekday": weekday,
+        items.append({"id": len(items) + 1, "title": title, "weekday": item_weekday,
                       "broadcast_time": broadcast, "cover_source": cover})
     if not items:
         raise ValueError("源站尚无可解析的新番，未保存空数据")
@@ -104,6 +108,28 @@ def parse_calendar(html: str, season: str) -> list[dict]:
 
 def cache_dir() -> Path:
     return Path(settings.calendar_cache_path)
+
+
+def supplement_other_broadcasts(cached: list[dict], parsed: list[dict]) -> list[dict]:
+    """只补齐其他放送，保留原快照及 ID，避免收藏和封面错位。"""
+    items = [dict(item) for item in cached]
+    existing = {item["title"]: item for item in items if item.get("weekday") is None}
+    next_id = max((item["id"] for item in items), default=0) + 1
+    for item in parsed:
+        if item["weekday"] is not None:
+            continue
+        previous = existing.get(item["title"])
+        if previous is not None:
+            if previous.get("broadcast_time") in (None, "", "时间待定"):
+                previous["broadcast_time"] = item["broadcast_time"]
+            if not previous.get("cover_source"):
+                previous["cover_source"] = item["cover_source"]
+            continue
+        added = {**item, "id": next_id}
+        items.append(added)
+        existing[item["title"]] = added
+        next_id += 1
+    return items
 
 
 def is_certificate_error(exc: BaseException) -> bool:
@@ -137,10 +163,12 @@ async def download_covers(client: httpx.AsyncClient, season: str, items: list[di
         if path.exists() or not item.get("cover_source"):
             return
         url = item["cover_source"]
-        host = urlparse(url).hostname or ""
-        if urlparse(url).scheme != "https" or not (
-            host == "yuc.wiki" or host.endswith(".hdslb.com")
-        ):
+        parsed_url = urlparse(url)
+        host = parsed_url.hostname or ""
+        trusted = host in {"yuc.wiki", "i.imgs.ovh"} or host.endswith(".hdslb.com")
+        if trusted and parsed_url.scheme == "http":
+            url = parsed_url._replace(scheme="https").geturl()
+        if not trusted or urlparse(url).scheme != "https":
             errors.append(f"{item['title']}：不支持的封面地址")
             return
         async with semaphore:
@@ -167,10 +195,15 @@ async def ensure_season(season: str) -> dict:
     validate_season(season)
     async with _lock:
         path = cache_dir() / season / "season.json"
+        cached = None
         if path.exists():
-            return json.loads(await asyncio.to_thread(path.read_text, encoding="utf-8"))
+            cached = json.loads(await asyncio.to_thread(path.read_text, encoding="utf-8"))
+            if cached.get("cache_version", 0) >= CALENDAR_CACHE_VERSION:
+                return cached
         failed_at = _failures.get(season)
         if failed_at and datetime.now(UTC) - failed_at < timedelta(minutes=15):
+            if cached is not None:
+                return cached
             raise ValueError("当季获取暂时失败，15 分钟后自动重试")
         try:
             await record_calendar_event("calendar.fetch.started", season)
@@ -178,10 +211,15 @@ async def ensure_season(season: str) -> dict:
                 response = await fetch_resource(client, f"https://yuc.wiki/{season}/")
                 response.raise_for_status()
                 items = parse_calendar(response.text, season)
+                if cached is not None:
+                    items = supplement_other_broadcasts(cached["items"], items)
                 path.parent.mkdir(parents=True, exist_ok=True)
                 await download_covers(client, season, items)
-                data = {"season": season, "source_url": f"https://yuc.wiki/{season}/",
-                        "fetched_at": datetime.now(UTC).isoformat(), "items": items}
+                data = {**(cached or {}), "season": season,
+                        "source_url": f"https://yuc.wiki/{season}/",
+                        "fetched_at": cached["fetched_at"] if cached
+                        else datetime.now(UTC).isoformat(),
+                        "cache_version": CALENDAR_CACHE_VERSION, "items": items}
                 temporary = path.with_suffix(".tmp")
                 await asyncio.to_thread(
                     temporary.write_text, json.dumps(data, ensure_ascii=False), encoding="utf-8"
@@ -195,6 +233,8 @@ async def ensure_season(season: str) -> dict:
             await record_calendar_event(
                 "calendar.fetch.failed", season, error=f"{type(exc).__name__}: {exc}",
             )
+            if cached is not None:
+                return cached
             raise
 
 

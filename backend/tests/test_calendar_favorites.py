@@ -15,7 +15,8 @@ async def test_favorites_persist_and_are_scoped_to_season(tmp_path, monkeypatch)
         folder = tmp_path / season
         folder.mkdir()
         (folder / "season.json").write_text(json.dumps({
-            "season": season, "items": [{"id": 1, "title": "测试番剧"}],
+            "season": season, "cache_version": service.CALENDAR_CACHE_VERSION,
+            "items": [{"id": 1, "title": "测试番剧"}],
         }), encoding="utf-8")
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
     async with engine.begin() as connection:

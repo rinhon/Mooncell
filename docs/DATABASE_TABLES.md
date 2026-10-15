@@ -199,12 +199,14 @@ erDiagram
 | `target_root` | TEXT | 否 | — | 已转换为下载器可见路径的媒体库根目录 |
 | `title` | TEXT | 否 | — | 整理使用的番名 |
 | `season` | INTEGER | 否 | — | 整理使用的季度编号 |
-| `plan` | TEXT | 是 | — | 文件筛选、重命名及整理计划的 JSON 文本 |
+| `plan` | TEXT | 是 | — | 文件筛选、重命名及整理计划的 JSON 文本；`show_tag` 记录 Mooncell 管理的 qB 番剧标签，元数据阶段可先只保存此字段 |
 | `last_error` | TEXT | 是 | — | 最近任务错误 |
 
 约束：主键 `id`；`item_id`、`info_hash` 分别唯一。删除发布条目时级联删除任务；`downloader_id` 外键没有声明删除级联。没有额外声明的普通索引。
 
-常见状态包括 `queued`（待投递）、`metadata`（等待元数据）、`organizing`（筛选和重命名）、`moving`（移动目录）、`done`（自动整理完成）、`existing`（检测到已有外部任务）、`needs_review`（需人工审核）、`ignored`（已忽略）、`superseded`（被更高修订版本替代）。队列代码还识别 `upgrading` 状态。
+常见状态包括 `queued`（待投递）、`metadata`（等待元数据）、`organizing`（筛选和重命名）、`moving`（移动目录）、`done`（自动整理完成）、`existing`（检测到已有外部任务）、`needs_review`（需人工审核）、`ignored`（已忽略）、`superseded`（被更高修订版本替代）、`upgrading`（修订版升级）、`replacing`（等待新版替换）和 `season_changing`（同步订阅季度）。
+
+修改订阅番名或季度时，`feed_items.parse_data.title/season` 与 `download_jobs.title/season` 保存目标名称和季度，已有集数保留。`plan.season_change` 持久化原名称、原季度、原计划、原保存路径、逐文件改名映射、目标计划及暂停、暂存、改名、移动、标签同步、恢复等阶段；按旧快照定位原文件，按新名称和新季度构造目标路径，完成后使用新整理计划并移除迁移标记。`plan.show_tag` 记录受管标签，改番名时仅移除旧计划中记录的标签，不修改 qB 任务名。三图复制到新番名目录后同步更新 `show_artwork` 的目录和图片路径引用；原图保留以兼容其他订阅。迁移由后台队列续跑，不需要修改表结构。
 
 `done` 表示自动投递和整理流程完成，实际下载是否完成由下载器实时状态决定。进度、速度、剩余时间没有单独持久化字段。
 

@@ -143,6 +143,7 @@ function DownloadRow({ task, logoUrl }: { task: DownloadTask; logoUrl?: string }
 }
 
 function statusDisplay(task: DownloadTask): { label: string; tone: "success" | "warning" | "danger" | "neutral" } {
+  if (task.automation_state === "season_changing") return { label: task.automation_error ? "媒体库迁移异常" : "同步媒体库中", tone: task.automation_error ? "danger" : "neutral" }
   if (task.automation_state === "superseded") return { label: "已被新版取代", tone: "neutral" }
   if (task.automation_state === "upgrading") return { label: "修订版升级中", tone: "neutral" }
   if (task.automation_state === "replacing") return { label: "等待新版替换", tone: "neutral" }
