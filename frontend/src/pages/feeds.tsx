@@ -1,12 +1,14 @@
 import { MIKAN_BASE_URL } from "@/lib/mikan"
 import { AddSubscriptionButton } from "@/components/add-subscription-button"
 import { EditSubscriptionDialog } from "@/components/edit-subscription-dialog"
+import { FeedClearlogo } from "@/components/feed-clearlogo"
 import { NativeButton } from "@/components/ui/button"
 import { useState, type FormEvent } from "react"
 import { ContextMenu } from "radix-ui"
+import { useNavigate } from "react-router-dom"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { Check, ImageOff, LoaderCircle, MoreHorizontal, Pencil, RefreshCw, RadioTower, ScanSearch, Trash2 } from "lucide-react"
-import { api, type Show, type Feed, type FeedInspection, type TmdbCandidate, type TmdbMetadata } from "@/lib/api"
+import { api, ApiError, type Show, type Feed, type FeedInspection, type TmdbCandidate, type TmdbMetadata } from "@/lib/api"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -24,6 +26,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 export function FeedsPage() {
   const client = useQueryClient()
   const toast = useToast()
+  const navigate = useNavigate()
   const [open, setOpen] = useState(false)
   const [editing, setEditing] = useState<Feed | null>(null)
   const [deleting, setDeleting] = useState<Feed | null>(null)
@@ -35,11 +38,21 @@ export function FeedsPage() {
   const [candidates, setCandidates] = useState<TmdbCandidate[]>([])
   const [selected, setSelected] = useState<TmdbCandidate | null>(null)
   const [metadata, setMetadata] = useState<TmdbMetadata | null>(null)
+  function redirectToSettings(error: Error) {
+    if (!(error instanceof ApiError) || !["/settings#tmdb", "/settings#downloader"].includes(error.settingsPath ?? "")) return false
+    toast("添加订阅前请完善设置", { description: error.message, tone: "warning" })
+    setOpen(false)
+    navigate(error.settingsPath!)
+    return true
+  }
+  const prerequisites = useMutation({
+    mutationFn: () => api<{ message: string }>("/feeds/prerequisites", { method: "POST" }),
+    onSuccess: () => { create.reset(); setOpen(true) },
+    onError: (error) => { if (!redirectToSettings(error)) toast("无法检查订阅配置", { description: error.message, tone: "error" }) },
+  })
   const feeds = useQuery({ queryKey: ["feeds"], queryFn: () => api<Feed[]>("/feeds") })
   const shows = useQuery({ queryKey: ["shows"], queryFn: () => api<Show[]>("/shows") })
-  const clearlogos = new Map(shows.data?.filter((show) => show.clearlogo_ready).map((show) => [
-    show.id, `/api/v1/shows/${show.id}/artwork/clearlogo?v=${encodeURIComponent(show.artwork_version ?? "")}`,
-  ]))
+  const clearlogos = new Map(shows.data?.filter((show) => show.clearlogo_ready).map((show) => [show.id, show]))
   const create = useMutation({
     mutationFn: () => api<Feed>("/feeds", { method: "POST", body: JSON.stringify({ name, url, kind, excluded_keywords: excludedKeywords, season: season === "" ? null : Number(season), active: true, refresh_interval_minutes: 5, tmdb: selected ? { tmdb_id: selected.tmdb_id, media_type: selected.media_type } : null }) }),
     onSuccess: () => {
@@ -47,8 +60,8 @@ export function FeedsPage() {
       void client.invalidateQueries({ queryKey: ["dashboard"] })
       void client.invalidateQueries({ queryKey: ["shows"] })
       setExcludedKeywords(["720"]); setOpen(false); setName(""); setUrl(""); setSeason(""); setCandidates([]); setSelected(null); setMetadata(null)
-      toast("RSS 订阅已添加", { description: "现在可以执行首次刷新。" })
     },
+    onError: (error) => { redirectToSettings(error) },
   })
   const tmdbSearch = useMutation({
     mutationFn: (query: string) => api<TmdbCandidate[]>("/tmdb/search", { method: "POST", body: JSON.stringify({ query }) }),
@@ -99,7 +112,7 @@ export function FeedsPage() {
     },
     onError: (error) => toast("删除订阅失败", { description: error.message, tone: "error" }),
   })
-  function submit(event: FormEvent) { event.preventDefault(); create.mutate() }
+  function submit(event: FormEvent) { event.preventDefault(); if (!create.isPending) create.mutate() }
   function chooseCandidate(candidate: TmdbCandidate) {
     setSelected(candidate)
     setMetadata(null)
@@ -108,10 +121,10 @@ export function FeedsPage() {
 
   return <>
     <PageHeading eyebrow="Sources" title="RSS 订阅" description="管理 Mikan 和兼容 RSS / Atom 的发布源。相同条目会按 GUID、链接和内容指纹去重。" action={
-      <Dialog open={open} onOpenChange={setOpen}>
-        <DialogTrigger asChild><AddSubscriptionButton/></DialogTrigger>
+      <Dialog open={open} onOpenChange={next => { if (next) { if (!prerequisites.isPending) prerequisites.mutate() } else setOpen(false) }}>
+        <DialogTrigger asChild><AddSubscriptionButton pending={prerequisites.isPending}/></DialogTrigger>
         <DialogContent>
-          <DialogHeader><DialogTitle>添加 RSS 源</DialogTitle><DialogDescription>保存后可以立即执行一次拉取测试。</DialogDescription></DialogHeader>
+          <DialogHeader><DialogTitle>添加 RSS 源</DialogTitle><DialogDescription>保存后自动关闭，后台刮削完成后会通知你。</DialogDescription></DialogHeader>
           <form onSubmit={submit} className="grid gap-4">
             <Field label={<span className="inline-flex items-center gap-2">RSS 地址<a href={MIKAN_BASE_URL} target="_blank" rel="noopener noreferrer" className="text-xs font-normal text-[var(--accent)] hover:underline" aria-label="打开蜜柑计划（新标签页）">蜜柑计划 ↗</a></span>} hint="后端会读取频道 <title>，并自动清理 Mikan Project 前缀。"><div className="flex flex-col gap-2 sm:flex-row"><Input type="url" value={url} onChange={(event) => { setUrl(event.target.value); setCandidates([]); setSelected(null); setMetadata(null); tmdbSearch.reset() }} placeholder={`${MIKAN_BASE_URL}/RSS/...`} required/><Button type="button" variant="secondary" onClick={() => inspect.mutate()} disabled={!url || inspect.isPending}><ScanSearch size={15} className={inspect.isPending ? "animate-pulse" : ""}/>{inspect.isPending ? "解析中…" : "解析 RSS"}</Button></div></Field>
             <Field label="番剧名称" hint="解析完成后会自动搜索 TMDB；修改名称后可再次搜索。"><div className="flex flex-col gap-2 sm:flex-row"><Input value={name} onChange={(event) => setName(event.target.value)} placeholder="留空时由后端自动解析"/><Button type="button" variant="secondary" onClick={() => tmdbSearch.mutate(name)} disabled={!name || tmdbSearch.isPending}><ScanSearch size={15}/>{tmdbSearch.isPending ? "搜索中…" : "搜索 TMDB"}</Button></div></Field>
@@ -149,7 +162,7 @@ export function FeedsPage() {
                 <p className="mt-1 truncate text-[13px] text-[var(--muted)]">{feed.url}</p>
                 {feed.last_error && <p className="mt-1 text-xs text-[var(--danger)]">{feed.last_error}</p>}
               </div>
-              <div className="feed-card-clearlogo" aria-hidden="true">{clearlogos.has(feed.id) && <img src={clearlogos.get(feed.id)} alt="" loading="lazy"/>}</div>
+              <div className="feed-card-clearlogo" aria-hidden="true">{clearlogos.has(feed.id) && <FeedClearlogo show={clearlogos.get(feed.id)!}/>}</div>
               <div className="feed-card-status">
                 <Badge tone={feed.connection_status === "healthy" ? "success" : feed.connection_status === "error" ? "danger" : "neutral"}>{feed.connection_status === "healthy" ? "正常" : feed.connection_status === "error" ? "异常" : "未检查"}</Badge>
                 <div className="flex shrink-0 items-center gap-2">

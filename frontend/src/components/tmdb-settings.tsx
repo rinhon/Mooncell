@@ -31,7 +31,7 @@ export function TmdbSettingsSection() {
     onError: (error) => toast("TMDB 设置保存失败", { description: error.message, tone: "error" }),
   })
   function submit(event: FormEvent) { event.preventDefault(); save.mutate() }
-  return <Card><CardHeader><div><CardTitle>TMDB 元数据与图片</CardTitle><CardDescription>通过官方 API 搜索作品、获取元数据及图片。两项任选其一；同时配置时优先使用读访问令牌。</CardDescription></div></CardHeader><CardContent>
+  return <Card id="tmdb"><CardHeader><div><CardTitle>TMDB 元数据与图片</CardTitle><CardDescription>通过官方 API 搜索作品、获取元数据及图片。两项任选其一；同时配置时优先使用读访问令牌。</CardDescription></div></CardHeader><CardContent>
     {query.isPending ? <p role="status">正在读取 TMDB 设置…</p> : query.isError ? <p role="alert" className="text-sm text-[var(--danger)]">读取失败：{query.error.message}<button className="ml-3 underline" onClick={() => void query.refetch()}>重试</button></p> : <form onSubmit={submit} className="grid gap-4">
       <Field label="TMDB API 读访问令牌" hint="输入令牌本身，无需添加 Bearer 前缀。留空保留原配置。"><Input type="password" autoComplete="new-password" maxLength={4096} value={token} disabled={save.isPending || clearToken} onChange={(event) => setToken(event.target.value)} placeholder={query.data.read_access_token_configured ? "已配置（加密保存）" : "未配置"}/></Field>
       {query.data.read_access_token_configured && <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={clearToken} disabled={save.isPending} onChange={(event) => setClearToken(event.target.checked)}/>保存时清除读访问令牌</label>}

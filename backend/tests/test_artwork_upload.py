@@ -63,7 +63,9 @@ async def test_upload_routes_and_persistence(monkeypatch, tmp_path, png):
         ) as client:
             base = f"/api/v1/shows/{source_id}/artwork"
             assert (await client.post(f"{base}/poster", content=png)).status_code == 401
+            assert (await client.get(f"{base}/clearlogo/appearance")).status_code == 401
             app.dependency_overrides[require_user] = lambda: object()
+            assert (await client.get(f"{base}/clearlogo/appearance")).status_code == 404
             for kind in ("poster", "fanart", "clearlogo"):
                 response = await client.post(f"{base}/{kind}", content=png)
                 assert response.status_code == 200, response.text
@@ -73,6 +75,9 @@ async def test_upload_routes_and_persistence(monkeypatch, tmp_path, png):
                 assert image.status_code == 200
                 assert image.headers["content-type"].startswith("image/")
             assert response.json()["artwork_status"] == "completed"
+            appearance = await client.get(f"{base}/clearlogo/appearance")
+            assert appearance.status_code == 200
+            assert appearance.json() == {"background": "dark"}
             assert (await client.post(f"{base}/invalid", content=png)).status_code == 422
             assert (await client.post(f"{base}/poster", content=b"bad")).status_code == 422
             assert (await client.post(

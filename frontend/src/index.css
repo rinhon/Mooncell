@@ -186,10 +186,26 @@ button { cursor: pointer; }
   pointer-events: none;
 }
 .feed-card-clearlogo img { max-width: 100%; max-height: 100%; object-fit: contain; }
+.clearlogo-plate {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  padding: 8px 12px;
+  border: 1px solid rgba(237,240,238,.06);
+  border-radius: 2px;
+  background-color: rgba(12,20,15,.55);
+  background-image: linear-gradient(135deg, rgba(255,255,255,.05), transparent);
+  transition: background-color 220ms ease, border-color 220ms ease;
+}
+.clearlogo-plate[data-background="light"] { background-color: #dce4dd; border-color: rgba(237,240,238,.25); }
+@media (prefers-reduced-motion: reduce) { .clearlogo-plate { transition: none; } }
 .feed-card-status { display: flex; align-items: center; gap: 12px; }
 @media (max-width: 639px) {
   .feed-card { grid-template-columns: minmax(0, 1fr) minmax(48px, 72px); gap: 12px; }
   .feed-card-clearlogo { height: 48px; }
+  .clearlogo-plate { padding: 4px 6px; }
   .feed-card-status { grid-column: 1 / -1; justify-content: space-between; gap: 8px; }
 }
 .overflow-measure { position: fixed; top: 0; left: -10000px; display: flex; width: max-content; visibility: hidden; pointer-events: none; contain: layout; }
@@ -215,14 +231,13 @@ button { cursor: pointer; }
 .show-cover-initial { font-size: clamp(2rem, 5vw, 4rem); font-weight: 300; color: var(--ink-2); }
 .show-cover-title { position: absolute; bottom: .75rem; left: .75rem; right: .75rem; font-size: var(--fs-caption); text-align: center; text-wrap: balance; }
 .utility-navigation { display: flex; gap: .25rem; }
-.utility-link { display: grid; place-items: center; width: 2.25rem; height: 2.25rem; border: 1px solid transparent; border-radius: 2px; color: var(--muted); }
-.utility-link:hover { color: var(--ink); background: var(--surface-raised); }
+.utility-link { position: relative; z-index: 1; display: grid; place-items: center; width: 2.25rem; height: 2.25rem; border: 1px solid transparent; border-radius: 2px; color: var(--muted); transition: color 180ms ease; }
+.utility-link:hover { color: var(--ink); }
+.utility-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .utility-link.active { color: var(--accent); background: var(--accent-soft); border-color: var(--border); }
 .feed-list > .feed-card + .feed-card { border-top: 1px solid var(--border-soft); }
 @media (max-width: 480px) {
   .brand-mark { width: min(180px, calc(100vw - 200px)); }
   .top-actions { gap: .25rem; }
-  .top-action { width: 28px; padding: 0; }
-  .top-action .button-label { display: none; }
   .utility-link { width: 2rem; }
 }

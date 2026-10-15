@@ -98,6 +98,10 @@ class ShowRead(BaseModel):
     clearlogo_ready: bool = False
 
 
+class ArtworkAppearance(BaseModel):
+    background: Literal["light", "dark"]
+
+
 class FeedCreate(BaseModel):
     excluded_keywords: list[str] = Field(default_factory=lambda: ["720"], max_length=20)
 

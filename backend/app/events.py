@@ -62,6 +62,15 @@ def event_log_fields(event_type: str, payload: dict) -> tuple[str, str, str]:
             f"季度新番封面缓存不完整：{payload.get('season', '')} · "
             f"{payload.get('count', 0)} 张失败 · {payload.get('error') or '未知错误'}"
         )
+    elif event_type == "feed.setup.completed":
+        suffix = "，元数据和图片刮削完成" if payload.get("hasTmdb") else ""
+        message = f"RSS 订阅已添加：{payload.get('name', '未知订阅')}{suffix}"
+    elif event_type in {"feed.setup.partial", "feed.setup.failed"}:
+        result = "刮削不完整" if event_type.endswith(".partial") else "刮削失败"
+        message = (
+            f"RSS 订阅已保存，{result}：{payload.get('name', '未知订阅')} · "
+            f"{payload.get('error') or '详细原因请查看实时日志'}"
+        )
     elif event_type == "feed.updated":
         message = f"RSS 订阅已修改：{payload.get('name', '未知订阅')}"
     elif event_type == "feed.refresh.started":

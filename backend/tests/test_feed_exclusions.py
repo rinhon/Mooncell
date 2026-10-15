@@ -2,10 +2,11 @@ from unittest.mock import AsyncMock
 
 import httpx
 import pytest
+from fastapi import BackgroundTasks
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from app import database, rss_service
+from app import api, database, rss_service
 from app.api import create_feed
 from app.database import Base
 from app.models import FeedItem
@@ -22,6 +23,7 @@ def test_keyword_defaults_and_normalization():
 
 @pytest.mark.parametrize("keywords, expected", [(["720"], 2), (["720", "raw"], 1), ([], 3)])
 async def test_create_persist_and_filter(monkeypatch, keywords, expected):
+    monkeypatch.setattr(api, "_validate_feed_prerequisites", AsyncMock())
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
     async with engine.begin() as connection:
         await connection.run_sync(Base.metadata.create_all)
@@ -36,7 +38,7 @@ async def test_create_persist_and_filter(monkeypatch, keywords, expected):
     monkeypatch.setattr(rss_service.httpx, "AsyncClient", lambda **kwargs: original_client(transport=transport))
     monkeypatch.setattr(rss_service.FeedRefreshService, "_enqueue_downloads", AsyncMock())
     async with sessions() as session:
-        source = await create_feed(FeedCreate(name="Example", url="https://example.com/rss", excluded_keywords=keywords), _user=object(), session=session)
+        source = await create_feed(FeedCreate(name="Example", url="https://example.com/rss", excluded_keywords=keywords), BackgroundTasks(), _user=object(), session=session)
         await session.refresh(source)
         assert FeedRead.model_validate(source).excluded_keywords == keywords
         result = await rss_service.FeedRefreshService(session).refresh(source)

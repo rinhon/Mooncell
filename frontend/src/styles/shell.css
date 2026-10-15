@@ -1,14 +1,14 @@
 .app-frame { min-height: 100vh; display: grid; grid-template-columns: minmax(0,1fr); grid-template-rows: auto 1fr; }
-.top-navigation { position: sticky; top: 0; z-index: 40; grid-column: 1 / -1; display: flex; align-items: center; gap: 28px; min-width: 0; padding: 0 32px; border-bottom: 1px solid var(--border); background: rgba(22,27,24,.92); backdrop-filter: blur(18px); }
+.top-navigation { position: sticky; isolation: isolate; top: 0; z-index: 40; grid-column: 1 / -1; display: flex; align-items: center; gap: 28px; min-width: 0; padding: 0 32px; border-bottom: 1px solid var(--border); background: rgba(22,27,24,.92); backdrop-filter: blur(18px); }
 .brand-mark { flex: 0 0 auto; display: flex; align-items: center; gap: 10px; min-height: 76px; padding: 0; border: 0; color: var(--accent); background: transparent; }
 .brand-mark { width: 220px; height: 76px; }
 .brand-mark .stroke-text { width: 100%; }
 .brand-mark .stroke-text__svg { height: 56px; }
-.top-links { position: relative; isolation: isolate; display: flex; align-self: stretch; min-width: 0; gap: 4px; flex: 1 1 0; overflow: clip; }
-.navigation-glow { display: none; position: absolute; inset: 0; pointer-events: none; background: radial-gradient(100px 70px at var(--pointer-x, 0px) var(--pointer-y, 0px), rgba(237,240,238,.1), rgba(237,240,238,.04) 42%, transparent 100%); opacity: 0; transition: opacity 220ms ease; }
+.top-links { position: relative; isolation: isolate; display: flex; align-self: stretch; min-width: 0; gap: 4px; flex: 1 1 0; overflow: visible; }
+.navigation-glow { display: none; position: absolute; inset: 0; z-index: -1; pointer-events: none; background: radial-gradient(100px 70px at var(--pointer-x, 0px) var(--pointer-y, 0px), rgba(237,240,238,.1), rgba(237,240,238,.04) 42%, transparent 100%); opacity: 0; transition: opacity 220ms ease; }
 @media (hover: hover) and (pointer: fine) and (prefers-reduced-motion: no-preference) {
   .navigation-glow { display: block; }
-  .top-links[data-pointer="true"] .navigation-glow { opacity: 1; }
+  .top-navigation[data-pointer="true"] > .navigation-glow { opacity: 1; }
 }
 .top-link { position: relative; flex: 0 0 auto; display: flex; align-items: center; justify-content: center; gap: 7px; padding: 0 13px; min-height: 60px; color: var(--ink-2); text-decoration: none; font-size: var(--fs-small); transition: color 180ms ease, background-color 180ms ease; }
 .navigation-hover { position: absolute; inset: 0; z-index: -1; pointer-events: none; background: rgba(237,240,238,.06); opacity: 0; transition: opacity 160ms ease; }
@@ -24,9 +24,7 @@
 .rail-slider { position: absolute; right: 13px; left: 13px; bottom: 0; height: 2px; background: var(--accent); opacity: 0; }
 .top-link.active .rail-slider { opacity: 1; }
 .top-actions { margin-left: auto; flex: 0 0 auto; display: flex; align-items: center; gap: 16px; }
-.top-action { display: flex; align-items: center; justify-content: center; gap: 6px; min-height: 40px; padding: 0 4px; border: 0; background: transparent; color: var(--muted); font-size: var(--fs-caption); white-space: nowrap; }
-.top-action:hover { color: var(--ink); }
-.top-link:focus-visible, .top-action:focus-visible, .brand-mark:focus-visible { outline: 2px solid var(--accent); outline-offset: -3px; }
+.top-link:focus-visible, .brand-mark:focus-visible { outline: 2px solid var(--accent); outline-offset: -3px; }
 .app-workspace { min-width: 0; }
 .content-stage { padding: 32px 46px 52px; }
 .page-content { min-width: 0; }

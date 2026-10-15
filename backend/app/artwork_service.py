@@ -7,6 +7,7 @@ import tempfile
 import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from functools import lru_cache
 from pathlib import Path
 from urllib.parse import urlparse, urlunparse
 
@@ -15,6 +16,36 @@ import httpx
 from .config import settings
 from .providers.tmdb import TmdbArtworkUrls, scrape_tmdb_artwork_urls, search_tmdb
 from .schemas import TmdbMetadata
+
+
+def clearlogo_background(path: str) -> str:
+    """按可见像素的亮度选择底色；文件被覆盖后自动重新分析。"""
+    try:
+        image = Path(path)
+        stat = image.stat()
+        return _clearlogo_background(str(image), stat.st_mtime_ns, stat.st_size)
+    except OSError:
+        return "dark"
+
+
+@lru_cache(maxsize=256)
+def _clearlogo_background(path: str, modified_ns: int, size: int) -> str:
+    try:
+        result = subprocess.run(
+            ["magick", "-limit", "memory", "64MiB", "-limit", "map", "128MiB",
+             f"{path}[0]", "-alpha", "on", "-thumbnail", "128x128>", "-colorspace", "RGB",
+             "-channel", "RGB", "-fx", "u*u.a", "+channel", "-format",
+             "%[fx:mean.a]|%[fx:(0.2126*mean.r+0.7152*mean.g+0.0722*mean.b)"
+             "/max(mean.a,0.000001)]", "info:"],
+            capture_output=True, text=True, timeout=5, check=False,
+        )
+        if result.returncode:
+            return "dark"
+        alpha, luminance = (float(value) for value in result.stdout.strip().split("|"))
+        # 线性亮度约 0.16 以下时，浅底比当前深色底板有更高的文字对比度。
+        return "light" if alpha > 0.001 and luminance < 0.16 else "dark"
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return "dark"
 
 
 def store_uploaded_artwork(content: bytes, directory: Path, kind: str) -> Path:

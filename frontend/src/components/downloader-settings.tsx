@@ -82,7 +82,7 @@ export function DownloaderSettingsSection() {
   const status = lastTest ? (lastTest.result.ok ? "healthy" : "error") : saved?.connection_status ?? "unknown"
   const testedVersion = lastTest?.result.version
 
-  return <section className="grid gap-4">
+  return <section id="downloader" className="grid gap-4">
     <Card>
       <CardHeader><div><CardTitle>下载器连接</CardTitle><CardDescription>{saved ? "修改后直接保存；密码留空会保留当前密码。" : "填写连接信息后可先测试，再保存配置。"}</CardDescription></div><Badge tone={status === "healthy" ? "success" : status === "error" ? "danger" : "neutral"}>{status === "healthy" ? `已连接${testedVersion ? ` · ${testedVersion}` : ""}` : status === "error" ? "异常" : saved ? "未测试" : "未配置"}</Badge></CardHeader>
       <CardContent>

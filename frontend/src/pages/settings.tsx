@@ -2,9 +2,9 @@ import { SubscriptionSettingsSection } from "@/components/subscription-settings"
 import { TmdbSettingsSection } from "@/components/tmdb-settings"
 import { useEffect } from "react"
 import { useLocation } from "react-router-dom"
-import { useQuery } from "@tanstack/react-query"
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { ParserSettingsSection } from "@/pages/parser"
-import { FolderTree } from "lucide-react"
+import { FolderTree, LogOut } from "lucide-react"
 import { api, type ParsedRelease } from "@/lib/api"
 import { DownloaderSettingsSection } from "@/components/downloader-settings"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -12,14 +12,23 @@ import { Field } from "@/components/field"
 import { Input } from "@/components/ui/input"
 import { FolderPicker, type LibraryPath } from "@/components/folder-picker"
 import { PageHeading } from "@/components/page-heading"
+import { Button } from "@/components/ui/button"
+import { useToast } from "@/components/ui/toast"
 
 type Preview = { parsed: ParsedRelease; directory: string; filename: string; full_path: string; library_root: string; folder_name: string; season_folder: string; separator: string }
 
 /** 集中管理下载器连接，以及媒体库目录和文件命名。 */
 export function SettingsPage() {
+  const client = useQueryClient()
+  const toast = useToast()
+  const logout = useMutation({
+    mutationFn: () => api("/auth/logout", { method: "POST" }),
+    onSuccess: () => client.invalidateQueries({ queryKey: ["auth"] }),
+    onError: (error) => toast("退出登录失败", { description: error.message, tone: "error" }),
+  })
   const { hash } = useLocation()
   useEffect(() => {
-    if (hash === "#parser") document.getElementById("parser")?.scrollIntoView()
+    if (["#parser", "#tmdb", "#downloader"].includes(hash)) document.getElementById(hash.slice(1))?.scrollIntoView()
   }, [hash])
   const library = useQuery({ queryKey: ["library-settings"], queryFn: () => api<LibraryPath>("/settings/library") })
   const root = library.data?.library_root ?? ""
@@ -61,6 +70,12 @@ export function SettingsPage() {
         </Card>
       </section>
       <section id="parser" className="grid scroll-mt-6 gap-4"><ParserSettingsSection/></section>
+      <Card>
+        <CardHeader><div><CardTitle>登录会话</CardTitle><CardDescription>退出当前账户，之后需要重新登录。</CardDescription></div></CardHeader>
+        <CardContent className="flex justify-end">
+          <Button variant="secondary" icon={LogOut} pending={logout.isPending} pendingLabel="退出中…" onClick={() => logout.mutate()}>退出登录</Button>
+        </CardContent>
+      </Card>
     </div>
   </>
 }

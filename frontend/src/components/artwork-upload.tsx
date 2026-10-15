@@ -27,6 +27,8 @@ function UploadField({ show, kind }: { show: Show; kind: Kind }) {
     onSuccess: (updated) => {
       client.setQueryData<Show[]>(["shows"], old => old?.map(item => item.id === updated.id ? updated : item))
       void client.invalidateQueries({ queryKey: ["shows"] })
+      void client.invalidateQueries({ queryKey: ["feeds"] })
+      setFile(null)
       toast(`${labels[kind]} 已上传`)
     },
     onError: (error) => toast("图片上传失败", { description: error.message, tone: "error" }),
@@ -37,17 +39,19 @@ function UploadField({ show, kind }: { show: Show; kind: Kind }) {
     <div className="grid h-32 place-items-center overflow-hidden bg-white/[.04]">{preview || existing ? <img src={preview ?? existing!} alt={`${labels[kind]}预览`} className="max-h-32 max-w-full object-contain"/> : <span className="text-xs text-[var(--muted)]">暂无图片</span>}</div>
     <input type="file" aria-label={`选择${labels[kind]}`} accept="image/jpeg,image/png,image/webp" disabled={upload.isPending} className="w-full min-w-0 text-xs" onChange={event => {
       const image = event.target.files?.[0]
+      // 清空原生选择值，允许再次选择同一个文件进行覆盖上传。
+      event.target.value = ""
       if (!image) return
-      if (image.size > 10 * 1024 * 1024) { toast("图片不能超过 10 MB", { tone: "error" }); event.target.value = ""; return }
+      if (image.size > 10 * 1024 * 1024) { toast("图片不能超过 10 MB", { tone: "error" }); return }
       setFile(image)
     }}/>
-    <ActionButton icon={Upload} pendingLabel="上传中…" pending={upload.isPending} disabled={!file} onClick={() => file && upload.mutate(file)}>上传 {kind}</ActionButton>
+    <ActionButton icon={Upload} pendingLabel="上传中…" pending={upload.isPending} disabled={!file} onClick={() => file && upload.mutate(file)}>{existing ? "覆盖上传" : "上传"} {kind}</ActionButton>
   </section>
 }
 
 export function ArtworkUpload({ show, onClose }: { show: Show | null; onClose: () => void }) {
   return <Dialog open={Boolean(show)} onOpenChange={open => !open && onClose()}><DialogContent>
-    <DialogHeader><DialogTitle>上传番剧图片</DialogTitle><DialogDescription>{show?.name} · 支持 PNG、JPEG、WebP，单张最大 10 MB。上传后替换对应图片；透明标志建议使用透明 PNG。</DialogDescription></DialogHeader>
+    <DialogHeader><DialogTitle>上传番剧图片</DialogTitle><DialogDescription>{show?.name} · 支持 PNG、JPEG、WebP，单张最大 10 MB。上传将覆盖对应的已有图片；透明标志建议使用透明 PNG。</DialogDescription></DialogHeader>
     {show && <div className="grid gap-4 sm:grid-cols-3">{(["poster", "fanart", "clearlogo"] as Kind[]).map(kind => <UploadField key={`${show.id}-${kind}`} show={show} kind={kind}/>)}</div>}
   </DialogContent></Dialog>
 }

@@ -1,6 +1,6 @@
 /** 前端唯一的 HTTP 入口：统一 API 前缀、Cookie 携带和错误结构。 */
 export class ApiError extends Error {
-  constructor(public status: number, message: string) {
+  constructor(public status: number, message: string, public settingsPath?: string) {
     super(message)
   }
 }
@@ -14,7 +14,8 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
   })
   if (!response.ok) {
     const body = await response.json().catch(() => null)
-    throw new ApiError(response.status, body?.detail ?? "请求失败")
+    const detail = body?.detail
+    throw new ApiError(response.status, typeof detail === "string" ? detail : detail?.message ?? "请求失败", detail?.settings_path)
   }
   return response.json() as Promise<T>
 }

@@ -8,7 +8,7 @@ from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, Response, status
 from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
@@ -16,12 +16,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from .artwork_service import (
     ArtworkResult,
+    clearlogo_background,
     safe_folder_name,
     scrape_and_store_artwork,
     store_uploaded_artwork,
 )
 from .config import settings
-from .database import get_session
+from .database import SessionFactory, get_session
 from .dependencies import optional_user, require_user
 from .download_queue import queue_lock, remote_root
 from .downloader_service import extract_info_hash, get_qbittorrent_snapshot, test_downloader
@@ -35,6 +36,7 @@ from .models import (
     FeedSource,
     ShowArtwork,
     ShowMetadata,
+    TmdbSettings,
     User,
     UserSession,
 )
@@ -43,6 +45,7 @@ from .release_parser import parse_release_title
 from .rss_service import FeedRefreshService, describe_rss_exception, inspect_feed
 from .schemas import (
     ApiMessage,
+    ArtworkAppearance,
     AuthStatus,
     Credentials,
     DashboardSummary,
@@ -197,14 +200,48 @@ async def list_feeds(
     return list(result)
 
 
+async def _validate_feed_prerequisites(session: AsyncSession) -> None:
+    tmdb = await session.get(TmdbSettings, 1)
+    if not tmdb or not (tmdb.encrypted_read_access_token or tmdb.encrypted_api_key):
+        raise HTTPException(status_code=409, detail={
+            "message": "请先填写 TMDB API 读访问令牌或 API Key，两项任选其一。",
+            "settings_path": "/settings#tmdb",
+        })
+    downloader = await session.scalar(
+        select(DownloaderConfig).where(DownloaderConfig.active.is_(True))
+        .order_by(DownloaderConfig.created_at.desc()).limit(1)
+    )
+    if downloader is None:
+        raise HTTPException(status_code=409, detail={
+            "message": "请先配置并启用下载器，测试连接成功后再添加订阅。",
+            "settings_path": "/settings#downloader",
+        })
+    result = await _check_saved_downloader(session, downloader)
+    if not result.ok:
+        raise HTTPException(status_code=409, detail={
+            "message": "下载器连接失败，请检查设置并测试连接后再添加订阅。",
+            "settings_path": "/settings#downloader",
+        })
+
+
+@router.post("/feeds/prerequisites", response_model=ApiMessage)
+async def check_feed_prerequisites(
+    _user: User = Depends(require_user), session: AsyncSession = Depends(get_session),
+) -> ApiMessage:
+    await _validate_feed_prerequisites(session)
+    return ApiMessage(message="订阅配置检查通过")
+
+
 @router.post("/feeds", response_model=FeedRead, status_code=status.HTTP_201_CREATED)
 async def create_feed(
     data: FeedCreate,
+    background_tasks: BackgroundTasks,
     _user: User = Depends(require_user),
     session: AsyncSession = Depends(get_session),
 ) -> FeedSource:
     if await session.scalar(select(FeedSource.id).where(FeedSource.url == str(data.url))):
         raise HTTPException(status_code=409, detail="该 RSS 源已经存在")
+    await _validate_feed_prerequisites(session)
     feed_name = data.name.strip() if data.name else ""
     feed_kind = data.kind
     if not feed_name:
@@ -224,66 +261,92 @@ async def create_feed(
         refresh_interval_minutes=(await get_options(session)).refresh_interval_minutes,
     )
     if data.tmdb:
-        metadata_error: str | None = None
-        try:
-            metadata = await scrape_tmdb(data.tmdb.tmdb_id, data.tmdb.media_type)
-        except Exception as exc:
-            # 元数据服务短暂不可用时仍保存订阅，用户之后可从番剧页重新刮削。
-            metadata_error = f"{exc.__class__.__name__}: {str(exc).strip()}".rstrip(": ")
-            metadata = TmdbMetadata(
-                tmdb_id=data.tmdb.tmdb_id,
-                media_type=data.tmdb.media_type,
-                title=feed_name,
-                href=f"{settings.tmdb_base_url}/{data.tmdb.media_type}/{data.tmdb.tmdb_id}",
-            )
         source.show_metadata = ShowMetadata(
-            tmdb_id=metadata.tmdb_id,
-            media_type=metadata.media_type,
-            title=metadata.title,
-            overview=metadata.overview,
-            poster_url=metadata.poster_url,
-            release_date=metadata.release_date,
-            genres_json=json.dumps(metadata.genres, ensure_ascii=False),
-            episode_count=metadata.episode_count,
-            rating=metadata.rating,
-            vote_count=metadata.vote_count,
-            href=metadata.href,
+            tmdb_id=data.tmdb.tmdb_id,
+            media_type=data.tmdb.media_type,
+            title=feed_name,
+            href=f"{settings.tmdb_base_url}/{data.tmdb.media_type}/{data.tmdb.tmdb_id}",
         )
-        downloader = await session.scalar(
-            select(DownloaderConfig).where(DownloaderConfig.active.is_(True)).limit(1)
-        )
-        try:
-            artwork = await scrape_and_store_artwork(
-                feed_name, metadata,
-                await get_library_root(session, downloader.library_root if downloader else None),
-            )
-            if metadata_error and not artwork.error:
-                artwork.error = metadata_error
-                artwork.status = "partial"
-        except Exception as exc:
-            directory = Path(await get_library_root(session)) / safe_folder_name(feed_name)
-            artwork = ArtworkResult(
-                directory=str(directory),
-                poster_path=None,
-                fanart_path=None,
-                clearlogo_path=None,
-                status="failed",
-                error=f"{exc.__class__.__name__}: {str(exc).strip()}".rstrip(": "),
-                scraped_at=datetime.now(UTC),
-            )
         source.artwork = ShowArtwork(
-            directory=artwork.directory,
-            poster_path=artwork.poster_path,
-            fanart_path=artwork.fanart_path,
-            clearlogo_path=artwork.clearlogo_path,
-            status=artwork.status,
-            last_error=artwork.error,
-            scraped_at=artwork.scraped_at,
+            directory=str(Path(await get_library_root(session)) / safe_folder_name(feed_name)),
+            status="pending",
         )
     session.add(source)
     await session.commit()
     await session.refresh(source)
+    if data.tmdb:
+        background_tasks.add_task(_complete_feed_setup, source.id)
+    else:
+        await _record_and_publish_event(
+            session, "feed.setup.completed", "feed_source", str(source.id),
+            {"name": source.name, "hasTmdb": False},
+        )
     return source
+
+
+async def _complete_feed_setup(source_id: int) -> None:
+    """订阅已保存后再刮削；独立会话避免依赖请求生命周期。"""
+    async with SessionFactory() as session:
+        source = await session.get(FeedSource, source_id)
+        if source is None or source.show_metadata is None:
+            return
+        feed_name = source.name
+        tmdb_id = source.show_metadata.tmdb_id
+        media_type = source.show_metadata.media_type
+        downloader = await session.scalar(
+            select(DownloaderConfig).where(DownloaderConfig.active.is_(True)).limit(1)
+        )
+        library_root = await get_library_root(
+            session, downloader.library_root if downloader else None,
+        )
+
+    # 网络请求期间不持有数据库事务，订阅列表可以立即读取和编辑。
+    metadata_error: str | None = None
+    try:
+        metadata = await scrape_tmdb(tmdb_id, media_type)
+    except Exception as exc:
+        metadata_error = f"{exc.__class__.__name__}: {str(exc).strip()}".rstrip(": ")
+        metadata = TmdbMetadata(
+            tmdb_id=tmdb_id, media_type=media_type, title=feed_name,
+            href=f"{settings.tmdb_base_url}/{media_type}/{tmdb_id}",
+        )
+    try:
+        artwork = await scrape_and_store_artwork(feed_name, metadata, library_root)
+        if metadata_error:
+            artwork.error = "; ".join(filter(None, [metadata_error, artwork.error]))
+            if artwork.status == "completed":
+                artwork.status = "partial"
+    except Exception as exc:
+        artwork = ArtworkResult(
+            directory=str(Path(library_root) / safe_folder_name(feed_name)),
+            poster_path=None, fanart_path=None, clearlogo_path=None,
+            status="failed",
+            error=f"{exc.__class__.__name__}: {str(exc).strip()}".rstrip(": "),
+            scraped_at=datetime.now(UTC),
+        )
+
+    async with SessionFactory() as session:
+        source = await session.get(FeedSource, source_id)
+        if source is None:
+            return
+        for field in (
+            "title", "overview", "poster_url", "release_date", "episode_count", "rating",
+            "vote_count", "href",
+        ):
+            setattr(source.show_metadata, field, getattr(metadata, field))
+        source.show_metadata.genres_json = json.dumps(metadata.genres, ensure_ascii=False)
+        source.show_metadata.scraped_at = datetime.now(UTC)
+        source.artwork.directory = artwork.directory
+        source.artwork.poster_path = artwork.poster_path
+        source.artwork.fanart_path = artwork.fanart_path
+        source.artwork.clearlogo_path = artwork.clearlogo_path
+        source.artwork.status = artwork.status
+        source.artwork.last_error = artwork.error
+        source.artwork.scraped_at = artwork.scraped_at
+        await _record_and_publish_event(
+            session, f"feed.setup.{artwork.status}", "feed_source", str(source.id),
+            {"name": source.name, "hasTmdb": True, "error": artwork.error},
+        )
 
 
 @router.post("/feeds/inspect", response_model=FeedInspectResult)
@@ -608,6 +671,19 @@ async def show_artwork_file(
     return FileResponse(path)
 
 
+@router.get("/shows/{source_id}/artwork/clearlogo/appearance", response_model=ArtworkAppearance)
+async def clearlogo_appearance(
+    source_id: int, _user: User = Depends(require_user),
+    session: AsyncSession = Depends(get_session),
+) -> ArtworkAppearance:
+    source = await session.get(FeedSource, source_id)
+    path = source.artwork.clearlogo_path if source and source.artwork else None
+    if not path or not Path(path).is_file():
+        raise HTTPException(status_code=404, detail="透明标志尚未就绪")
+    background = await asyncio.to_thread(clearlogo_background, path)
+    return ArtworkAppearance(background=background)
+
+
 @router.post("/shows/{source_id}/open-folder", response_model=ApiMessage)
 async def open_show_folder(
     source_id: int,
@@ -706,6 +782,12 @@ async def test_saved_downloader(
     downloader = await session.get(DownloaderConfig, downloader_id)
     if downloader is None:
         raise HTTPException(status_code=404, detail="下载器不存在")
+    return await _check_saved_downloader(session, downloader)
+
+
+async def _check_saved_downloader(
+    session: AsyncSession, downloader: DownloaderConfig,
+) -> DownloaderTestResult:
     result = await test_downloader(
         downloader.kind,
         downloader.base_url,
