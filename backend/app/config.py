@@ -30,6 +30,7 @@ class Settings(BaseSettings):
     tmdb_user_agent: str = "Mozilla/5.0 (compatible; Mooncell/0.1; +self-hosted)"
     media_library_root: str = "./data/library"
     calendar_cache_path: str = "./data/calendar"
+    library_scan_interval_seconds: int = 60
 
     @property
     def origin_list(self) -> list[str]:

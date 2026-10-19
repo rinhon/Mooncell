@@ -9,13 +9,25 @@ from uuid import uuid4
 from sqlalchemy import select
 
 from .artwork_service import safe_folder_name
-from .models import DomainEvent, DownloadJob, FeedItem, FeedSource
+from .events import commit_and_publish, record_event
+from .models import DownloadJob, FeedItem, FeedSource
+from .notifications import update_migration
 from .qb_tags import show_tag, sync_show_tag
 from .release_parser import parse_release_title
 from .schemas import ParsedRelease
 from .staging_cleanup import cleanup_temporary_directories
 
 EXCLUDED_STATES = {"ignored", "superseded", "existing"}
+
+
+class MigrationBlocked(ValueError):
+    def __init__(self, code, message):
+        self.code = code
+        super().__init__(message)
+
+
+class MigrationWaiting(ValueError):
+    """暂时等待，队列继续重试，不产生需要处理提醒。"""
 
 
 async def schedule_season_change(session, source, season, *, rename_to=None, change_season=True):
@@ -47,7 +59,7 @@ async def schedule_season_change(session, source, season, *, rename_to=None, cha
             if target is None:
                 raise ValueError("已有下载无法从标题识别季度，请填写明确的季度")
         changes.append((item, job, plan, target, title))
-    count = 0
+    scheduled = []
     for item, job, plan, target, title in changes:
         parsed = json.loads(item.parse_data)
         if change_season:
@@ -66,8 +78,8 @@ async def schedule_season_change(session, source, season, *, rename_to=None, cha
         job.title, job.season = title, target
         job.plan = json.dumps({**plan, "season_change": migration}, ensure_ascii=False)
         job.state, job.last_error = "season_changing", None
-        count += 1
-    return count
+        scheduled.append((job.id, migration["token"]))
+    return scheduled
 
 
 def file_name(file):
@@ -144,7 +156,9 @@ def make_plan(job, item, migration, files):
         entries.append({"index": int(file.get("index", index)), "old": old,
                         "new": target_by_old.get(normalized, normalized)})
     if len({entry["new"].casefold() for entry in entries}) != len(entries):
-        raise ValueError("媒体库迁移后的文件名冲突，停止操作")
+        raise MigrationBlocked(
+            "path_conflict", "媒体库迁移后的文件名冲突，停止操作",
+        )
     plan["show_tag"] = show_tag(job.title)
     return plan, entries
 
@@ -173,7 +187,9 @@ async def check_conflicts(session, client, job, config, migration, *, source=Fal
         occupied = absolute_names(str(destination(other, plan)),
                                   [entry["new"] for entry in plan["files"]])
         if targets & occupied:
-            raise ValueError("媒体库迁移目标已有其他下载任务，保留原文件，请先解决冲突")
+            raise MigrationBlocked(
+                "path_conflict", "媒体库迁移目标已有其他下载任务，保留原文件，请先解决冲突",
+            )
     torrents = (await request(client, "GET", "torrents/info")).json()
     paths_to_check = targets | original if source else targets
     for torrent in torrents:
@@ -188,9 +204,13 @@ async def check_conflicts(session, client, job, config, migration, *, source=Fal
                                params={"hash": torrent["hash"]})).json()
         occupied = absolute_names(location, [file_name(file) for file in files])
         if source and original & occupied:
-            raise ValueError("原文件与其他 qB 任务共享，停止媒体库迁移，避免影响其他任务")
+            raise MigrationBlocked(
+                "path_conflict", "原文件与其他 qB 任务共享，停止媒体库迁移，避免影响其他任务",
+            )
         if targets & occupied:
-            raise ValueError("媒体库迁移目标与 qB 中的其他任务冲突，不会覆盖文件")
+            raise MigrationBlocked(
+                "path_conflict", "媒体库迁移目标与 qB 中的其他任务冲突，不会覆盖文件",
+            )
     local = local_path(target, config)
     if local.is_absolute():
         candidates = [local.joinpath(*PurePosixPath(name).parts) for name in names]
@@ -198,7 +218,9 @@ async def check_conflicts(session, client, job, config, migration, *, source=Fal
             path.exists() and (not source or str(path).casefold() not in original)
             for path in candidates
         )):
-            raise ValueError("媒体库迁移目标已有同名文件，不会覆盖，请先解决冲突")
+            raise MigrationBlocked(
+                "path_conflict", "媒体库迁移目标已有同名文件，不会覆盖，请先解决冲突",
+            )
 
 
 async def save_phase(session, job, migration, phase):
@@ -206,7 +228,7 @@ async def save_phase(session, job, migration, phase):
     plan = json.loads(job.plan)
     plan["season_change"] = migration
     job.plan = json.dumps(plan, ensure_ascii=False)
-    await session.commit()
+    await commit_and_publish(session)
 
 
 async def advance_season_change(session, client, job, config, item, torrent):
@@ -217,7 +239,9 @@ async def advance_season_change(session, client, job, config, item, torrent):
     phase = migration["phase"]
     if torrent is None:
         if phase != "prepare" or migration["previous_state"] != "queued":
-            raise ValueError("媒体库迁移任务已从 qB 移除，保留记录，不会重新下载")
+            raise MigrationBlocked(
+                "torrent_removed", "媒体库迁移任务已从 qB 移除，保留记录，不会重新下载",
+            )
         staging = path_type(job.target_root)(job.target_root) / ".mooncell" / job.info_hash
         response = await request(client, "POST", "torrents/add", data={
             "urls": item.download_url, "savepath": str(staging), "autoTMM": "false",
@@ -225,20 +249,24 @@ async def advance_season_change(session, client, job, config, item, torrent):
             "stopCondition": "MetadataReceived", "tags": show_tag(job.title),
         })
         if not response.text.strip().startswith("Ok"):
-            raise ValueError("qBittorrent 未接受下载任务")
+            raise MigrationWaiting("qBittorrent 未接受下载任务，等待重试")
         return
     if not healthy(torrent):
         if any(marker in str(torrent.get("state", "")).lower()
                for marker in ("error", "missing")):
-            raise ValueError("qB 任务或文件异常，保留原文件，请检查下载器后继续迁移")
+            raise MigrationBlocked(
+                "torrent_unhealthy", "qB 任务或文件异常，保留原文件，请检查下载器后继续迁移",
+            )
         return
     if torrent.get("auto_tmm", False):
-        raise ValueError("请先关闭此种子的自动种子管理，再继续媒体库迁移")
+        raise MigrationBlocked(
+            "auto_management", "请先关闭此种子的自动种子管理，再继续媒体库迁移",
+        )
     location = path_type(job.target_root)(torrent["save_path"])
     files = (await request(client, "GET", "torrents/files",
                            params={"hash": job.info_hash})).json()
     if not files:
-        raise ValueError("等待下载器提供文件列表")
+        raise MigrationWaiting("等待下载器提供文件列表")
     if phase == "prepare":
         previous = migration["previous_plan"]
         staging = path_type(job.target_root)(job.target_root) / ".mooncell" / job.info_hash
@@ -249,12 +277,16 @@ async def advance_season_change(session, client, job, config, item, torrent):
             expected.add(previous_root if previous.get("wrapper") else
                          previous_root / previous["season_folder"])
         if location not in expected:
-            raise ValueError("qB 保存路径已被手动修改，停止媒体库迁移，请核对原目录")
+            raise MigrationBlocked(
+                "path_changed", "qB 保存路径已被手动修改，停止媒体库迁移，请核对原目录",
+            )
         plan, entries = make_plan(job, item, migration, files)
         if migration["previous_state"] == "done" and {
             file_name(file) for file in files if file.get("priority", 1) > 0
         } != {entry["new"] for entry in previous.get("files", [])}:
-            raise ValueError("已入库任务的文件列表已被修改，停止媒体库迁移，请核对原文件")
+            raise MigrationBlocked(
+                "files_changed", "已入库任务的文件列表已被修改，停止媒体库迁移，请核对原文件",
+            )
         source = await session.get(FeedSource, item.source_id)
         migration.update({
             "original_location": str(location),
@@ -277,17 +309,23 @@ async def advance_season_change(session, client, job, config, item, torrent):
                 "move": {staging, target}, "name": {target}, "tags": {target},
                 "restore": {target}}
     if location not in expected.get(phase, set()):
-        raise ValueError("媒体库迁移期间保存路径发生变化，已停止操作，请核对下载器")
+        raise MigrationBlocked(
+            "path_changed", "媒体库迁移期间保存路径发生变化，已停止操作，请核对下载器",
+        )
     by_id = {int(file.get("index", index)): file_name(file) for index, file in enumerate(files)}
     if set(by_id) != {entry["index"] for entry in migration["entries"]} or any(
         by_id[entry["index"]] not in {entry["old"], entry["new"]}
         for entry in migration["entries"]
     ):
-        raise ValueError("媒体库迁移期间文件结构发生变化，已停止操作")
+        raise MigrationBlocked(
+            "files_changed", "媒体库迁移期间文件结构发生变化，已停止操作",
+        )
     required_name = "old" if phase in {"pause", "stage"} else "new"
     if phase != "rename" and any(by_id[entry["index"]] != entry[required_name]
                                  for entry in migration["entries"]):
-        raise ValueError("媒体库迁移文件名与当前阶段不符，已停止操作，请核对下载器")
+        raise MigrationBlocked(
+            "files_changed", "媒体库迁移文件名与当前阶段不符，已停止操作，请核对下载器",
+        )
     if phase != "restore" and not paused(torrent):
         await set_running(client, job.info_hash, False)
         return
@@ -339,11 +377,13 @@ async def advance_season_change(session, client, job, config, item, torrent):
         await cleanup_temporary_directories(client, job.target_root, config)
         job.plan = json.dumps(migration["target_plan"], ensure_ascii=False)
         job.state, job.last_error = "done", None
-        session.add(DomainEvent(
-            event_type="download.library.changed", resource_type="feed_item",
-            resource_id=str(item.id), payload=json.dumps({
+        operation_id = await update_migration(
+            session, job, "completed", token=migration["token"],
+        )
+        record_event(session, "download.library.changed", "feed_item", str(item.id), {
                 "title": job.title, "previous_season": migration["previous_season"],
                 "previous_title": migration.get("previous_title", job.title),
                 "season": job.season,
-            }, ensure_ascii=False),
-        ))
+                "source_id": item.source_id,
+                "operation_id": operation_id,
+            })

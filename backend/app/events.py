@@ -20,6 +20,39 @@ def _redact(message: str) -> str:
     return _SENSITIVE_VALUE.sub(r"\1\2***", message)
 
 
+def describe_download_error(error: BaseException | str | None) -> str:
+    """下载连接异常转为中文，兼容历史日志中保存的异常字符串。"""
+    detail = (
+        f"{type(error).__name__}: {error}" if isinstance(error, BaseException)
+        else str(error or "")
+    ).strip()
+    if not detail:
+        return "未知错误（未记录详细原因）"
+    kind, _separator, reason = detail.partition(":")
+    if kind == "DownloadDeliveryError":
+        return reason.strip()
+    message = {
+        "ReadError": "读取下载器响应失败，连接可能已中断，请检查下载器状态及网络连接",
+        "ConnectError": "无法连接下载器，请检查下载器是否运行、连接地址及端口是否正确",
+        "ReadTimeout": "等待下载器响应超时，请检查下载器负载及网络连接",
+        "ConnectTimeout": "连接下载器超时，请检查下载器地址、端口及网络连接",
+        "WriteTimeout": "向下载器发送请求超时，请检查网络连接",
+        "PoolTimeout": "下载器连接繁忙，等待空闲连接超时",
+        "WriteError": "向下载器发送请求失败，连接可能已中断",
+        "ProxyError": "连接下载器代理失败，请检查代理设置",
+        "RemoteProtocolError": "下载器连接意外中断或返回无效响应",
+    }.get(kind)
+    if kind == "HTTPStatusError" and hasattr(error, "response"):
+        return f"下载器接口请求失败（HTTP {error.response.status_code}），请检查下载器状态及配置"
+    if message is None:
+        return detail
+    reason = reason.strip()
+    # 常见底层提示由中文说明替代；其他原因保留，避免丢失 TLS 等诊断信息。
+    if reason and reason not in {"All connection attempts failed", "Connection reset by peer"}:
+        return f"{message}（{kind}；原始原因：{reason}）"
+    return f"{message}（{kind}）"
+
+
 def event_log_fields(event_type: str, payload: dict) -> tuple[str, str, str]:
     """把领域事件转换成适合实时日志页面展示的级别、范围和消息。"""
     level = (
@@ -33,17 +66,34 @@ def event_log_fields(event_type: str, payload: dict) -> tuple[str, str, str]:
         "feed": "rss",
         "item": "parser",
         "download": "downloader",
+        "downloader": "downloader",
         "organize": "organizer",
         "artwork": "scraper",
         "calendar": "calendar",
         "review": "review",
     }.get(event_type.split(".", 1)[0], "system")
-    if event_type.startswith("review."):
+    if event_type in {"downloader.test.completed", "downloader.test.failed"}:
+        outcome = "成功" if event_type.endswith(".completed") else "失败"
+        message = f"下载器连接测试{outcome}：{payload.get('message') or '未记录详细原因'}"
+        if payload.get("version"):
+            message += f" · {payload['version']}"
+    elif event_type == "notification.changed":
+        message = payload.get("summary") or "提醒已更新"
+    elif event_type.startswith("review."):
         action = {"review.approved": "已批准", "review.ignored": "已忽略",
                   "review.reparsed": "已重新解析"}.get(event_type, "审核已更新")
         message = f"{action}：{payload.get('title', '')}"
     elif event_type == "download.retry.requested":
         message = f"已请求重新下载，等待投递至 qBittorrent：{payload.get('info_hash', '')}"
+    elif event_type == "download.failed":
+        message = f"下载处理失败：{describe_download_error(payload.get('error'))}"
+        if payload.get("retry_seconds"):
+            message += (f"；将在 {payload['retry_seconds']} 秒后自动重试，"
+                        "连续失败时逐步延长至最多 15 分钟")
+    elif event_type == "download.recovered":
+        message = f"下载处理已恢复：{payload.get('title', '')}"
+    elif event_type == "download.automation.retry.requested":
+        message = f"已请求立即重试自动下载：{payload.get('title', '')}"
     elif event_type == "download.superseded":
         message = f"已被更高修订版取代，不再投递：{payload.get('title', '')}"
     elif event_type == "download.upgraded":
@@ -64,7 +114,10 @@ def event_log_fields(event_type: str, payload: dict) -> tuple[str, str, str]:
         )
     elif event_type == "feed.setup.completed":
         suffix = "，元数据和图片刮削完成" if payload.get("hasTmdb") else ""
-        message = f"RSS 订阅已添加：{payload.get('name', '未知订阅')}{suffix}"
+        action = {"metadata_refresh": "元数据更新完成", "artwork_scrape": "重新刮削完成"}.get(
+            payload.get("kind"), "RSS 订阅已添加",
+        )
+        message = f"{action}：{payload.get('name', '未知订阅')}{suffix}"
     elif event_type in {"feed.setup.partial", "feed.setup.failed"}:
         result = "刮削不完整" if event_type.endswith(".partial") else "刮削失败"
         message = (
@@ -100,6 +153,10 @@ def event_log_fields(event_type: str, payload: dict) -> tuple[str, str, str]:
         message = f"RSS 刷新失败：{error}"
     elif event_type == "artwork.upload.completed":
         message = f"番剧图片上传成功：{payload.get('name', '')} · {payload.get('kind', '')}"
+    elif event_type == "library.scan.changed":
+        scope = "scraper"
+        message = (f"本地图片已同步：{payload.get('name', '')} · "
+                   f"{payload.get('thumbnails', 0)} 张单集缩略图")
     elif event_type == "artwork.upload.failed":
         message = (
             f"番剧图片上传失败：{payload.get('name', '')} · {payload.get('kind', '')} · "
@@ -140,6 +197,11 @@ class EventMessage:
             "resourceType": self.resource_type,
             "resourceId": self.resource_id,
             "payload": self.payload,
+            "sourceId": self.payload.get("source_id") or (
+                int(self.resource_id) if self.resource_type == "feed_source" and
+                self.resource_id and self.resource_id.isdigit() else None
+            ),
+            "operationId": self.payload.get("operation_id"),
             "occurredAt": self.created_at.isoformat(),
             "level": level,
             "scope": scope,
@@ -178,3 +240,42 @@ class EventBroker:
 
 
 broker = EventBroker()
+
+
+def record_event(session, event_type, resource_type, resource_id, payload):
+    """只加入当前事务；广播必须在调用方提交成功之后进行。"""
+    from .models import DomainEvent
+
+    event = DomainEvent(
+        event_type=event_type, resource_type=resource_type,
+        resource_id=str(resource_id) if resource_id is not None else None,
+        payload=json.dumps(payload, ensure_ascii=False),
+    )
+    session.add(event)
+    session.info.setdefault("pending_events", []).append(event)
+    return event
+
+
+async def commit_and_publish(session):
+    pending = session.info.pop("pending_events", [])
+    try:
+        await session.commit()
+    except BaseException:
+        await session.rollback()
+        raise
+    for event in pending:
+        await broker.publish(EventMessage(
+            id=event.id, event_type=event.event_type, resource_type=event.resource_type,
+            resource_id=event.resource_id, payload=json.loads(event.payload),
+            created_at=event.created_at,
+        ))
+
+
+# 回滚时不能把未提交事件带进后续事务。
+from sqlalchemy import event as sa_event  # noqa: E402
+from sqlalchemy.orm import Session  # noqa: E402
+
+
+@sa_event.listens_for(Session, "after_rollback")
+def _discard_pending_events(session):
+    session.info.pop("pending_events", None)

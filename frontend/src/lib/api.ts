@@ -22,8 +22,9 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
 
 export type AuthStatus = { initialized: boolean; authenticated: boolean; username?: string }
 export type Feed = {
+  background_operation_ids?: string[]
   excluded_keywords: string[]
-  id: number; name: string; url: string; kind: "mikan" | "standard"; season?: number | null; active: boolean
+  id: number; name: string; url: string; kind: "mikan" | "standard" | "magnet"; season?: number | null; active: boolean
   refresh_interval_minutes: number; connection_status: string; last_checked_at?: string; last_error?: string
   show_metadata?: TmdbMetadata
 }
@@ -38,6 +39,7 @@ export type TmdbMetadata = {
   rating?: number; vote_count?: number; href: string
 }
 export type Show = {
+  background_operation_ids?: string[]
   artwork_version?: string | null
   tmdb_url?: string | null
   id: number; name: string; active: boolean; created_at: string
@@ -46,6 +48,20 @@ export type Show = {
   discovered_items: number; artwork_status: "missing" | "pending" | "completed" | "partial" | "failed"
   poster_ready: boolean; fanart_ready: boolean; clearlogo_ready: boolean
 }
+export type ShowDetail = Show & {
+  subscription: Feed; genres: string[]; vote_count: number | null; metadata_scraped_at: string | null
+}
+export type ShowRelease = {
+  id: number; title: string; published_at: string | null; discovered_at: string; parse_status: string; parsed: ParsedRelease | null
+}
+export type ShowReleasePage = { items: ShowRelease[]; total: number; page: number; page_size: number }
+export type ShowEpisode = {
+  thumbnail_url?: string | null
+  path: string; filename: string; season: number | null; episode_start: number | null
+  episode_end: number | null; size: number; modified_at: string
+}
+export type ShowSeason = { season: number | null; items: ShowEpisode[] }
+export type ShowLibrary = { available: boolean; partial: boolean; total: number; seasons: ShowSeason[] }
 export type Downloader = {
   id: number; name: string; kind: "qbittorrent" | "aria2"; base_url: string
   username?: string; active: boolean; connection_status: string; last_error?: string
@@ -62,14 +78,30 @@ export type Dashboard = {
   recent_items: Array<{ id: number; title: string; status: string; publishedAt?: string; parsed: ParsedRelease }>
 }
 export type LogEntry = {
+  source_id?: number | null; operation_id?: string | null
   id: number; occurred_at: string; level: "info" | "warning" | "error"
   scope: string; event_type: string; message: string
+}
+
+export type BackgroundOperation = {
+  id: string; kind: "feed_scrape" | "metadata_refresh" | "artwork_scrape" | "library_migration"
+  source_id: number | null; source_name: string
+  status: "queued" | "running" | "blocked" | "completed" | "partial" | "failed" | "cancelled"
+  total_count: number; completed_count: number; summary: string; error_summary: string | null
+  created_at: string; updated_at: string; finished_at: string | null
+  revision: number; attention_revision: number; read_revision: number; unread: boolean
+}
+export type NotificationSummary = { unread_count: number; active_count: number }
+export type NotificationPage = NotificationSummary & {
+  items: BackgroundOperation[]; active_items: BackgroundOperation[]; next_cursor: string | null; cutoff: string
 }
 export type DownloadTask = {
   review_required?: boolean
   source_id: number
   automation_state?: string | null
   automation_error?: string | null
+  retry_attempts?: number
+  next_retry_at?: string | null
   id: number; title: string; source_name: string; download_url: string; info_hash?: string
   published_at?: string; discovered_at: string; matched: boolean; status: string; qb_state?: string
   progress: number; download_speed: number; upload_speed: number; eta?: number

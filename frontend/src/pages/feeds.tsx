@@ -1,33 +1,47 @@
 import { MIKAN_BASE_URL } from "@/lib/mikan"
 import { AddSubscriptionButton } from "@/components/add-subscription-button"
+import { MagnetCollectionForm } from "@/components/magnet-collection-form"
 import { EditSubscriptionDialog } from "@/components/edit-subscription-dialog"
 import { FeedClearlogo } from "@/components/feed-clearlogo"
+import { FeedsHeading, FeedsLoading, FeedsSection } from "@/components/feeds-loading"
 import { NativeButton } from "@/components/ui/button"
-import { useState, type FormEvent } from "react"
-import { ContextMenu } from "radix-ui"
+import { useState, type FormEvent, type ReactNode } from "react"
+import { ContextMenu, Tabs } from "radix-ui"
+import { AnimatePresence, LayoutGroup, motion, useIsPresent, useReducedMotion } from "motion/react"
 import { useNavigate } from "react-router-dom"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { Check, ImageOff, LoaderCircle, MoreHorizontal, Pencil, RefreshCw, RadioTower, ScanSearch, Trash2 } from "lucide-react"
 import { api, ApiError, type Show, type Feed, type FeedInspection, type TmdbCandidate, type TmdbMetadata } from "@/lib/api"
 import { Badge } from "@/components/ui/badge"
+import { BlurFade } from "@/components/ui/blur-fade"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
 import { Field } from "@/components/field"
 import { TagInput } from "@/components/ui/tag-input"
 import { Input } from "@/components/ui/input"
-import { PageHeading } from "@/components/page-heading"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { useToast } from "@/components/ui/toast"
-import { Skeleton } from "@/components/ui/skeleton"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
+
+function SubscriptionPanel({ value, children }: { value: string; children: ReactNode }) {
+  const present = useIsPresent()
+  const reducedMotion = useReducedMotion()
+  return <Tabs.Content value={value} forceMount asChild><motion.div
+    inert={!present} aria-hidden={!present || undefined}
+    initial={reducedMotion ? false : { opacity: 0, y: 5 }}
+    animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: reducedMotion ? 0 : -3 }}
+    transition={{ duration: reducedMotion ? 0 : present ? .22 : .1, ease: [.22, 1, .36, 1] }}
+  >{children}</motion.div></Tabs.Content>
+}
 
 /** RSS 源的创建、编辑、列表、手动刷新和删除界面。 */
 export function FeedsPage() {
   const client = useQueryClient()
   const toast = useToast()
   const navigate = useNavigate()
+  const reducedMotion = useReducedMotion()
   const [open, setOpen] = useState(false)
+  const [subscriptionTab, setSubscriptionTab] = useState("rss")
   const [editing, setEditing] = useState<Feed | null>(null)
   const [deleting, setDeleting] = useState<Feed | null>(null)
   const [name, setName] = useState("")
@@ -47,7 +61,7 @@ export function FeedsPage() {
   }
   const prerequisites = useMutation({
     mutationFn: () => api<{ message: string }>("/feeds/prerequisites", { method: "POST" }),
-    onSuccess: () => { create.reset(); setOpen(true) },
+    onSuccess: () => { create.reset(); setSubscriptionTab("rss"); setOpen(true) },
     onError: (error) => { if (!redirectToSettings(error)) toast("无法检查订阅配置", { description: error.message, tone: "error" }) },
   })
   const feeds = useQuery({ queryKey: ["feeds"], queryFn: () => api<Feed[]>("/feeds") })
@@ -56,6 +70,7 @@ export function FeedsPage() {
   const create = useMutation({
     mutationFn: () => api<Feed>("/feeds", { method: "POST", body: JSON.stringify({ name, url, kind, excluded_keywords: excludedKeywords, season: season === "" ? null : Number(season), active: true, refresh_interval_minutes: 5, tmdb: selected ? { tmdb_id: selected.tmdb_id, media_type: selected.media_type } : null }) }),
     onSuccess: () => {
+      void client.invalidateQueries({ queryKey: ["notifications"] })
       void client.invalidateQueries({ queryKey: ["feeds"] })
       void client.invalidateQueries({ queryKey: ["dashboard"] })
       void client.invalidateQueries({ queryKey: ["shows"] })
@@ -104,10 +119,11 @@ export function FeedsPage() {
   const remove = useMutation({
     mutationFn: (id: number) => api(`/feeds/${id}`, { method: "DELETE" }),
     onSuccess: () => {
+      void client.invalidateQueries({ queryKey: ["notifications"] })
       void client.invalidateQueries({ queryKey: ["feeds"] })
       void client.invalidateQueries({ queryKey: ["dashboard"] })
       void client.invalidateQueries({ queryKey: ["shows"] })
-      toast("RSS 订阅已删除")
+      toast(deleting?.kind === "magnet" ? "磁力合集已删除" : "RSS 订阅已删除")
       setDeleting(null)
     },
     onError: (error) => toast("删除订阅失败", { description: error.message, tone: "error" }),
@@ -119,12 +135,25 @@ export function FeedsPage() {
     tmdbDetail.mutate(candidate)
   }
 
+  if (feeds.isPending || (!feeds.isError && Boolean(feeds.data?.length) && shows.isPending)) return <FeedsLoading count={feeds.data?.length}/>
+
   return <>
-    <PageHeading eyebrow="Sources" title="RSS 订阅" description="管理 Mikan 和兼容 RSS / Atom 的发布源。相同条目会按 GUID、链接和内容指纹去重。" action={
+    <FeedsHeading action={
       <Dialog open={open} onOpenChange={next => { if (next) { if (!prerequisites.isPending) prerequisites.mutate() } else setOpen(false) }}>
         <DialogTrigger asChild><AddSubscriptionButton pending={prerequisites.isPending}/></DialogTrigger>
-        <DialogContent>
-          <DialogHeader><DialogTitle>添加 RSS 源</DialogTitle><DialogDescription>保存后自动关闭，后台刮削完成后会通知你。</DialogDescription></DialogHeader>
+        <DialogContent animateSize>
+          <DialogHeader><DialogTitle>添加订阅</DialogTitle><DialogDescription>选择 RSS 订阅或磁力合集，匹配 TMDB 后下载整理。</DialogDescription></DialogHeader>
+          <Tabs.Root value={subscriptionTab} onValueChange={setSubscriptionTab}>
+            <LayoutGroup id="add-subscription-tabs">
+              <Tabs.List aria-label="添加方式" className="mb-5 grid grid-cols-2 gap-1 rounded-[2px] bg-[var(--surface)] p-1">
+                {[{ value: "rss", label: "RSS 订阅" }, { value: "magnet", label: "磁力合集" }].map(tab => <Tabs.Trigger key={tab.value} value={tab.value} className="relative isolate rounded-[2px] px-3 py-2 text-sm text-[var(--muted)] outline-none transition-colors duration-150 motion-reduce:transition-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] data-[state=active]:text-[var(--accent)]">
+                  {subscriptionTab === tab.value && <motion.span aria-hidden="true" layoutId={reducedMotion ? undefined : "active-tab"} initial={false} transition={{ type: "spring", stiffness: 300, damping: 30, mass: .8 }} className="absolute inset-0 -z-10 rounded-[2px] bg-[var(--accent-soft)]"/>}
+                  {tab.label}
+                </Tabs.Trigger>)}
+              </Tabs.List>
+            </LayoutGroup>
+            <AnimatePresence initial={false} mode="wait">
+            {subscriptionTab === "rss" ? <SubscriptionPanel key="rss" value="rss">
           <form onSubmit={submit} className="grid gap-4">
             <Field label={<span className="inline-flex items-center gap-2">RSS 地址<a href={MIKAN_BASE_URL} target="_blank" rel="noopener noreferrer" className="text-xs font-normal text-[var(--accent)] hover:underline" aria-label="打开蜜柑计划（新标签页）">蜜柑计划 ↗</a></span>} hint="后端会读取频道 <title>，并自动清理 Mikan Project 前缀。"><div className="flex flex-col gap-2 sm:flex-row"><Input type="url" value={url} onChange={(event) => { setUrl(event.target.value); setCandidates([]); setSelected(null); setMetadata(null); tmdbSearch.reset() }} placeholder={`${MIKAN_BASE_URL}/RSS/...`} required/><Button type="button" variant="secondary" onClick={() => inspect.mutate()} disabled={!url || inspect.isPending}><ScanSearch size={15} className={inspect.isPending ? "animate-pulse" : ""}/>{inspect.isPending ? "解析中…" : "解析 RSS"}</Button></div></Field>
             <Field label="番剧名称" hint="解析完成后会自动搜索 TMDB；修改名称后可再次搜索。"><div className="flex flex-col gap-2 sm:flex-row"><Input value={name} onChange={(event) => setName(event.target.value)} placeholder="留空时由后端自动解析"/><Button type="button" variant="secondary" onClick={() => tmdbSearch.mutate(name)} disabled={!name || tmdbSearch.isPending}><ScanSearch size={15}/>{tmdbSearch.isPending ? "搜索中…" : "搜索 TMDB"}</Button></div></Field>
@@ -148,26 +177,30 @@ export function FeedsPage() {
             {create.error && <p className="rounded-[2px] bg-[var(--danger-soft)] px-3 py-2 text-sm text-[var(--danger)]">{create.error.message}</p>}
             <DialogFooter><Button type="button" variant="secondary" onClick={() => setOpen(false)}>取消</Button><Button disabled={create.isPending || !metadata}>{create.isPending ? "保存中…" : "保存订阅"}</Button></DialogFooter>
           </form>
+            </SubscriptionPanel> : <SubscriptionPanel key="magnet" value="magnet"><MagnetCollectionForm onClose={() => setOpen(false)}/></SubscriptionPanel>}
+            </AnimatePresence>
+          </Tabs.Root>
         </DialogContent>
       </Dialog>
     }/>
-    <Card>
-      <CardHeader><div><CardTitle>全部订阅</CardTitle><CardDescription>{feeds.data?.length ?? 0} 个发布源</CardDescription></div></CardHeader>
-      <CardContent className="p-0">
-        {feeds.isPending ? <div role="status" aria-label="正在加载 RSS 订阅" aria-busy="true" className="grid gap-6 p-5">{[0, 1, 2].map(index => <div key={index} className="grid gap-3"><Skeleton className="h-4 w-1/3"/><Skeleton className="h-3 w-2/3"/></div>)}</div> : feeds.isError ? <div role="alert" className="p-5 text-sm text-[var(--danger)]">订阅读取失败：{feeds.error.message}<Button variant="secondary" size="sm" className="ml-3" onClick={() => void feeds.refetch()}>重试</Button></div> : !feeds.data?.length ? <div className="grid min-h-64 place-items-center p-5"><div className="text-center"><RadioTower className="mx-auto text-[var(--muted)]" size={30}/><p className="mt-3 text-sm font-medium">还没有 RSS 订阅</p><p className="mt-1 text-[13px] text-[var(--muted)]">先从 Mikan 复制一个番剧 RSS 地址。</p></div></div> : <div className="feed-list">{feeds.data.map((feed) => <ContextMenu.Root key={feed.id}>
+    <FeedsSection count={feeds.data?.length ?? 0}>
+        {feeds.isError ? <div role="alert" className="p-5 text-sm text-[var(--danger)]">订阅读取失败：{feeds.error.message}<Button variant="secondary" size="sm" className="ml-3" onClick={() => void feeds.refetch()}>重试</Button></div> : !feeds.data?.length ? <div className="grid min-h-64 place-items-center p-5"><div className="text-center"><RadioTower className="mx-auto text-[var(--muted)]" size={30}/><p className="mt-3 text-sm font-medium">还没有 RSS 订阅</p><p className="mt-1 text-[13px] text-[var(--muted)]">先从 Mikan 复制一个番剧 RSS 地址。</p></div></div> : <div className="feed-list">{feeds.data.map((feed, index) => <BlurFade key={feed.id} className="feed-card-reveal min-w-0" delay={Math.min(index, 6) * 0.06} duration={0.4} offset={8} inView inViewMargin="0px"><ContextMenu.Root>
           <ContextMenu.Trigger asChild>
-            <div tabIndex={0} aria-label={`${feed.name}，右键打开订阅菜单`} className="feed-card grid gap-4 px-5 py-4 transition-colors duration-200 hover:bg-white/[.03]">
+            <div tabIndex={0} aria-label={`${feed.name}，右键打开订阅菜单`} className="feed-card flex flex-col gap-4 p-5 transition-colors duration-200 hover:bg-white/[.03] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent)]">
               <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-2"><p className="truncate text-sm font-semibold">{feed.name}</p><Badge>{feed.kind}</Badge>{!feed.active && <Badge>已停用</Badge>}</div>
-                <p className="mt-1 truncate text-[13px] text-[var(--muted)]">{feed.url}</p>
-                {feed.last_error && <p className="mt-1 text-xs text-[var(--danger)]">{feed.last_error}</p>}
+                <p className="break-words text-base font-semibold leading-6">{feed.name}</p>
+                {feed.last_error && <p className="mt-3 break-words text-xs leading-5 text-[var(--danger)]">{feed.last_error}</p>}
               </div>
-              <div className="feed-card-clearlogo" aria-hidden="true">{clearlogos.has(feed.id) && <FeedClearlogo show={clearlogos.get(feed.id)!}/>}</div>
+              {clearlogos.has(feed.id) && <div className="feed-card-clearlogo" aria-hidden="true"><FeedClearlogo show={clearlogos.get(feed.id)!}/></div>}
               <div className="feed-card-status">
-                <Badge tone={feed.connection_status === "healthy" ? "success" : feed.connection_status === "error" ? "danger" : "neutral"}>{feed.connection_status === "healthy" ? "正常" : feed.connection_status === "error" ? "异常" : "未检查"}</Badge>
-                <div className="flex shrink-0 items-center gap-2">
+                <div className="feed-card-labels">
+                  <Badge tone={feed.connection_status === "healthy" ? "success" : feed.connection_status === "error" ? "danger" : "neutral"}>{feed.connection_status === "healthy" ? "正常" : feed.connection_status === "error" ? "异常" : "未检查"}</Badge>
+                  <Badge>{feed.kind === "magnet" ? "磁力合集" : feed.kind}</Badge>
+                  {!feed.active && <Badge>已停用</Badge>}
+                </div>
+                <div className="feed-card-actions">
                   <Button size="sm" variant="secondary" icon={Pencil} onClick={() => setEditing(feed)} aria-label={`${feed.name}：编辑订阅`}>编辑</Button>
-                  <Button size="sm" variant="secondary" icon={RefreshCw} iconMotion="refresh" pending={refresh.isPending && refresh.variables === feed.id} pendingLabel="刷新中" onClick={() => refresh.mutate(feed.id)} disabled={refresh.isPending} aria-label={`${feed.name}：刷新订阅`}>刷新</Button>
+                  {feed.kind !== "magnet" && <Button size="sm" variant="secondary" icon={RefreshCw} iconMotion="refresh" pending={refresh.isPending && refresh.variables === feed.id} pendingLabel="刷新中" onClick={() => refresh.mutate(feed.id)} disabled={refresh.isPending} aria-label={`${feed.name}：刷新订阅`}>刷新</Button>}
                   <DropdownMenu><DropdownMenuTrigger asChild><Button size="icon-sm" variant="ghost" aria-label={`${feed.name}：更多操作`}><MoreHorizontal size={16}/></Button></DropdownMenuTrigger><DropdownMenuContent align="end"><DropdownMenuItem onSelect={() => setEditing(feed)}><Pencil size={15}/>编辑订阅</DropdownMenuItem><DropdownMenuItem disabled={remove.isPending} onSelect={() => setDeleting(feed)} className="text-[var(--danger)]"><Trash2 size={15}/>删除订阅</DropdownMenuItem></DropdownMenuContent></DropdownMenu>
                 </div>
               </div>
@@ -179,10 +212,9 @@ export function FeedsPage() {
               <ContextMenu.Item disabled={remove.isPending} onSelect={() => setDeleting(feed)} className="flex cursor-default select-none items-center gap-2 rounded-sm px-3 py-2 text-sm text-[var(--danger)] outline-none data-[highlighted]:bg-[var(--danger-soft)] data-[disabled]:opacity-50"><Trash2 size={15}/>删除订阅</ContextMenu.Item>
             </ContextMenu.Content>
           </ContextMenu.Portal>
-        </ContextMenu.Root>)}</div>}
-      </CardContent>
-    </Card>
+        </ContextMenu.Root></BlurFade>)}</div>}
+    </FeedsSection>
     {editing && <EditSubscriptionDialog key={editing.id} feed={editing} onClose={() => setEditing(null)}/>}
-    <Dialog open={deleting !== null} onOpenChange={open => { if (!open && !remove.isPending) setDeleting(null) }}><DialogContent className="max-w-md"><DialogHeader><DialogTitle>删除订阅</DialogTitle><DialogDescription>确定删除“{deleting?.name}”吗？删除后将停止从此 RSS 源发现新发布。</DialogDescription></DialogHeader><DialogFooter><Button variant="secondary" disabled={remove.isPending} onClick={() => setDeleting(null)}>取消</Button><Button variant="danger" icon={Trash2} pending={remove.isPending} pendingLabel="删除中…" onClick={() => deleting && remove.mutate(deleting.id)}>删除订阅</Button></DialogFooter></DialogContent></Dialog>
+    <Dialog open={deleting !== null} onOpenChange={open => { if (!open && !remove.isPending) setDeleting(null) }}><DialogContent className="max-w-md"><DialogHeader><DialogTitle>{deleting?.kind === "magnet" ? "删除合集" : "删除订阅"}</DialogTitle><DialogDescription>确定删除“{deleting?.name}”吗？{deleting?.kind === "magnet" ? "删除后停止此合集的自动整理，保留 qB 中的任务和文件。" : "删除后将停止从此 RSS 源发现新发布。"}</DialogDescription></DialogHeader><DialogFooter><Button variant="secondary" disabled={remove.isPending} onClick={() => setDeleting(null)}>取消</Button><Button variant="danger" icon={Trash2} pending={remove.isPending} pendingLabel="删除中…" onClick={() => deleting && remove.mutate(deleting.id)}>{deleting?.kind === "magnet" ? "删除合集" : "删除订阅"}</Button></DialogFooter></DialogContent></Dialog>
   </>
 }

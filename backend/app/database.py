@@ -37,6 +37,13 @@ async def init_database() -> None:
 
     async with engine.begin() as connection:
         await connection.run_sync(Base.metadata.create_all)
+        artwork_columns = await connection.run_sync(
+            lambda sync_connection: inspect(sync_connection).get_columns("show_artwork")
+        )
+        if not any(column["name"] == "file_version" for column in artwork_columns):
+            await connection.execute(text(
+                "ALTER TABLE show_artwork ADD COLUMN file_version VARCHAR(64)"
+            ))
         columns = await connection.run_sync(
             lambda sync_connection: inspect(sync_connection).get_columns("feed_sources")
         )
@@ -45,6 +52,17 @@ async def init_database() -> None:
         if not any(column["name"] == "excluded_keywords" for column in columns):
             await connection.execute(text(
                 "ALTER TABLE feed_sources ADD COLUMN excluded_keywords JSON NOT NULL DEFAULT '[]'"
+            ))
+        job_columns = await connection.run_sync(
+            lambda sync_connection: inspect(sync_connection).get_columns("download_jobs")
+        )
+        if not any(column["name"] == "retry_attempts" for column in job_columns):
+            await connection.execute(text(
+                "ALTER TABLE download_jobs ADD COLUMN retry_attempts INTEGER NOT NULL DEFAULT 0"
+            ))
+        if not any(column["name"] == "next_retry_at" for column in job_columns):
+            await connection.execute(text(
+                "ALTER TABLE download_jobs ADD COLUMN next_retry_at DATETIME"
             ))
 
 

@@ -1,3 +1,4 @@
+import { useSearchParams } from "react-router-dom"
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
 import { useQuery } from "@tanstack/react-query"
 import { Download, Radio, Search, TerminalSquare } from "lucide-react"
@@ -13,6 +14,9 @@ type ConnectionState = "connecting" | "connected" | "reconnecting"
 
 /** 持久化历史事件与 SSE 增量事件合并后的实时日志页面。 */
 export function LogsPage() {
+  const [params] = useSearchParams()
+  const operationId = params.get("operation_id")
+  const sourceId = params.get("source_id")
   const [query, setQuery] = useState("")
   const [level, setLevel] = useState("all")
   const [liveLogs, setLiveLogs] = useState<LogEntry[]>([])
@@ -21,8 +25,8 @@ export function LogsPage() {
   const followLatest = useRef(true)
   const previousFilter = useRef({ query, level })
   const history = useQuery({
-    queryKey: ["logs"],
-    queryFn: () => api<LogEntry[]>("/logs?limit=200"),
+    queryKey: ["logs", operationId, sourceId],
+    queryFn: () => api<LogEntry[]>(`/logs?limit=200${operationId ? `&operation_id=${encodeURIComponent(operationId)}` : ""}${sourceId ? `&source_id=${encodeURIComponent(sourceId)}` : ""}`),
   })
 
   useEffect(() => {
@@ -32,6 +36,8 @@ export function LogsPage() {
     const receive = (event: MessageEvent<string>) => {
       const data = JSON.parse(event.data) as {
         id: number
+        operationId?: string
+        sourceId?: number
         occurredAt: string
         level: LogEntry["level"]
         scope: string
@@ -40,6 +46,8 @@ export function LogsPage() {
       }
       const next: LogEntry = {
         id: data.id,
+        operation_id: data.operationId,
+        source_id: data.sourceId,
         occurred_at: data.occurredAt,
         level: data.level,
         scope: data.scope,
@@ -59,6 +67,7 @@ export function LogsPage() {
     for (const item of history.data ?? []) byId.set(item.id, item)
     for (const item of liveLogs) byId.set(item.id, item)
     return [...byId.values()]
+      .filter(item => (!operationId || item.operation_id === operationId) && (!sourceId || String(item.source_id) === sourceId))
       .sort((left, right) => left.id - right.id)
       .filter((item) => level === "all" || item.level === level)
       .filter((item) =>
@@ -66,7 +75,7 @@ export function LogsPage() {
           .toLowerCase()
           .includes(query.trim().toLowerCase()),
       )
-  }, [history.data, liveLogs, query, level])
+  }, [history.data, liveLogs, query, level, operationId, sourceId])
 
   useLayoutEffect(() => {
     if (previousFilter.current.query !== query || previousFilter.current.level !== level) {
@@ -96,6 +105,7 @@ export function LogsPage() {
     connection === "connected" ? "已连接" : connection === "reconnecting" ? "正在重连" : "连接中"
 
   return <>
+    {(operationId || sourceId) && <p className="mb-4 text-sm text-[var(--muted)]">当前仅显示关联操作或订阅的日志。<a className="ml-3 text-[var(--accent)] underline" href="/logs">查看全部日志</a></p>}
     <PageHeading
       eyebrow="Observability"
       title="实时日志"

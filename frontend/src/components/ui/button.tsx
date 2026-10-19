@@ -24,6 +24,7 @@ export interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElemen
   icon?: LucideIcon
   iconSlot?: boolean
   iconMotion?: "rotate" | "refresh"
+  pressMotion?: boolean
   pending?: boolean
   pendingLabel?: string
 }
@@ -37,7 +38,7 @@ export function NativeButton({ children, ...props }: React.ComponentProps<"butto
 
 const buttonSpring = { type: "spring", stiffness: 500, damping: 40 } as const
 
-export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(function Button({ className, variant = "default", size = "default", asChild, children, icon: Icon, iconSlot, iconMotion, pending, pendingLabel, disabled, ...props }, ref) {
+export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(function Button({ className, variant = "default", size = "default", asChild, children, icon: Icon, iconSlot, iconMotion, pressMotion = true, pending, pendingLabel, disabled, ...props }, ref) {
   const reducedMotion = useReducedMotion()
   const [hovered, setHovered] = React.useState(false)
   const [focused, setFocused] = React.useState(false)
@@ -71,5 +72,5 @@ export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(function 
     onBlur: (event: React.FocusEvent<HTMLButtonElement>) => { setFocused(false); props.onBlur?.(event) },
   }
   if (asChild) return <Slot.Slot {...props} {...sharedProps} ref={ref}>{content}</Slot.Slot>
-  return <motion.button {...props as React.ComponentProps<typeof motion.button>} {...sharedProps} ref={ref} whileTap={reducedMotion || inactive ? undefined : { scale: .97 }} transition={buttonSpring}>{content}</motion.button>
+  return <motion.button {...props as React.ComponentProps<typeof motion.button>} {...sharedProps} ref={ref} whileTap={reducedMotion || inactive || !pressMotion ? undefined : { scale: .97 }} transition={buttonSpring}>{content}</motion.button>
 })

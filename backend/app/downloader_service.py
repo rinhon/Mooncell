@@ -3,15 +3,24 @@
 from __future__ import annotations
 
 import base64
+import logging
 import re
 from dataclasses import dataclass
 from urllib.parse import parse_qs, urlparse
 
 import httpx
 
+from .events import _redact, describe_download_error
 from .schemas import DownloaderTestResult
 
 _TORRENT_HASH = re.compile(r"([0-9a-fA-F]{40})(?:\.torrent)?(?:\?|$)")
+logger = logging.getLogger(__name__)
+
+
+def _test_failure(kind: str, message: str) -> DownloaderTestResult:
+    message = _redact(message)
+    logger.warning("下载器连接测试失败：%s", message)
+    return DownloaderTestResult(ok=False, kind=kind, message=message)
 
 
 @dataclass(slots=True)
@@ -90,6 +99,7 @@ async def test_qbittorrent(
     verify_tls: bool,
 ) -> DownloaderTestResult:
     """登录 qBittorrent Web API，并读取版本验证 Cookie 会话可用。"""
+    stage = "登录 Web API"
     try:
         async with httpx.AsyncClient(
             base_url=base_url,
@@ -100,15 +110,15 @@ async def test_qbittorrent(
                 "/api/v2/auth/login",
                 data={"username": username or "", "password": secret or ""},
             )
+            response.raise_for_status()
             login_ok = response.status_code == 204 or (
                 response.status_code == 200 and response.text.startswith("Ok")
             )
             if not login_ok:
-                return DownloaderTestResult(
-                    ok=False,
-                    kind="qbittorrent",
-                    message="qBittorrent 拒绝登录，请检查地址和凭据",
+                return _test_failure(
+                    "qbittorrent", "qBittorrent 拒绝登录，请检查地址和凭据",
                 )
+            stage = "读取版本"
             version_response = await client.get("/api/v2/app/version")
             version_response.raise_for_status()
             return DownloaderTestResult(
@@ -118,10 +128,9 @@ async def test_qbittorrent(
                 message="qBittorrent 连接正常",
             )
     except Exception as exc:
-        return DownloaderTestResult(
-            ok=False,
-            kind="qbittorrent",
-            message=f"无法连接 qBittorrent：{exc}",
+        return _test_failure(
+            "qbittorrent",
+            f"无法连接 qBittorrent：{stage}失败；{describe_download_error(exc)}",
         )
 
 
@@ -144,10 +153,8 @@ async def test_aria2(
             response.raise_for_status()
             data = response.json()
             if "error" in data:
-                return DownloaderTestResult(
-                    ok=False,
-                    kind="aria2",
-                    message=f"aria2 RPC 返回错误：{data['error'].get('message', '未知错误')}",
+                return _test_failure(
+                    "aria2", f"aria2 RPC 返回错误：{data['error'].get('message', '未知错误')}",
                 )
             return DownloaderTestResult(
                 ok=True,
@@ -156,7 +163,7 @@ async def test_aria2(
                 message="aria2 连接正常",
             )
     except Exception as exc:
-        return DownloaderTestResult(ok=False, kind="aria2", message=f"无法连接 aria2：{exc}")
+        return _test_failure("aria2", f"无法连接 aria2：{describe_download_error(exc)}")
 
 
 async def test_downloader(

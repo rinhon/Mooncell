@@ -65,3 +65,34 @@ function Write-DevOutput {
         finally { $Stream.Dispose() }
     }
 }
+
+function Wait-DevServicesReady {
+    param(
+        [Parameter(Mandatory)][object[]]$Services,
+        [Parameter(Mandatory)][string[]]$Urls,
+        [int]$TimeoutSeconds = 60
+    )
+
+    $Deadline = [datetime]::UtcNow.AddSeconds($TimeoutSeconds)
+    $PendingUrls = [System.Collections.Generic.List[string]]::new()
+    foreach ($Url in $Urls) { $PendingUrls.Add($Url) }
+    while ([datetime]::UtcNow -lt $Deadline) {
+        foreach ($Service in $Services) {
+            Write-DevOutput -Service $Service
+            $Service.Process.Refresh()
+            if ($Service.Process.HasExited) {
+                throw "$($Service.Name) exited with code $($Service.Process.ExitCode) before startup completed. See service logs."
+            }
+        }
+        foreach ($Url in $PendingUrls.ToArray()) {
+            try {
+                $Response = Invoke-WebRequest -Uri $Url -UseBasicParsing -TimeoutSec 1
+                if ($Response.StatusCode -eq 200) { $null = $PendingUrls.Remove($Url) }
+            }
+            catch { }
+        }
+        if ($PendingUrls.Count -eq 0) { return }
+        Start-Sleep -Milliseconds 200
+    }
+    throw "Development services did not become ready within $TimeoutSeconds seconds: $($PendingUrls -join ', '). Check service logs; Windows sandbox restrictions can prevent dependency access or reload-worker communication."
+}

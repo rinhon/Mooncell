@@ -6,6 +6,8 @@ import { ActionButton } from "@/components/ui/action-button"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { useToast } from "@/components/ui/toast"
 
+import { artworkUrl } from "@/lib/show-artwork"
+
 type Kind = "poster" | "fanart" | "clearlogo"
 const labels: Record<Kind, string> = { poster: "海报 poster", fanart: "背景 fanart", clearlogo: "透明标志 clearlogo" }
 
@@ -33,7 +35,7 @@ function UploadField({ show, kind }: { show: Show; kind: Kind }) {
     },
     onError: (error) => toast("图片上传失败", { description: error.message, tone: "error" }),
   })
-  const existing = show[`${kind}_ready`] ? `/api/v1/shows/${show.id}/artwork/${kind}?v=${encodeURIComponent(show.artwork_version ?? "")}` : null
+  const existing = show[`${kind}_ready`] ? artworkUrl(show, kind) : null
   return <section className="grid gap-3 border border-[var(--border)] bg-[var(--paper)] p-4">
     <h3 className="text-sm font-medium">{labels[kind]}</h3>
     <div className="grid h-32 place-items-center overflow-hidden bg-white/[.04]">{preview || existing ? <img src={preview ?? existing!} alt={`${labels[kind]}预览`} className="max-h-32 max-w-full object-contain"/> : <span className="text-xs text-[var(--muted)]">暂无图片</span>}</div>

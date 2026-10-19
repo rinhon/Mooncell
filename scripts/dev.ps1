@@ -4,6 +4,7 @@ $ProjectRoot = Split-Path -Parent $PSScriptRoot
 $BackendDirectory = Join-Path $ProjectRoot "backend"
 $FrontendDirectory = Join-Path $ProjectRoot "frontend"
 $PythonPath = Join-Path $BackendDirectory ".venv\Scripts\python.exe"
+$VitePath = Join-Path $FrontendDirectory "node_modules\vite\bin\vite.js"
 $ListenAddress = "0.0.0.0"
 $BackendPort = 8000
 $FrontendPort = 5173
@@ -75,12 +76,12 @@ Run these commands from the project root first:
 "@
 }
 
-$PnpmPath = Resolve-Executable -Names @("pnpm.cmd", "pnpm.exe", "pnpm")
-if ($null -eq $PnpmPath) {
-    throw "pnpm was not found. Install pnpm or enable it with: corepack enable pnpm"
+$NodePath = Resolve-Executable -Names @("node.exe", "node")
+if ($null -eq $NodePath) {
+    throw "Node.js was not found. Install Node.js before starting development services."
 }
 
-if (-not (Test-Path -LiteralPath (Join-Path $FrontendDirectory "node_modules") -PathType Container)) {
+if (-not (Test-Path -LiteralPath $VitePath -PathType Leaf)) {
     throw "Frontend dependencies are missing. Run: pnpm --dir frontend install"
 }
 
@@ -110,6 +111,7 @@ $Services = @()
 
 try {
     Write-Host "Starting Mooncell development services..." -ForegroundColor Cyan
+    Write-Host "  Logs:   $LogDirectory"
 
     $BackendService = Start-DevService -Name "backend" `
         -FilePath $PythonPath `
@@ -123,13 +125,18 @@ try {
     $Services += $BackendService
 
     $FrontendService = Start-DevService -Name "frontend" `
-        -FilePath $PnpmPath `
+        -FilePath $NodePath `
         -Arguments @(
-            "dev", "--host", $ListenAddress, "--port", $FrontendPort, "--strictPort"
+            $VitePath, "--host", $ListenAddress, "--port", $FrontendPort, "--strictPort"
         ) `
         -WorkingDirectory $FrontendDirectory `
         -LogDirectory $LogDirectory
     $Services += $FrontendService
+
+    Wait-DevServicesReady -Services $Services -Urls @(
+        "http://127.0.0.1:$BackendPort/api/v1/health",
+        "http://127.0.0.1:$FrontendPort/"
+    )
 
     Write-Host ""
     Write-Host "Mooncell is running:" -ForegroundColor Green

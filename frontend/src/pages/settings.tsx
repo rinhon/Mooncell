@@ -3,7 +3,6 @@ import { TmdbSettingsSection } from "@/components/tmdb-settings"
 import { useEffect } from "react"
 import { useLocation } from "react-router-dom"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { ParserSettingsSection } from "@/pages/parser"
 import { FolderTree, LogOut } from "lucide-react"
 import { api, type ParsedRelease } from "@/lib/api"
 import { DownloaderSettingsSection } from "@/components/downloader-settings"
@@ -11,6 +10,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Field } from "@/components/field"
 import { Input } from "@/components/ui/input"
 import { FolderPicker, type LibraryPath } from "@/components/folder-picker"
+import { LibraryScan } from "@/components/library-scan"
 import { PageHeading } from "@/components/page-heading"
 import { Button } from "@/components/ui/button"
 import { useToast } from "@/components/ui/toast"
@@ -28,7 +28,7 @@ export function SettingsPage() {
   })
   const { hash } = useLocation()
   useEffect(() => {
-    if (["#parser", "#tmdb", "#downloader"].includes(hash)) document.getElementById(hash.slice(1))?.scrollIntoView()
+    if (["#tmdb", "#downloader"].includes(hash)) document.getElementById(hash.slice(1))?.scrollIntoView()
   }, [hash])
   const library = useQuery({ queryKey: ["library-settings"], queryFn: () => api<LibraryPath>("/settings/library") })
   const root = library.data?.library_root ?? ""
@@ -38,21 +38,22 @@ export function SettingsPage() {
     enabled: Boolean(root),
   })
   return <>
-    <PageHeading eyebrow="Configuration" title="设置" description="集中管理下载器连接、TMDB、保存路径和标题解析。"/>
-    <div className="grid gap-6">
+    <PageHeading eyebrow="Configuration" title="设置" description="集中管理下载器连接、订阅刷新、TMDB 和媒体库保存路径。"/>
+    <div className="grid gap-6 lg:grid-cols-2 [&>*]:min-w-0">
       <DownloaderSettingsSection/>
       <SubscriptionSettingsSection/>
       <TmdbSettingsSection/>
-      <section aria-label="保存路径">
+      <section aria-label="保存路径" className="grid">
         <Card>
           <CardHeader><div><CardTitle>保存路径</CardTitle><CardDescription>选择媒体库根目录，预览最终目录与文件名。</CardDescription></div><FolderTree size={20} className="text-[var(--muted)]"/></CardHeader>
-          <CardContent className="grid items-start gap-5 lg:grid-cols-2">
+          <CardContent className="grid items-start gap-5">
             <div className="min-w-0">
               <Field label="媒体库根目录">
                 <div className="flex flex-wrap items-center gap-2"><Input className="min-w-0 flex-1 basis-48" value={root} readOnly placeholder={library.isPending ? "正在读取保存路径…" : "请选择文件夹"}/><FolderPicker value={root} onSaved={() => {}}/></div>
                 {library.error && <p role="alert" className="mt-1 text-xs text-[var(--danger)]">{library.error.message}</p>}
               </Field>
               <p className="mt-3 text-[13px] leading-6 text-[var(--muted)]">选择后自动保存。目录结构兼容 Plex、Jellyfin 与 Emby。</p>
+              <div className="mt-4"><LibraryScan/></div>
             </div>
             <div className="min-w-0">
               <p className="mb-2 text-sm font-medium text-[var(--ink)]">目录预览</p>
@@ -69,12 +70,11 @@ export function SettingsPage() {
           </CardContent>
         </Card>
       </section>
-      <section id="parser" className="grid scroll-mt-6 gap-4"><ParserSettingsSection/></section>
-      <Card>
-        <CardHeader><div><CardTitle>登录会话</CardTitle><CardDescription>退出当前账户，之后需要重新登录。</CardDescription></div></CardHeader>
-        <CardContent className="flex justify-end">
+      <Card className="lg:col-span-2">
+        <CardHeader className="flex-wrap items-center border-b-0">
+          <div><CardTitle>登录会话</CardTitle><CardDescription>退出当前账户，之后需要重新登录。</CardDescription></div>
           <Button variant="secondary" icon={LogOut} pending={logout.isPending} pendingLabel="退出中…" onClick={() => logout.mutate()}>退出登录</Button>
-        </CardContent>
+        </CardHeader>
       </Card>
     </div>
   </>

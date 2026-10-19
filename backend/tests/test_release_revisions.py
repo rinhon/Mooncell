@@ -1,5 +1,7 @@
 import json
 from copy import deepcopy
+from datetime import UTC, datetime, timedelta
+from itertools import count
 from pathlib import Path
 from urllib.parse import parse_qs
 from xml.etree import ElementTree
@@ -34,6 +36,11 @@ def test_completion_requires_selected_video_and_finished_checks(state, priority)
 
 @pytest.fixture
 async def revision_database(monkeypatch, tmp_path):
+    # 推进虚拟时间，验证接口故障后替换流程继续；真实退避边界另有专门用例。
+    ticks = count()
+    monkeypatch.setattr(download_queue, "retry_now", lambda: (
+        datetime(2026, 10, 18, tzinfo=UTC) + timedelta(minutes=16 * next(ticks))
+    ))
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
     async with engine.begin() as connection:
         await connection.run_sync(Base.metadata.create_all)

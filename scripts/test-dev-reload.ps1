@@ -58,6 +58,17 @@ try {
     $Frontend = Start-DevService -Name "frontend" -FilePath $FrontendPath -Arguments @("dev") `
         -WorkingDirectory $RunDirectory -LogDirectory $RunDirectory
     $Services += $Frontend
+    Wait-DevServicesReady -Services $Services -Urls @($TestUrl) -TimeoutSeconds 20
+    # A live launcher is insufficient: an unavailable HTTP endpoint must fail.
+    $ReadinessTimedOut = $false
+    try {
+        Wait-DevServicesReady -Services $Services -Urls @("${TestUrl}missing") -TimeoutSeconds 1
+    }
+    catch {
+        if ($_.Exception.Message -notlike "Development services did not become ready*") { throw }
+        $ReadinessTimedOut = $true
+    }
+    if (-not $ReadinessTimedOut) { throw "Readiness accepted an unavailable HTTP endpoint." }
     $WorkerPid = Wait-BackendPid
     if ($Frontend.Process.HasExited) { throw "Batch frontend launcher exited unexpectedly." }
 

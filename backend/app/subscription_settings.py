@@ -63,7 +63,9 @@ async def refresh_due_feeds() -> None:
     from .rss_service import FeedRefreshService, describe_rss_exception
 
     async with SessionFactory() as session:
-        ids = list(await session.scalars(select(FeedSource.id).where(FeedSource.active.is_(True))))
+        ids = list(await session.scalars(select(FeedSource.id).where(
+            FeedSource.active.is_(True), FeedSource.kind != "magnet",
+        )))
     for source_id in ids:
         async with SessionFactory() as session:
             source = await session.get(FeedSource, source_id)

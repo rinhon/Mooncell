@@ -6,12 +6,19 @@ import { api, type AuthStatus } from "@/lib/api"
 import { useEvents } from "@/hooks/use-events"
 import { AuthScreen } from "@/components/auth-screen"
 import { AppShell } from "@/components/app-shell"
-import { DashboardPage } from "@/pages/dashboard"
 import { Skeleton } from "@/components/ui/skeleton"
+import { CalendarLoading } from "@/components/calendar-loading"
+import { FeedsLoading } from "@/components/feeds-loading"
+import { ShowDetailLoading } from "@/components/show-detail-loading"
+import { ShowsLoading } from "@/components/shows-loading"
+import { DashboardLoading } from "@/components/dashboard-loading"
+import { DownloadsLoading } from "@/components/downloads-loading"
 
+const DashboardPage = lazy(() => import("@/pages/dashboard").then(module => ({ default: module.DashboardPage })))
 const FeedsPage = lazy(() => import("@/pages/feeds").then(module => ({ default: module.FeedsPage })))
 const ReviewPage = lazy(() => import("@/pages/review").then(module => ({ default: module.ReviewPage })))
 const SettingsPage = lazy(() => import("@/pages/settings").then(module => ({ default: module.SettingsPage })))
+const ShowDetailPage = lazy(() => import("@/pages/show-detail").then(module => ({ default: module.ShowDetailPage })))
 const ShowsPage = lazy(() => import("@/pages/shows").then(module => ({ default: module.ShowsPage })))
 const DownloadsPage = lazy(() => import("@/pages/downloads").then(module => ({ default: module.DownloadsPage })))
 const OrganizerPage = lazy(() => import("@/pages/organizer").then(module => ({ default: module.OrganizerPage })))
@@ -31,13 +38,14 @@ export default function App() {
   if (!demoAuth && auth.isError) return <div className="grid min-h-screen place-items-center p-6 text-center"><div><p className="font-semibold">无法连接 Mooncell 后端</p><p className="mt-2 text-sm text-[var(--muted)]">请确认 Mooncell 后端已启动，然后刷新页面。</p></div></div>
   if (!demoAuth && !auth.data?.authenticated) return <AuthScreen initialized={Boolean(auth.data?.initialized)}/>
   return <BrowserRouter><AppShell><Suspense fallback={<PageSkeleton/>}><Routes>
-    <Route path="/" element={<DashboardPage/>}/>
-    <Route path="/shows" element={<ShowsPage/>}/>
-    <Route path="/downloads" element={<DownloadsPage/>}/>
+    <Route path="/" element={<Suspense fallback={<DashboardLoading/>}><DashboardPage/></Suspense>}/>
+    <Route path="/shows" element={<Suspense fallback={<ShowsLoading/>}><ShowsPage/></Suspense>}/>
+    <Route path="/shows/:sourceId" element={<Suspense fallback={<ShowDetailLoading/>}><ShowDetailPage/></Suspense>}/>
+    <Route path="/downloads" element={<Suspense fallback={<DownloadsLoading/>}><DownloadsPage/></Suspense>}/>
     <Route path="/organizer" element={<OrganizerPage/>}/>
-    <Route path="/calendar" element={<CalendarPage/>}/>
-    <Route path="/feeds" element={<FeedsPage/>}/>
-    <Route path="/parser" element={<Navigate to="/settings#parser" replace/>}/>
+    <Route path="/calendar" element={<Suspense fallback={<CalendarLoading/>}><CalendarPage/></Suspense>}/>
+    <Route path="/feeds" element={<Suspense fallback={<FeedsLoading/>}><FeedsPage/></Suspense>}/>
+    <Route path="/parser" element={<Navigate to="/settings" replace/>}/>
     <Route path="/downloaders" element={<Navigate to="/settings" replace/>}/>
     <Route path="/review" element={<ReviewPage/>}/>
     <Route path="/settings" element={<SettingsPage/>}/>

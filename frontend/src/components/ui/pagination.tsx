@@ -15,7 +15,7 @@ export function Pagination({ total, page, pageSize, onPageChange, onPageSizeChan
   const current = Math.min(Math.max(1, page), pageCount)
   const pages = Array.from(new Set([1, current - 1, current, current + 1, pageCount]))
     .filter((value) => value >= 1 && value <= pageCount).sort((a, b) => a - b)
-  return <nav className="list-pagination" aria-label="下载列表分页">
+  return <nav className="list-pagination" aria-label="列表分页">
     <p className="pagination-summary" aria-live="polite">共 {total} 条<span> · {total ? (current - 1) * pageSize + 1 : 0}–{Math.min(current * pageSize, total)} 条</span></p>
     <div className="pagination-controls">
       <Select value={String(pageSize)} onValueChange={(value) => onPageSizeChange(Number(value))}>

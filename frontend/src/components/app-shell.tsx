@@ -1,6 +1,7 @@
+import { NotificationCenter } from "@/components/notification-center"
 import { NativeButton } from "@/components/ui/button"
-import { useRef, useState, type PointerEvent, type ReactNode } from "react"
-import { LayoutGroup, motion, useReducedMotion } from "motion/react"
+import { useLayoutEffect, useRef, useState, type PointerEvent, type ReactNode, type RefObject } from "react"
+import { motion, useReducedMotion } from "motion/react"
 import { NavLink, useLocation, useNavigate } from "react-router-dom"
 import { useQuery } from "@tanstack/react-query"
 import { CalendarDays, Download, FileCheck2, FolderCheck, LayoutDashboard, ListFilter, RadioTower, Settings2, Tv2 } from "lucide-react"
@@ -25,17 +26,55 @@ const utilities = [
   { to: "/settings", label: "设置", icon: Settings2 },
 ]
 
+/** 指示器使用导航自身的坐标，只动画横向位置，页面滚动不参与测量。 */
+function useNavigationBounds(container: RefObject<HTMLElement | null>, target: string | null, active = false, layoutVersion = 0) {
+  const [bounds, setBounds] = useState<{ x: number; y: number; width: number; height: number } | null>(null)
+  const [visible, setVisible] = useState(false)
+  useLayoutEffect(() => {
+    const row = container.current
+    if (!row) return
+    const measure = () => {
+      const link = active ? row.querySelector<HTMLElement>(".top-link.active") : Array.from(row.querySelectorAll<HTMLElement>("a[href]")).find(link => link.getAttribute("href") === target)
+      if (!target || !link) { setVisible(false); return }
+      const inset = active ? 13 : 0
+      setBounds({ x: link.offsetLeft + inset, y: link.offsetTop, width: Math.max(0, link.offsetWidth - inset * 2), height: link.offsetHeight })
+      setVisible(true)
+    }
+    measure()
+    const observer = new ResizeObserver(measure)
+    observer.observe(row)
+    for (const link of row.querySelectorAll("a[href]")) observer.observe(link)
+    return () => observer.disconnect()
+  }, [container, target, active, layoutVersion])
+  return { bounds, visible }
+}
+
+function NavigationIndicator({ bounds, visible, active = false }: ReturnType<typeof useNavigationBounds> & { active?: boolean }) {
+  const reducedMotion = useReducedMotion()
+  if (!bounds) return null
+  return <motion.span className={active ? "rail-slider" : "navigation-hover"} aria-hidden="true" data-visible={visible || undefined}
+    initial={false} style={{ left: 0, right: "auto", top: active ? undefined : bounds.y, height: active ? 2 : bounds.height }}
+    animate={{ x: bounds.x, width: bounds.width, opacity: visible ? 1 : 0 }}
+    transition={reducedMotion ? { duration: 0 } : { x: { type: "spring", stiffness: 400, damping: 32 }, width: { type: "spring", stiffness: 400, damping: 32 }, opacity: { duration: .12 } }}
+  />
+}
+
 /** 顶部导航保持固定，页面内容在下方工作区切换。 */
 export function AppShell({ children }: { children: ReactNode }) {
   const location = useLocation()
+  const detailRoute = /^\/shows\/[^/]+\/?$/.test(location.pathname)
   const reducedMotion = useReducedMotion()
   const navigate = useNavigate()
 
   const navigationRef = useRef<HTMLElement>(null)
+  const utilitiesRef = useRef<HTMLElement>(null)
   const { measureRef, visibleCount } = useOverflowMenu(navigationRef, navigation.length)
   const hiddenNavigation = navigation.slice(visibleCount)
-  const hiddenCurrent = hiddenNavigation.find(item => item.to === location.pathname)
+  const hiddenCurrent = hiddenNavigation.find(item => (item.to === location.pathname || (item.to !== "/" && location.pathname.startsWith(`${item.to}/`))))
   const [hoveredTo, setHoveredTo] = useState<string | null>(null)
+  const navigationHover = useNavigationBounds(navigationRef, hoveredTo, false, visibleCount)
+  const navigationActive = useNavigationBounds(navigationRef, location.pathname, true, visibleCount)
+  const utilitiesHover = useNavigationBounds(utilitiesRef, hoveredTo)
 
   function moveNavigationGlow(event: PointerEvent<HTMLElement>) {
     if (event.pointerType === "touch") return
@@ -53,32 +92,32 @@ export function AppShell({ children }: { children: ReactNode }) {
 
 
 
-  return <div className="app-frame">
-    {/* 吸顶导航的共享布局动画相对顶栏测量，避免页面滚动距离混入指示条位移。 */}
-    <motion.header layoutRoot className="top-navigation" onPointerMove={moveNavigationGlow} onPointerLeave={hideNavigationGlow} onPointerCancel={hideNavigationGlow}>
+  return <div className={cn("app-frame", detailRoute && "is-show-detail")}>
+    <header className="top-navigation" onPointerMove={moveNavigationGlow} onPointerLeave={hideNavigationGlow} onPointerCancel={hideNavigationGlow}>
       <span className="navigation-glow" aria-hidden="true"/>
       <NativeButton className="brand-mark" aria-label="MOONCELL · 返回首页" onPointerEnter={() => setHoveredTo(null)} onClick={() => navigate("/")}><StrokeText text="MOONCELL" trigger="hover" playOnMount strokeColor="var(--accent)" fillColor="var(--accent)" fontSize={28} fontWeight={800} letterSpacing={1.2} strokeWidth={0.7} drawDuration={0.9} fillDelay={0.1} stagger={0.045}/></NativeButton>
-      <LayoutGroup id="main-navigation"><nav ref={navigationRef} className="top-links" aria-label="主要导航">
+      <nav ref={navigationRef} className="top-links" aria-label="主要导航">
         <div ref={measureRef} className="overflow-measure" aria-hidden="true" inert>{navigation.map(({ label, icon: Icon }) => <span className="top-link" key={label}><Icon size={18}/><span>{label}</span></span>)}</div>
+        <NavigationIndicator {...navigationHover}/>
+        <NavigationIndicator {...navigationActive} active/>
         {navigation.slice(0, visibleCount).map(({ to, label, icon: Icon }) => <NavLink key={to} end={to === "/"} to={to} onPointerEnter={event => {
           if (event.pointerType === "mouse") setHoveredTo(to)
-        }} className={({ isActive }) => cn("nav-link top-link", isActive && "active")}>{({ isActive }) => <>
-          {hoveredTo === to && <motion.span className="navigation-hover" data-visible="true" aria-hidden="true" layoutId="hover" transition={{ type: "spring", stiffness: 400, damping: 32 }}/>}<Icon size={18} strokeWidth={1.45}/><span>{label}</span>
-          {isActive && <motion.i className="rail-slider" aria-hidden="true" layoutId="active" transition={{ type: "spring", stiffness: 400, damping: 32 }}/>}</>}</NavLink>)}
-        {hiddenNavigation.length > 0 && <DropdownMenu><DropdownMenuTrigger asChild><button className={cn("top-link overflow-trigger", hiddenCurrent && "active")} onPointerEnter={() => setHoveredTo(null)} aria-label="更多导航">{hiddenCurrent ? hiddenCurrent.label : "更多"}<span aria-hidden="true">▾</span></button></DropdownMenuTrigger><DropdownMenuContent align="end">{hiddenNavigation.map(({ to, label, icon: Icon }) => <DropdownMenuItem key={to} asChild><NavLink to={to} end={to === "/"}><Icon size={16}/>{label}{location.pathname === to && <span aria-hidden="true">✓</span>}</NavLink></DropdownMenuItem>)}</DropdownMenuContent></DropdownMenu>}
+        }} className={({ isActive }) => cn("nav-link top-link", isActive && "active")}><Icon size={18} strokeWidth={1.45}/><span>{label}</span></NavLink>)}
+        {hiddenNavigation.length > 0 && <DropdownMenu><DropdownMenuTrigger asChild><button className={cn("top-link overflow-trigger", hiddenCurrent && "active")} onPointerEnter={() => setHoveredTo(null)} aria-label="更多导航">{hiddenCurrent ? hiddenCurrent.label : "更多"}<span aria-hidden="true">▾</span></button></DropdownMenuTrigger><DropdownMenuContent align="end">{hiddenNavigation.map(({ to, label, icon: Icon }) => <DropdownMenuItem key={to} asChild><NavLink to={to} end={to === "/"}><Icon size={16}/>{label}{(location.pathname === to || (to !== "/" && location.pathname.startsWith(`${to}/`))) && <span aria-hidden="true">✓</span>}</NavLink></DropdownMenuItem>)}</DropdownMenuContent></DropdownMenu>}
       </nav>
       <div className="top-actions">
-        <nav className="utility-navigation" aria-label="管理工具">{utilities.map(({ to, label, icon: Icon }) => <NavLink key={to} to={to} title={label} aria-label={label} onPointerEnter={event => {
+        <NotificationCenter/>
+        <nav ref={utilitiesRef} className="utility-navigation" aria-label="管理工具"><NavigationIndicator {...utilitiesHover}/>{utilities.map(({ to, label, icon: Icon }) => <NavLink key={to} to={to} title={label} aria-label={label} onPointerEnter={event => {
           if (event.pointerType === "mouse") setHoveredTo(to)
-        }} className={({ isActive }) => cn("utility-link", isActive && "active")}>{hoveredTo === to && <motion.span className="navigation-hover" data-visible="true" aria-hidden="true" layoutId="hover" transition={{ type: "spring", stiffness: 400, damping: 32 }}/>}<Icon size={17} strokeWidth={1.5}/></NavLink>)}</nav>
-      </div></LayoutGroup>
-    </motion.header>
+        }} className={({ isActive }) => cn("utility-link", isActive && "active")}><Icon size={17} strokeWidth={1.5}/></NavLink>)}</nav>
+      </div>
+    </header>
 
     <section className="app-workspace">
-      <main className="content-stage"><motion.div key={location.pathname} className="page-content" initial={reducedMotion ? false : { opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ type: "spring", stiffness: 380, damping: 34 }}>{children}</motion.div></main>
+      <main className="content-stage"><motion.div key={location.pathname} className="page-content" initial={reducedMotion || detailRoute ? false : { opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ type: "spring", stiffness: 380, damping: 34 }}>{children}</motion.div></main>
     </section>
 
-    <SystemRail />
+    {!detailRoute && <SystemRail />}
   </div>
 }
 

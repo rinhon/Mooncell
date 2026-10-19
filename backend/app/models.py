@@ -3,15 +3,16 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from uuid import uuid4
 
 from sqlalchemy import (
+    JSON,
     Boolean,
     DateTime,
     Float,
     ForeignKey,
     Index,
     Integer,
-    JSON,
     String,
     Text,
     UniqueConstraint,
@@ -83,7 +84,7 @@ class UserSession(Base):
 
 
 class FeedSource(Base):
-    """Mikan 或标准 RSS/Atom 订阅源及其条件请求缓存信息。"""
+    """RSS/Atom 订阅源或单次磁力合集，以及各自的连接状态。"""
 
     __tablename__ = "feed_sources"
 
@@ -155,11 +156,27 @@ class ShowArtwork(Base):
     poster_path: Mapped[str | None] = mapped_column(Text, nullable=True)
     fanart_path: Mapped[str | None] = mapped_column(Text, nullable=True)
     clearlogo_path: Mapped[str | None] = mapped_column(Text, nullable=True)
+    file_version: Mapped[str | None] = mapped_column(String(64), nullable=True)
     status: Mapped[str] = mapped_column(String(24), default="pending")
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     scraped_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     source: Mapped[FeedSource] = relationship(back_populates="artwork")
+
+
+class EpisodeThumbnail(Base):
+    """按真实视频相对路径关联的本地单集缩略图。"""
+
+    __tablename__ = "episode_thumbnails"
+    __table_args__ = (UniqueConstraint("source_id", "video_path"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    source_id: Mapped[int] = mapped_column(
+        ForeignKey("feed_sources.id", ondelete="CASCADE"), index=True,
+    )
+    video_path: Mapped[str] = mapped_column(Text)
+    image_path: Mapped[str] = mapped_column(Text)
+    file_version: Mapped[str] = mapped_column(String(64))
 
 
 class FeedItem(Base):
@@ -231,6 +248,8 @@ class DownloadJob(Base):
     season: Mapped[int] = mapped_column(Integer)
     plan: Mapped[str | None] = mapped_column(Text, nullable=True)
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    retry_attempts: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    next_retry_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class DomainEvent(Base):
@@ -245,3 +264,50 @@ class DomainEvent(Base):
     resource_id: Mapped[str | None] = mapped_column(String(80), nullable=True)
     payload: Mapped[str] = mapped_column(Text, default="{}")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class BackgroundOperation(Base):
+    """一次用户操作，也是提醒中心中唯一的一条记录。"""
+
+    __tablename__ = "background_operations"
+    __table_args__ = (Index("idx_operations_user_updated", "user_id", "updated_at", "id"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    kind: Mapped[str] = mapped_column(String(32))
+    source_id: Mapped[int | None] = mapped_column(
+        ForeignKey("feed_sources.id", ondelete="SET NULL"), nullable=True, index=True,
+    )
+    source_name: Mapped[str] = mapped_column(String(160))
+    status: Mapped[str] = mapped_column(String(24), default="queued")
+    total_count: Mapped[int] = mapped_column(Integer, default=0)
+    completed_count: Mapped[int] = mapped_column(Integer, default=0)
+    summary: Mapped[str] = mapped_column(Text, default="已排队，等待后台处理")
+    error_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    context: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    revision: Mapped[int] = mapped_column(Integer, default=1)
+    attention_revision: Mapped[int] = mapped_column(Integer, default=0)
+    read_revision: Mapped[int] = mapped_column(Integer, default=0)
+    attention_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    attention_key: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class BackgroundOperationItem(Base):
+    __tablename__ = "background_operation_items"
+    __table_args__ = (UniqueConstraint("operation_id", "download_job_id"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    operation_id: Mapped[str] = mapped_column(
+        ForeignKey("background_operations.id", ondelete="CASCADE"), index=True,
+    )
+    download_job_id: Mapped[int | None] = mapped_column(
+        ForeignKey("download_jobs.id", ondelete="SET NULL"), nullable=True,
+    )
+    migration_token: Mapped[str] = mapped_column(String(32), unique=True)
+    status: Mapped[str] = mapped_column(String(24), default="queued")
+    error_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    error_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

@@ -14,7 +14,7 @@ from app.artwork_service import ArtworkResult
 from app.database import Base, get_session
 from app.dependencies import require_user
 from app.events import broker, event_log_fields
-from app.models import DomainEvent, DownloaderConfig, FeedSource, TmdbSettings
+from app.models import DomainEvent, DownloaderConfig, FeedSource, TmdbSettings, User
 from app.schemas import DownloaderTestResult, TmdbMetadata
 from app.security import encrypt_secret
 
@@ -43,7 +43,9 @@ async def feed_app(monkeypatch, tmp_path):
     app = FastAPI()
     app.include_router(api.router)
     app.dependency_overrides[get_session] = session_override
-    app.dependency_overrides[require_user] = lambda: object()
+    app.dependency_overrides[require_user] = lambda: User(
+        id=1, username="admin", password_hash="test",
+    )
     monkeypatch.setattr(api, "SessionFactory", sessions)
     monkeypatch.setattr(api, "test_downloader", AsyncMock(return_value=DownloaderTestResult(
         ok=True, kind="qbittorrent", message="连接正常",
@@ -104,7 +106,10 @@ async def test_response_is_sent_before_scraping_finishes(feed_app, monkeypatch, 
             async with sessions() as session:
                 source = await session.get(FeedSource, saved["id"])
                 assert source.artwork.status == "pending"
-            assert events.empty(), "后台任务完成前不应通知完成"
+            pending = []
+            while not events.empty():
+                pending.append(events.get_nowait())
+            assert all(event.event_type == "notification.changed" for event in pending)
             response = await asyncio.wait_for(client.get("/api/v1/shows"), 1)
             assert response.json()[0]["artwork_status"] == "pending"
         finally:
@@ -112,6 +117,8 @@ async def test_response_is_sent_before_scraping_finishes(feed_app, monkeypatch, 
             response = await asyncio.wait_for(task, 2)
         assert response.status_code == 201
         event = events.get_nowait()
+        while event.event_type == "notification.changed":
+            event = events.get_nowait()
         assert event.event_type == "feed.setup.completed"
         assert "刮削完成" in json.loads(event.as_sse().split("data: ")[1])["message"]
         async with sessions() as session:
@@ -145,6 +152,8 @@ async def test_scrape_failure_preserves_subscription_and_publishes_result(
         response = await client.post("/api/v1/feeds", json=VALUES)
         assert response.status_code == 201
         event = events.get_nowait()
+        while event.event_type == "notification.changed":
+            event = events.get_nowait()
         assert event.event_type == f"feed.setup.{expected}"
         level, _, message = event_log_fields(event.event_type, event.payload)
         assert level == ("error" if expected == "failed" else "warning")
@@ -153,7 +162,9 @@ async def test_scrape_failure_preserves_subscription_and_publishes_result(
             source = await session.get(FeedSource, response.json()["id"])
             assert source.artwork.status == expected
             assert source.artwork.last_error
-            stored = await session.scalar(select(DomainEvent))
+            stored = await session.scalar(select(DomainEvent).where(
+                DomainEvent.event_type == event.event_type,
+            ))
             assert stored.event_type == event.event_type
 
 

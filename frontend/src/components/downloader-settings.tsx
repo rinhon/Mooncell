@@ -92,7 +92,8 @@ export function DownloaderSettingsSection() {
           <div className="md:col-span-2"><Field label="Web API 地址"><Input value={form.base_url} onChange={(event) => set("base_url", event.target.value)} required/></Field></div>
           <Field label="用户名"><Input value={form.username} onChange={(event) => set("username", event.target.value)} disabled={form.kind === "aria2"}/></Field>
           <Field label="密码 / RPC Secret" hintPosition="top" hint={saved ? "留空表示不修改" : undefined}><Input type="password" value={form.secret} onChange={(event) => set("secret", event.target.value)}/></Field>
-          {saved?.last_error && <p className="rounded-[2px] bg-[var(--danger-soft)] px-3 py-2 text-sm text-[var(--danger)] md:col-span-2">{saved.last_error}</p>}
+          {(lastTest ? !lastTest.result.ok : saved?.last_error) && <p role="alert" className="rounded-[2px] bg-[var(--danger-soft)] px-3 py-2 text-sm text-[var(--danger)] md:col-span-2">{lastTest?.result.message ?? saved?.last_error}</p>}
+          {test.error && <p role="alert" className="rounded-[2px] bg-[var(--danger-soft)] px-3 py-2 text-sm text-[var(--danger)] md:col-span-2">{test.error.message}</p>}
           {save.error && <p className="rounded-[2px] bg-[var(--danger-soft)] px-3 py-2 text-sm text-[var(--danger)] md:col-span-2">{save.error.message}</p>}
           <div className="flex flex-col-reverse gap-2 md:col-span-2 sm:flex-row sm:justify-end"><ActionButton icon={TestTube2} emphasis="secondary" onClick={() => test.mutate()} pending={test.isPending} pendingLabel="测试中…" disabled={save.isPending}>测试连接</ActionButton><ActionButton type="submit" icon={Save} pending={save.isPending} pendingLabel="保存中…" disabled={test.isPending}>保存配置</ActionButton></div>
         </form>

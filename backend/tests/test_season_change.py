@@ -1,5 +1,7 @@
 import json
 from copy import deepcopy
+from datetime import UTC, datetime, timedelta
+from itertools import count
 from pathlib import Path
 from urllib.parse import parse_qs
 
@@ -14,12 +16,14 @@ from app.api import router
 from app.database import Base, get_session
 from app.dependencies import require_user
 from app.models import (
+    BackgroundOperation,
     DomainEvent,
     DownloaderConfig,
     DownloadJob,
     FeedItem,
     FeedSource,
     ShowArtwork,
+    User,
 )
 from app.release_parser import parse_release_title
 
@@ -95,6 +99,11 @@ class FakeQB:
 
 @pytest.fixture
 async def season_app(monkeypatch, tmp_path):
+    # 此套用例推进虚拟时间以验证迁移恢复；退避边界由下载队列用例单独验证。
+    ticks = count()
+    monkeypatch.setattr(download_queue, "retry_now", lambda: (
+        datetime(2026, 10, 18, tzinfo=UTC) + timedelta(minutes=16 * next(ticks))
+    ))
     engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'app.db'}")
     async with engine.begin() as connection:
         await connection.run_sync(Base.metadata.create_all)
@@ -111,7 +120,9 @@ async def season_app(monkeypatch, tmp_path):
     monkeypatch.setattr(httpx, "AsyncClient", client)
     app = FastAPI()
     app.include_router(router)
-    app.dependency_overrides[require_user] = lambda: object()
+    app.dependency_overrides[require_user] = lambda: User(
+        id=1, username="admin", password_hash="test",
+    )
 
     async def get_test_session():
         async with sessions() as session:
@@ -198,6 +209,12 @@ async def test_migrate_files_tags_paths_and_db_preserving_episodes(
     assert not fake.calls  # HTTP 请求只持久化，不长时间等待下载器。
     async with sessions() as session:
         item = await session.get(FeedItem, 1)
+        operation = await session.get(
+            BackgroundOperation, response.json()["background_operation_ids"][0],
+        )
+        assert operation.kind == "library_migration"
+        assert operation.total_count == 1 and operation.completed_count == 0
+        assert operation.attention_revision == 0
         data = json.loads(item.parse_data)
         assert (data["season"], data["episode_start"]) == (2, 5.5)
         assert "manual_review" in data["evidence"]
@@ -229,9 +246,65 @@ async def test_migrate_files_tags_paths_and_db_preserving_episodes(
         )
     assert not any(endpoint == "add" for endpoint, _ in fake.calls)
     async with sessions() as session:
+        operation = await session.get(
+            BackgroundOperation, response.json()["background_operation_ids"][0],
+        )
+        assert operation.status == "completed" and operation.completed_count == 1
+        assert operation.attention_revision > operation.read_revision
         assert await session.scalar(select(DomainEvent).where(
             DomainEvent.event_type == "download.library.changed",
         )) is not None
+
+
+async def test_batch_stays_blocked_until_all_downloads_restore(season_app):
+    api, sessions, fake, root = season_app
+    original, _ = await seed(sessions, fake, root)
+    name = "番名 S01E09.mkv"
+    (original / name).write_text("second-download", encoding="utf-8")
+    fake.torrents[OTHER_HASH] = {**fake.torrents[HASH], "hash": OTHER_HASH}
+    fake.files[OTHER_HASH] = [{"index": 0, "name": name, "priority": 1, "progress": 1}]
+    async with sessions() as session:
+        session.add(DownloaderConfig(
+            id=2, name="暂时停用", kind="qbittorrent", base_url="http://qb.test", active=False,
+        ))
+        session.add(FeedItem(
+            id=2, source_id=1, title="Example S01E09", fingerprint="second",
+            parse_data=parse_release_title("Example S01E09").model_dump_json(),
+        ))
+        await session.flush()
+        session.add(DownloadJob(
+            id=2, item_id=2, info_hash=OTHER_HASH, downloader_id=2, state="done",
+            target_root=str(root / "library"), title="番名", season=1,
+            plan=json.dumps({"wrapper": None, "season_folder": "Season 01",
+                             "files": [{"old": name, "new": name}], "show_tag": "番名"}),
+        ))
+        await session.commit()
+    response = await api.patch("/api/v1/feeds/1", json={"season": 2})
+    operation_id = response.json()["background_operation_ids"][0]
+    await finish(sessions)
+    async with sessions() as session:
+        operation = await session.get(BackgroundOperation, operation_id)
+        assert operation.status == "blocked"
+        assert (operation.completed_count, operation.total_count) == (1, 2)
+        attention = operation.attention_revision
+        operation.read_revision = attention
+        (await session.get(DownloaderConfig, 2)).active = True
+        await session.commit()
+    for _ in range(30):
+        await download_queue.process_queue()
+        async with sessions() as session:
+            operation = await session.get(BackgroundOperation, operation_id)
+            if operation.status == "completed":
+                break
+    assert operation.status == "completed" and operation.completed_count == 2
+    assert operation.attention_revision > attention
+    revision = operation.revision
+    await download_queue.process_queue()
+    async with sessions() as session:
+        assert (await session.get(BackgroundOperation, operation_id)).revision == revision
+    logs = (await api.get("/api/v1/logs", params={"operation_id": operation_id})).json()
+    assert all(entry["operation_id"] == operation_id for entry in logs)
+    assert sum(entry["event_type"] == "download.library.changed" for entry in logs) == 2
 
 
 @pytest.mark.parametrize("kind", ["local", "other_torrent", "shared_source", "manual_path"])

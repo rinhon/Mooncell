@@ -1,33 +1,20 @@
 import { Tabs } from "radix-ui"
 import { useToast } from "@/components/ui/toast"
-import { forwardRef, useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react"
+import { forwardRef, useCallback, useEffect, useLayoutEffect, useRef, useState, type MouseEvent, type ReactNode } from "react"
 import { useIsMutating, useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { ChevronLeft, ChevronRight, Heart, ImageOff } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import ClickSpark, { type ClickSparkHandle } from "@/components/click-spark"
 import { AnimatePresence, motion, useIsPresent, useReducedMotion } from "motion/react"
 import { Skeleton } from "@/components/ui/skeleton"
-import { PageHeading } from "@/components/page-heading"
+import { CalendarHeader, CalendarLoading, CalendarSkeleton, calendarWeekdays as weekdays } from "@/components/calendar-loading"
 import { api } from "@/lib/api"
 import { mikanSearchUrl } from "@/lib/mikan"
-import "./calendar.css"
 import { useOverflowMenu } from "@/hooks/use-overflow-menu"
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-menu"
 
 type CalendarItem = { liked: boolean; id: number; title: string; weekday: number | null; broadcast_time: string; cover_url: string | null }
 type SeasonCalendar = { season: string; current_season: string; source_url: string; fetched_at: string; items: CalendarItem[] }
-const weekdays = ["周一", "周二", "周三", "周四", "周五", "周六", "周日", "其他放送"]
-function CalendarSkeleton({ dayValue, count = 8, showTabs = true }: { dayValue?: string; count?: number; showTabs?: boolean }) {
-  return <div role="status" aria-label="正在加载季度日历" aria-busy="true">
-    <span className="sr-only">正在读取季度日历，首次获取可能需要一些时间。</span>
-    <div aria-hidden="true">
-      {showTabs && <div className="calendar-week-tabs calendar-skeleton-tabs">{weekdays.map((day, index) => <div key={day} className="calendar-week-tab" data-state={dayValue === String(index) ? "active" : "inactive"}><span className="calendar-week-label">{day}</span><Skeleton className="calendar-week-count calendar-skeleton-count"/></div>)}</div>}
-      <div className="calendar-items calendar-day-grid">{Array.from({ length: count }, (_, index) => <div className="calendar-item" key={index}>
-        <div className="calendar-artwork"><Skeleton className="calendar-cover"/><span className="calendar-skeleton-favorite"/></div>
-        <div className="calendar-item-copy"><Skeleton className="calendar-time calendar-skeleton-time"/><div className="calendar-skeleton-title"><Skeleton/><Skeleton style={{ width: index % 2 ? "58%" : "76%" }}/></div></div>
-      </div>)}</div>
-    </div>
-  </div>
-}
 function CalendarWeekTabs({ items, dayValue, onDayChange }: { items: CalendarItem[]; dayValue: string; onDayChange: (value: string) => void }) {
   const highlightWidth = 100
   const listRef = useRef<HTMLDivElement>(null)
@@ -136,6 +123,7 @@ const CalendarDayPanel = forwardRef<HTMLDivElement, { value: string; direction: 
 
 export function CalendarPage() {
   const reducedMotion = useReducedMotion()
+  const sparksRef = useRef<ClickSparkHandle>(null)
   const [now, setNow] = useState(() => new Date())
   const [selectedDay, setSelectedDay] = useState<string | null>(null)
   const panelsRef = useRef<HTMLDivElement>(null)
@@ -161,6 +149,8 @@ export function CalendarPage() {
   const [selected, setSelected] = useState<string | null>(null)
   const savingFavorites = useIsMutating({ mutationKey: ["calendar-favorite"] })
   const pendingFavorites = useRef(new Set<string>())
+  const animatingFavorites = useRef(new Set<string>())
+  const [favoriteOrder, setFavoriteOrder] = useState<Record<string, boolean>>({})
   const query = useQuery({ queryKey: ["season-calendar", selected], queryFn: () => api<SeasonCalendar>(`/calendar${selected ? `?season=${selected}` : ""}`), staleTime: 60_000, refetchInterval: savingFavorites ? false : 60_000, refetchOnWindowFocus: !savingFavorites, retry: false })
   const toast = useToast()
   function updateFavorite(input: { season: string; id: number; liked: boolean }) {
@@ -185,37 +175,45 @@ export function CalendarPage() {
       }
     },
   })
-  function toggleFavorite(season: string, item: CalendarItem) {
+  function toggleFavorite(season: string, item: CalendarItem, event: MouseEvent<HTMLButtonElement>) {
     const key = `${season}-${item.id}`
-    if (pendingFavorites.current.has(key)) return
+    if (pendingFavorites.current.has(key) || animatingFavorites.current.has(key)) return
+    if (!item.liked && !reducedMotion) {
+      const rect = event.currentTarget.getBoundingClientRect()
+      // Keep the card in place until its entire spark burst has finished.
+      animatingFavorites.current.add(key)
+      setFavoriteOrder(previous => ({ ...previous, [key]: item.liked }))
+      sparksRef.current?.sparkAt(rect.left + rect.width / 2, rect.top + rect.height / 2, () => {
+        animatingFavorites.current.delete(key)
+        setFavoriteOrder(previous => {
+          const next = { ...previous }
+          delete next[key]
+          return next
+        })
+      })
+    }
     pendingFavorites.current.add(key)
     favorite.mutate({ season, id: item.id, liked: !item.liked })
   }
   const data = query.data
   const season = selected ?? data?.season
   const current = data?.current_season ?? queryClient.getQueryData<SeasonCalendar>(["season-calendar", null])?.current_season
-  return <>
-    <PageHeading eyebrow="Season calendar" title="追番日历" description="每年 1、4、7、10 月收录当季新番，按星期查看播出安排。" />
-    <div className="calendar-toolbar">
-      <div><h2>{season ? `${season.slice(0, 4)} 年 ${Number(season.slice(4))} 月新番` : "当季新番"}</h2>{data ? <p>{data.items.length} 部 · 已保存至本地 · <a href={data.source_url} target="_blank" rel="noreferrer">来源 yuc.wiki</a></p> : query.isPending ? <Skeleton className="calendar-skeleton-meta mt-2"/> : null}</div>
-      <div className="calendar-navigation">
+  if (query.isPending) return <CalendarLoading now={now} season={season} dayValue={dayValue}/>
+  return <ClickSpark ref={sparksRef} manual disabled={Boolean(reducedMotion)} sparkColor="#6be897" sparkCount={8} sparkSize={11} sparkRadius={30} sparkWidth={2} duration={500} glow={.2} style={{ height: "auto" }} className="calendar-sparks">
+    <CalendarHeader now={now} season={season} showNotes={Boolean(data)} metadata={data ? <p>{data.items.length} 部 · 已保存至本地 · <a href={data.source_url} target="_blank" rel="noreferrer">来源 yuc.wiki</a></p> : null} navigation={<>
         <Button size="icon" variant="ghost" aria-label="上一季度" disabled={!season || season <= "200001"} onClick={() => season && setSelected(shiftSeason(season, -1))}><ChevronLeft size={18} /></Button>
         <Button variant="ghost" onClick={() => setSelected(null)} disabled={selected === null}>当季</Button>
         <Button size="icon" variant="ghost" aria-label="下一季度" disabled={!season || !current || season >= current} onClick={() => season && setSelected(shiftSeason(season, 1))}><ChevronRight size={18} /></Button>
-      </div>
-    </div>
+    </>}/>
     {query.isError && <div className="calendar-message" role="alert"><p>{query.error.message}</p><Button variant="secondary" onClick={() => query.refetch()}>重新读取</Button></div>}
-    {(data || query.isPending) && <><p className="calendar-note">时间按源站原文展示；24:00 及之后表示该播出日的次日凌晨。实际播出以官方安排为准。</p>
-      <p className="calendar-today">今天是 {now.getFullYear()} 年 {now.getMonth() + 1} 月 {now.getDate()} 日 · {weekdays[today]}</p>
-    </>}
-    {query.isPending && <CalendarSkeleton dayValue={dayValue}/>}
     {data && <>
       <Tabs.Root value={dayValue} onValueChange={changeDay} className="calendar-tabs">
         <CalendarWeekTabs items={data.items} dayValue={dayValue} onDayChange={changeDay}/>
         <div ref={panelsRef} className="calendar-panels" style={{ minHeight: panelMinHeight }}><AnimatePresence mode="popLayout" custom={reducedMotion ? 0 : dayDirection}>{weekdays.map((day, index) => {
         if (dayValue !== String(index)) return null
-        const items = data.items.filter(item => index === 7 ? item.weekday === null : item.weekday === index).sort((a, b) => Number(Boolean(b.liked)) - Number(Boolean(a.liked)))
-        return <CalendarDayPanel value={String(index)} direction={reducedMotion ? 0 : dayDirection} key={`${data.season}-${day}`}><CalendarDayContent key={`${data.season}-${index}`} items={items}>{markCoverReady => items.length ? items.map(item => <article className="calendar-item" key={`${data.season}-${item.id}`}><div className="calendar-artwork"><a className="calendar-search-link" href={mikanSearchUrl(item.title)} target="_blank" rel="noopener noreferrer" aria-label={`在蜜柑计划搜索：${item.title}（新标签页）`} title={`在蜜柑计划搜索：${item.title}`}><Cover item={item} onReady={markCoverReady} /></a><button type="button" className="calendar-favorite" aria-pressed={Boolean(item.liked)} aria-label={`${item.liked ? "取消喜欢" : "喜欢"}：${item.title}`} title={item.liked ? "取消喜欢" : "喜欢并置顶"} aria-disabled={pendingFavorites.current.has(`${data.season}-${item.id}`)} onClick={() => toggleFavorite(data.season, item)}><Heart size={17} fill={item.liked ? "currentColor" : "none"}/></button></div><div className="calendar-item-copy"><p className="calendar-time">{item.broadcast_time}</p><h4 title={item.title}><a className="calendar-title-link" href={mikanSearchUrl(item.title)} target="_blank" rel="noopener noreferrer" aria-label={`在蜜柑计划搜索：${item.title}（新标签页）`}>{item.title}</a></h4></div></article>) : <p className="calendar-empty">暂无播出安排</p>}</CalendarDayContent></CalendarDayPanel>
+        const sortLiked = (item: CalendarItem) => favoriteOrder[`${data.season}-${item.id}`] ?? item.liked
+        const items = data.items.filter(item => index === 7 ? item.weekday === null : item.weekday === index).sort((a, b) => Number(Boolean(sortLiked(b))) - Number(Boolean(sortLiked(a))))
+        return <CalendarDayPanel value={String(index)} direction={reducedMotion ? 0 : dayDirection} key={`${data.season}-${day}`}><CalendarDayContent key={`${data.season}-${index}`} items={items}>{markCoverReady => items.length ? items.map(item => <motion.article layout={reducedMotion ? false : "position"} transition={{ layout: { type: "spring", stiffness: 320, damping: 30 } }} className="calendar-item" style={{ position: "relative", zIndex: item.liked ? 1 : 0 }} key={`${data.season}-${item.id}`}><div className="calendar-artwork"><a className="calendar-search-link" href={mikanSearchUrl(item.title)} target="_blank" rel="noopener noreferrer" aria-label={`在蜜柑计划搜索：${item.title}（新标签页）`} title={`在蜜柑计划搜索：${item.title}`}><Cover item={item} onReady={markCoverReady} /></a><button type="button" className="calendar-favorite" aria-pressed={Boolean(item.liked)} aria-label={`${item.liked ? "取消喜欢" : "喜欢"}：${item.title}`} title={item.liked ? "取消喜欢" : "喜欢并置顶"} aria-disabled={pendingFavorites.current.has(`${data.season}-${item.id}`) || animatingFavorites.current.has(`${data.season}-${item.id}`)} onClick={event => toggleFavorite(data.season, item, event)}><Heart size={17} fill={item.liked ? "currentColor" : "none"}/></button></div><div className="calendar-item-copy"><p className="calendar-time">{item.broadcast_time}</p><h4 title={item.title}><a className="calendar-title-link" href={mikanSearchUrl(item.title)} target="_blank" rel="noopener noreferrer" aria-label={`在蜜柑计划搜索：${item.title}（新标签页）`}>{item.title}</a></h4></div></motion.article>) : <p className="calendar-empty">暂无播出安排</p>}</CalendarDayContent></CalendarDayPanel>
       })}</AnimatePresence></div></Tabs.Root></>}
-  </>
+  </ClickSpark>
 }

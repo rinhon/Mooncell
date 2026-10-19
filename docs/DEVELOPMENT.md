@@ -54,6 +54,20 @@ pnpm --dir ".\frontend" install
 - 日志同步显示在当前窗口，并保存在脚本输出的 `.cache\dev\<运行 ID>` 目录。
 - 后端仅监听 `backend\app`，修改测试文件不会重载；连续修改以 1 秒间隔检测。
 - 按 `Ctrl+C` 同时停止前后端。
+- 前端直接通过 Node.js 运行本地安装的 Vite，避免 pnpm 在启动阶段下载或切换自身版本；安装依赖仍使用 pnpm。
+- 脚本最多等待 60 秒，只有后端健康接口和前端首页都返回 HTTP 200 才显示启动成功；超时或进程退出会输出错误并清理服务。
+
+### Codex Windows 沙箱与启动授权
+
+沙箱曾出现前端 `realpath EPERM` 和后端热重载子进程命名管道 `WinError 2`。这些问题涉及沙箱的路径访问和进程通信；一次在沙箱外运行成功不会改变后续沙箱内命令的权限。项目标记为 trusted 也不等于关闭沙箱。
+
+在本机通过 Codex 启动时，固定使用以下入口，并通过 Codex 正式审批流程申请此命令的沙箱外运行权限：
+
+```powershell
+powershell.exe -NoProfile -File F:\code\mooncell\scripts\dev.ps1
+```
+
+需要减少重复审批时，在审批界面保存仅包含该启动入口的规则。已有 `npm run build`、pytest 或 Vite `preview` 规则不会覆盖这个命令；只批准当前一次也不会新增持久规则。脚本路径变化后需要重新授权。该例外允许启动脚本及其子进程在沙箱外执行，不会修复或关闭全局沙箱。
 
 ### 分别启动
 
@@ -103,6 +117,19 @@ Pop-Location
 ```powershell
 pnpm --dir ".\frontend" run build
 ```
+
+如果 `pnpm` 报 `shim integrity check failed`，可使用 npm 临时调用项目声明的 pnpm 版本，按原锁文件安装依赖：
+
+```powershell
+Push-Location ".\frontend"
+npm.cmd exec --cache "..\.cache\npm" --yes --package pnpm@11.19.0 -- pnpm install --frozen-lockfile --store-dir "..\.cache\pnpm-store"
+npm.cmd run build
+Pop-Location
+```
+
+Windows 沙箱可能限制 junction 的真实路径解析，使 `react-router-dom`、`motion/react` 和 React Query 的间接导出被误报为缺失。本次在沙箱外按现有锁文件安装，并通过完整构建；未为此修改包版本、锁文件或业务类型声明。遇到同类错误时先确认执行环境，避免添加占位声明掩盖问题。
+
+提醒中心相关回归包括 `test_notifications.py`、`test_feed_creation.py`、`test_feed_update.py` 和 `test_season_change.py`。若系统临时目录权限异常，可为 pytest 指定工作区内独立的 `--basetemp` 目录及 `-o cache_dir=...`；pytest 会清理该临时目录，请使用测试专用路径。
 
 ### Windows 启动与热更新回归
 

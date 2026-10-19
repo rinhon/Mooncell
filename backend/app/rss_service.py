@@ -4,6 +4,9 @@ import asyncio
 import calendar
 import hashlib
 import json
+import re
+import socket
+import ssl
 from datetime import UTC, datetime
 from typing import Any
 
@@ -74,14 +77,66 @@ def parse_feed_metadata(content: bytes, source_url: str) -> FeedInspectResult:
 
 
 def describe_rss_exception(exc: Exception) -> str:
-    """保证日志和 HTTP 响应始终包含可诊断的异常类型与说明。"""
+    """统一生成中文网络错误说明，保留异常类型及 TLS 错误码供排查。"""
+    kind = type(exc).__name__
     if isinstance(exc, httpx.TimeoutException):
-        return (
-            f"{exc.__class__.__name__}: RSS 请求超时"
-            f"（{settings.rss_timeout_seconds:g} 秒）"
-        )
+        return f"RSS 请求超时（{settings.rss_timeout_seconds:g} 秒；{kind}）"
+
+    # HTTPX 会包装底层 SSL/DNS 异常，逐层检查以保留准确的失败原因。
+    causes: list[BaseException] = []
+    cause: BaseException | None = exc
+    seen: set[int] = set()
+    while cause is not None and id(cause) not in seen:
+        seen.add(id(cause))
+        causes.append(cause)
+        cause = cause.__cause__ or cause.__context__
+    details = " ".join(str(error) for error in causes).upper()
+    tls_error = next((error for error in reversed(causes) if isinstance(error, ssl.SSLError)), None)
+    code_match = re.search(r"\[SSL:\s*([A-Z0-9_]+)\]", details)
+    tls_code = getattr(tls_error, "reason", None) or (code_match[1] if code_match else None)
+    if not tls_code:
+        tls_code = next((code for code in (
+            "CERTIFICATE_VERIFY_FAILED", "TLSV1_ALERT_INTERNAL_ERROR",
+            "UNEXPECTED_EOF_WHILE_READING", "WRONG_VERSION_NUMBER",
+        ) if code in details), None)
+
+    message = None
+    if tls_error is not None or isinstance(exc, httpx.TransportError):
+        is_tls = tls_error is not None or tls_code or "TLS" in details or "SSL" in details
+        if isinstance(tls_error, ssl.SSLCertVerificationError) or (
+            tls_code == "CERTIFICATE_VERIFY_FAILED"
+        ):
+            message = "HTTPS 证书校验失败，请检查源站证书或代理证书配置"
+        elif tls_code == "TLSV1_ALERT_INTERNAL_ERROR":
+            message = (
+                "HTTPS 安全连接建立失败：源站或代理返回 TLS 内部错误，"
+                "请检查订阅代理及源站连接状态"
+            )
+        elif tls_code == "WRONG_VERSION_NUMBER":
+            message = "HTTPS 协议协商失败，请检查源站 TLS 配置及代理地址的协议和端口"
+        elif is_tls and ("EOF" in details or isinstance(tls_error, ssl.SSLEOFError)):
+            message = "HTTPS 安全连接被提前关闭，请检查源站或代理连接并稍后重试"
+        elif is_tls:
+            message = "HTTPS 安全连接失败，请检查源站或代理的 TLS 配置与连接状态"
+        elif isinstance(exc, httpx.ProxyError):
+            message = "订阅代理连接失败，请检查代理地址、端口及代理服务状态"
+        elif any(isinstance(error, socket.gaierror) for error in causes) or any(
+            marker in details for marker in ("GETADDRINFO FAILED", "NAME OR SERVICE NOT KNOWN")
+        ):
+            message = "源站或代理的域名解析失败，请检查地址及 DNS 设置"
+        elif isinstance(exc, httpx.ConnectError):
+            message = "无法连接 RSS 源站或代理，请检查网络连接、地址和端口"
+        elif isinstance(exc, (httpx.ReadError, httpx.WriteError, httpx.RemoteProtocolError)):
+            message = "RSS 数据传输中断，请检查源站或代理连接并稍后重试"
+        else:
+            message = "RSS 网络请求失败，请检查网络或代理连接"
+    elif isinstance(exc, httpx.HTTPStatusError):
+        message = f"RSS 源站返回 HTTP {exc.response.status_code}，请检查访问权限或源站状态"
+    if message:
+        return f"{message}（{kind}{f'；{tls_code}' if tls_code else ''}）"
+
     detail = str(exc).strip()
-    return f"{exc.__class__.__name__}: {detail}" if detail else exc.__class__.__name__
+    return f"{kind}: {detail}" if detail else kind
 
 
 async def _get_with_retry(client: httpx.AsyncClient, source_url: str) -> httpx.Response:
@@ -153,6 +208,8 @@ class FeedRefreshService:
 
     async def refresh(self, source: FeedSource) -> FeedRefreshResult:
         """拉取订阅源，幂等保存新条目，并发布刷新事件。"""
+        if source.kind == "magnet":
+            raise ValueError("磁力合集是单次下载，无需刷新 RSS")
         headers = {"User-Agent": settings.rss_user_agent}
         # ETag/Last-Modified 让频繁轮询在没有更新时几乎不消耗流量。
         if source.etag:
@@ -307,7 +364,7 @@ class FeedRefreshService:
                     await enqueue_source(self.session, source)
                 await self.session.commit()
         except Exception as exc:
-            from .events import _redact
+            from .events import _redact, describe_download_error
 
             await _store_event(self.session, "download.failed", "feed_source", str(source.id),
-                               {"error": _redact(describe_rss_exception(exc))})
+                               {"error": _redact(describe_download_error(exc))})

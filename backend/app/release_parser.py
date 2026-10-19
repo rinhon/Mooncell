@@ -95,7 +95,8 @@ def parse_release_title(raw_title: str) -> ParsedRelease:
     # 范围包和合集不能安全映射成单一剧集，后续需要逐文件确认。
     range_match = RANGE_RE.search(raw)
     release_kind = "single"
-    if range_match and (episode_match is None or range_match.start() != episode_match.start()):
+    if (range_match and (episode_match is None or range_match.start() != episode_match.start())
+            and not (episode_match and range_match.end() == episode_match.end())):
         release_kind = "range"
         episode_start = float(range_match.group("start"))
         episode_end = float(range_match.group("end"))

@@ -42,7 +42,7 @@
 .calendar-panels { position: relative; overflow: clip; }
 .calendar-day-panel { width: 100%; }
 .calendar-day-panel:focus-visible { outline-offset: -2px; }
-.calendar-skeleton-meta { width: 210px; max-width: 100%; height: 17px; }
+.calendar-skeleton-meta { width: 210px; max-width: 100%; height: calc(var(--fs-small) * 1.5); }
 .calendar-skeleton-tabs .calendar-week-tab { cursor: default; }
 .calendar-skeleton-tabs .calendar-week-tab:hover { background: transparent; }
 .calendar-skeleton-count { width: 14px; height: 12px; border-radius: 2px; }

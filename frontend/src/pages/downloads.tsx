@@ -1,14 +1,17 @@
 import { useEffect, useMemo, useRef, useState } from "react"
 import { Link, useSearchParams } from "react-router-dom"
-import { useQuery } from "@tanstack/react-query"
-import { Database, DownloadCloud, HardDriveDownload, Router, Zap } from "lucide-react"
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import { HardDriveDownload } from "lucide-react"
 import { api, type DownloadCenter, type DownloadTask, type Show } from "@/lib/api"
 import { Badge } from "@/components/ui/badge"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { PageHeading } from "@/components/page-heading"
+import { DownloadsHeading, DownloadsLoading, DownloadsMetrics, DownloadsRecords } from "@/components/downloads-loading"
+import { FeedClearlogo } from "@/components/feed-clearlogo"
+import { artworkUrl } from "@/lib/show-artwork"
 import { Progress } from "@/components/ui/progress"
 import { Pagination } from "@/components/ui/pagination"
 import { Input } from "@/components/ui/input"
+import { Button } from "@/components/ui/button"
+import { useToast } from "@/components/ui/toast"
 
 const qbStateLabels: Record<string, string> = {
   error: "发生错误",
@@ -62,9 +65,7 @@ export function DownloadsPage() {
     }, { replace: true })
   }
   const shows = useQuery({ queryKey: ["shows"], queryFn: () => api<Show[]>("/shows") })
-  const clearlogos = new Map(shows.data?.filter((show) => show.clearlogo_ready).map((show) => [
-    show.id, `/api/v1/shows/${show.id}/artwork/clearlogo?v=${encodeURIComponent(show.artwork_version ?? "")}`,
-  ]))
+  const clearlogos = new Map(shows.data?.filter((show) => show.clearlogo_ready).map((show) => [show.id, show]))
   const center = useQuery({
     queryKey: ["downloads"],
     queryFn: () => api<DownloadCenter>("/downloads"),
@@ -75,26 +76,28 @@ export function DownloadsPage() {
   const tasks = data?.tasks ?? []
   const active = tasks.filter((task) => task.status === "downloading").length
   const matched = tasks.filter((task) => task.matched).length
+  const sourceId = searchParams.get("source_id")
   const filteredTasks = useMemo(() => {
     const keyword = sourceFilter.trim().toLocaleLowerCase()
-    return keyword ? tasks.filter((task) => task.source_name.toLocaleLowerCase().includes(keyword)) : tasks
-  }, [tasks, sourceFilter])
+    return tasks.filter(task => (!sourceId || String(task.source_id) === sourceId) && (!keyword || task.source_name.toLocaleLowerCase().includes(keyword)))
+  }, [tasks, sourceFilter, sourceId])
   const pageCount = Math.max(1, Math.ceil(filteredTasks.length / pageSize))
   const currentPage = Math.min(page, pageCount)
   const pageTasks = useMemo(() => filteredTasks.slice((currentPage - 1) * pageSize, currentPage * pageSize), [filteredTasks, currentPage, pageSize])
   useEffect(() => { setPage((value) => Math.min(value, pageCount)) }, [pageCount])
 
+  const sourceName = shows.data?.find(show => String(show.id) === sourceId)?.name
+  if (center.isPending || (!center.isError && tasks.length > 0 && shows.isPending)) return <DownloadsLoading search={searchInput} sourceName={sourceName} count={pageSize}/>
+
   return <>
-    <PageHeading eyebrow="Transfers" title="下载中心" description="订阅刷新后自动投递至 qBittorrent，获取文件结构后按订阅季度整理和重命名。状态每 3 秒同步。"/>
-    <div className="mb-5 grid grid-cols-2 gap-3 min-[721px]:grid-cols-4">
-      <Metric icon={Zap} label="当前下载速度" value={formatSpeed(data?.download_speed ?? 0)}/>
-      <Metric icon={DownloadCloud} label="活动任务" value={`${active} 个`}/>
-      <Metric icon={Database} label="数据库记录" value={`${tasks.length} 条 · 匹配 ${matched} 条`}/>
-      <Metric icon={Router} label={data?.downloader_name ?? "qBittorrent"} value={data?.downloader_online ? `${data.downloader_version ?? ""} · 在线` : data?.downloader_configured ? "离线" : "未配置"}/>
-    </div>
+    <DownloadsHeading sourceId={sourceId} sourceName={sourceName}/>
+    <DownloadsMetrics downloaderName={data?.downloader_name ?? "qBittorrent"} values={{
+      speed: formatSpeed(data?.download_speed ?? 0), active: `${active} 个`, records: `${tasks.length} 条 · 匹配 ${matched} 条`,
+      downloader: data?.downloader_online ? `${data.downloader_version ?? ""} · 在线` : data?.downloader_configured ? "离线" : "未配置",
+    }}/>
+    {center.isError && <p role="alert" className="mb-4 text-sm text-[var(--danger)]">下载数据读取失败：{center.error.message}</p>}
     {data?.error && <p className="mb-4 rounded-[2px] border border-[var(--danger-line)] bg-[var(--danger-soft)] px-4 py-3 text-sm text-[var(--danger)]">qBittorrent 同步失败：{data.error}</p>}
-    <Card>
-      <CardHeader className="flex-col items-start gap-3 sm:flex-row sm:items-center sm:justify-between"><div><CardTitle>数据库 BT 记录</CardTitle><CardDescription>{filteredTasks.length} 条 RSS 下载地址，通过 info-hash 与 qBittorrent 精确关联</CardDescription></div>
+    <DownloadsRecords count={filteredTasks.length} search={
         <Input type="search" aria-label="搜索动画番剧" placeholder="搜索番剧名称…" value={searchInput}
           onCompositionStart={() => { isComposing.current = true }}
           onCompositionEnd={(event) => {
@@ -107,20 +110,28 @@ export function DownloadsPage() {
             setSearchInput(event.target.value)
             if (!isComposing.current) setSourceFilter(event.target.value)
           }} className="w-full sm:w-60"/>
-      </CardHeader>
-      <CardContent className="grid min-w-0 gap-3">
-        {filteredTasks.length > 0 && <ul aria-label="下载任务列表" className="m-0 grid min-w-0 list-none gap-3 p-0">{pageTasks.map((task) => <li key={task.id} className="min-w-0"><DownloadRow task={task} logoUrl={clearlogos.get(task.source_id)}/></li>)}</ul>}
-        {center.isLoading && <div className="grid min-h-56 place-items-center text-sm text-[var(--muted)]">正在读取数据库与 qBittorrent…</div>}
-        {!center.isLoading && !tasks.length && <div className="grid min-h-56 place-items-center text-center"><div><HardDriveDownload className="mx-auto text-[var(--muted)]" size={30}/><p className="mt-3 text-sm font-medium">数据库中还没有 BT 记录</p><p className="mt-1 text-[13px] text-[var(--muted)]">刷新 RSS 后，torrent 或 magnet 地址会显示在这里。</p></div></div>}
-        {!center.isLoading && tasks.length > 0 && !filteredTasks.length && <p className="py-12 text-center text-sm text-[var(--muted)]">未找到匹配的番剧，请更换关键词或清空搜索。</p>}
+    }>
+        {filteredTasks.length > 0 && <ul aria-label="下载任务列表" className="m-0 grid min-w-0 list-none gap-3 p-0">{pageTasks.map((task) => <li key={task.id} className="min-w-0"><DownloadRow task={task} logoShow={clearlogos.get(task.source_id)}/></li>)}</ul>}
+        {!center.isError && !tasks.length && <div className="grid min-h-56 place-items-center text-center"><div><HardDriveDownload className="mx-auto text-[var(--muted)]" size={30}/><p className="mt-3 text-sm font-medium">数据库中还没有 BT 记录</p><p className="mt-1 text-[13px] text-[var(--muted)]">刷新 RSS 后，torrent 或 magnet 地址会显示在这里。</p></div></div>}
+        {tasks.length > 0 && !filteredTasks.length && <p className="py-12 text-center text-sm text-[var(--muted)]">未找到匹配的番剧，请更换关键词或清空搜索。</p>}
         {filteredTasks.length > 0 && <Pagination total={filteredTasks.length} page={currentPage} pageSize={pageSize} onPageChange={setPage} onPageSizeChange={(size) => { setPageSize(size); setPage(1) }}/>} 
-      </CardContent>
-    </Card>
+    </DownloadsRecords>
   </>
 }
 
-function DownloadRow({ task, logoUrl }: { task: DownloadTask; logoUrl?: string }) {
+function DownloadRow({ task, logoShow }: { task: DownloadTask; logoShow?: Show }) {
+  const queryClient = useQueryClient()
+  const toast = useToast()
+  const retry = useMutation({
+    mutationFn: () => api<{ message: string }>(`/downloads/${task.id}/retry-automation`, { method: "POST" }),
+    onSuccess: (result) => {
+      toast(result.message)
+      void queryClient.invalidateQueries({ queryKey: ["downloads"] })
+    },
+    onError: (error) => toast("重试失败", { description: error.message, tone: "error" }),
+  })
   const [failedLogo, setFailedLogo] = useState<string | null>(null)
+  const logoUrl = logoShow ? artworkUrl(logoShow, "clearlogo") : undefined
   const status = statusDisplay(task)
   const completed = task.status === "completed" || task.progress >= 100
   const completedActivity = task.status === "paused" || task.status === "failed" || task.status === "checking"
@@ -128,7 +139,7 @@ function DownloadRow({ task, logoUrl }: { task: DownloadTask; logoUrl?: string }
   return <div className="download-row min-w-0 p-4 transition-colors">
     <div className="grid min-w-0 gap-4 sm:grid-cols-[112px_minmax(0,1fr)_auto] sm:items-center">
       <div className={`grid h-14 w-28 shrink-0 place-items-center ${task.matched ? "text-[var(--ink-2)]" : "text-[var(--faint)]"}`}>
-        {logoUrl && failedLogo !== logoUrl ? <img src={logoUrl} alt="" className="max-h-full max-w-full object-contain" loading="lazy" onError={() => setFailedLogo(logoUrl)}/> : <HardDriveDownload size={18}/>}
+        {logoShow && logoUrl && failedLogo !== logoUrl ? <FeedClearlogo show={logoShow} onError={() => setFailedLogo(logoUrl)}/> : <HardDriveDownload size={18}/>}
       </div>
       <div className="min-w-0 flex-1">
         <p className="block min-w-0 truncate font-semibold" title={task.title}>{task.title}</p>
@@ -138,11 +149,16 @@ function DownloadRow({ task, logoUrl }: { task: DownloadTask; logoUrl?: string }
     </div>
     <div className="mt-4 grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2"><Progress value={task.progress} indicatorClassName={task.status === "failed" ? "bg-[var(--danger)]" : task.status === "completed" ? "bg-[var(--success)]" : "bg-[var(--accent)]"}/><div className="flex items-center gap-2 whitespace-nowrap"><Badge tone={status.tone}>{status.label === "下载中" ? qbStateLabel(task.qb_state) : status.label}</Badge><span className="text-xs font-medium leading-none tabular-nums text-[var(--muted)]">{task.progress.toFixed(task.progress % 1 ? 1 : 0)}%</span></div></div>
     {task.automation_error && <p className="mt-2 break-words text-xs text-[var(--danger)]">自动下载：{task.automation_error}</p>}
+    {task.automation_error && (task.retry_attempts ?? 0) > 0 && <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+      <p className="text-xs text-[var(--muted)]">连续失败 {task.retry_attempts} 次 · {task.next_retry_at ? `预计 ${new Date(task.next_retry_at).toLocaleTimeString("zh-CN", { hour12: false })} 自动重试` : "等待重试检查"}</p>
+      <Button size="sm" variant="outline" disabled={retry.isPending} onClick={() => retry.mutate()}>{retry.isPending ? "提交中…" : "立即重试"}</Button>
+    </div>}
     {task.review_required && <div className="mt-3 flex justify-end"><Link className="text-sm text-[var(--accent)] underline underline-offset-4" to={`/review?q=${encodeURIComponent(task.source_name)}`}>前往审核</Link></div>}
   </div>
 }
 
 function statusDisplay(task: DownloadTask): { label: string; tone: "success" | "warning" | "danger" | "neutral" } {
+  if (task.automation_error && (task.retry_attempts ?? 0) > 0) return { label: "等待自动重试", tone: "warning" }
   if (task.automation_state === "season_changing") return { label: task.automation_error ? "媒体库迁移异常" : "同步媒体库中", tone: task.automation_error ? "danger" : "neutral" }
   if (task.automation_state === "superseded") return { label: "已被新版取代", tone: "neutral" }
   if (task.automation_state === "upgrading") return { label: "修订版升级中", tone: "neutral" }
@@ -177,8 +193,4 @@ function formatEta(value?: number): string {
   if (value < 60) return `${value} 秒`
   if (value < 3600) return `${Math.ceil(value / 60)} 分钟`
   return `${Math.ceil(value / 3600)} 小时`
-}
-
-function Metric({ icon: Icon, label, value }: { icon: typeof Zap; label: string; value: string }) {
-  return <Card className="min-w-0"><CardContent className="flex min-w-0 items-center gap-3 p-4"><span className="grid size-10 shrink-0 place-items-center text-[var(--muted)]"><Icon size={17}/></span><div className="min-w-0"><p className="truncate text-xs text-[var(--muted)]">{label}</p><p className="mt-1 truncate text-sm font-semibold">{value}</p></div></CardContent></Card>
 }

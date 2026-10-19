@@ -77,6 +77,7 @@ class ShowMetadataRead(BaseModel):
 
 
 class ShowRead(BaseModel):
+    background_operation_ids: list[str] = Field(default_factory=list)
     artwork_version: str | None = None
     tmdb_url: str | None = None
     id: int
@@ -128,6 +129,7 @@ class FeedCreate(BaseModel):
 
 
 class FeedUpdate(BaseModel):
+    tmdb: TmdbSelection | None = None
     excluded_keywords: list[str] | None = Field(default=None, max_length=20)
     season: int | None = Field(default=None, ge=0, le=99)
     name: str | None = Field(default=None, min_length=1, max_length=160)
@@ -161,6 +163,7 @@ class FeedUpdate(BaseModel):
 
 
 class FeedRead(BaseModel):
+    background_operation_ids: list[str] = Field(default_factory=list)
     model_config = ConfigDict(from_attributes=True)
     excluded_keywords: list[str] = Field(default_factory=list)
 
@@ -216,6 +219,52 @@ class ParseRequest(BaseModel):
     title: str = Field(min_length=1, max_length=1000)
 
 
+class ShowDetailRead(ShowRead):
+    subscription: FeedRead
+    genres: list[str] = Field(default_factory=list)
+    vote_count: int | None = None
+    metadata_scraped_at: datetime | None = None
+
+
+class ShowReleaseRead(BaseModel):
+    id: int
+    title: str
+    published_at: datetime | None
+    discovered_at: datetime
+    parse_status: str
+    parsed: ParsedRelease | None
+
+
+class ShowReleasePage(BaseModel):
+    items: list[ShowReleaseRead]
+    total: int
+    page: int
+    page_size: int
+
+
+class ShowEpisodeRead(BaseModel):
+    path: str
+    filename: str
+    season: int | None
+    episode_start: float | None
+    episode_end: float | None
+    size: int
+    modified_at: datetime
+    thumbnail_url: str | None = None
+
+
+class ShowSeasonRead(BaseModel):
+    season: int | None
+    items: list[ShowEpisodeRead]
+
+
+class ShowLibraryRead(BaseModel):
+    available: bool
+    partial: bool = False
+    total: int
+    seasons: list[ShowSeasonRead]
+
+
 class FeedRefreshResult(BaseModel):
     source_id: int
     fetched: int
@@ -225,6 +274,8 @@ class FeedRefreshResult(BaseModel):
 
 
 class LogRead(BaseModel):
+    source_id: int | None = None
+    operation_id: str | None = None
     id: int
     occurred_at: datetime
     level: Literal["info", "warning", "error"]
@@ -308,6 +359,8 @@ class DownloadTaskRead(BaseModel):
     source_id: int
     automation_state: str | None = None
     automation_error: str | None = None
+    retry_attempts: int = 0
+    next_retry_at: datetime | None = None
     id: int
     title: str
     source_name: str

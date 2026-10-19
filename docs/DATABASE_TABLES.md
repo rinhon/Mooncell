@@ -1,6 +1,6 @@
 # 数据库表说明
 
-本文依据当前工作区的 `backend\app\models.py`、`backend\app\database.py` 及相关业务代码整理，更新日期：2026-10-12。当前共定义 **13 张业务表**。
+本文依据当前工作区的 `backend\app\models.py`、`backend\app\database.py` 及相关业务代码整理，更新日期：2026-10-18。当前共定义 **16 张业务表**。
 
 ## 数据库与字段约定
 
@@ -18,10 +18,11 @@
 | --- | --- | --- |
 | `users` | `User` | 管理员账户与密码摘要 |
 | `user_sessions` | `UserSession` | 浏览器登录会话、令牌摘要与有效期 |
-| `feed_sources` | `FeedSource` | RSS/Atom 订阅源、过滤条件与刷新状态 |
+| `feed_sources` | `FeedSource` | RSS/Atom 订阅源或磁力合集、过滤条件与连接状态 |
 | `feed_items` | `FeedItem` | 订阅发现的发布条目、去重信息与标题解析结果 |
 | `show_metadata` | `ShowMetadata` | 订阅关联的 TMDB 番剧元数据 |
 | `show_artwork` | `ShowArtwork` | 番剧图片文件路径与刮削状态 |
+| `episode_thumbnails` | `EpisodeThumbnail` | 本地视频相对路径对应的单集缩略图与文件版本 |
 | `downloader_configs` | `DownloaderConfig` | 下载器连接、凭据、路径映射与整理策略 |
 | `download_jobs` | `DownloadJob` | 自动投递与文件整理的持久化任务 |
 | `domain_events` | `DomainEvent` | 事件日志与 SSE 断线重连补发记录 |
@@ -29,6 +30,8 @@
 | `tmdb_settings` | `TmdbSettings` | 加密保存的 TMDB 访问凭据 |
 | `library_settings` | `LibrarySettings` | 全局媒体库目录 |
 | `calendar_favorites` | `CalendarFavorite` | 季度追番日历收藏 |
+| `background_operations` | `BackgroundOperation` | 用户后台操作、进度、结果与已读版本 |
+| `background_operation_items` | `BackgroundOperationItem` | 文件迁移批次中的下载任务与迁移 token |
 
 ## 表关系
 
@@ -38,8 +41,13 @@ erDiagram
     feed_sources ||--o{ feed_items : source_id
     feed_sources ||--o| show_metadata : source_id
     feed_sources ||--o| show_artwork : source_id
+    feed_sources ||--o{ episode_thumbnails : source_id
     feed_items ||--o| download_jobs : item_id
     downloader_configs ||--o{ download_jobs : downloader_id
+    users ||--o{ background_operations : user_id
+    feed_sources |o--o{ background_operations : source_id
+    background_operations ||--o{ background_operation_items : operation_id
+    download_jobs |o--o{ background_operation_items : download_job_id
 ```
 
 设置表与 `calendar_favorites` 没有外键。`domain_events.resource_type` 和 `resource_id` 是业务资源引用，也没有数据库外键。
@@ -79,7 +87,7 @@ erDiagram
 | `id` | INTEGER | 否 | 自动生成 | 主键 |
 | `name` | VARCHAR(160) | 否 | — | 订阅名称，也用于默认媒体库番名 |
 | `url` | TEXT | 否 | — | 订阅地址，唯一 |
-| `kind` | VARCHAR(32) | 否 | `standard` | 订阅类型，如 `standard`、`mikan` |
+| `kind` | VARCHAR(32) | 否 | `standard` | 来源类型：`standard`、`mikan` 或单次合集 `magnet` |
 | `excluded_keywords` | JSON | 否 | `[]` | 排除关键词数组，同时声明数据库端默认值 `[]` |
 | `active` | BOOLEAN | 否 | `true` | 是否启用 |
 | `refresh_interval_minutes` | INTEGER | 否 | `5` | 刷新间隔，单位为分钟 |
@@ -153,13 +161,26 @@ erDiagram
 | `poster_path` | TEXT | 是 | — | 海报文件路径 |
 | `fanart_path` | TEXT | 是 | — | 背景图文件路径 |
 | `clearlogo_path` | TEXT | 是 | — | 透明标题图文件路径 |
-| `status` | VARCHAR(24) | 否 | `pending` | 刮削状态：`pending`、`completed`、`partial`、`failed` |
+| `file_version` | VARCHAR(64) | 是 | — | 本地扫描根据三图文件名、大小、修改时间和缺失状态计算的缓存版本 |
+| `status` | VARCHAR(24) | 否 | `pending` | 图片状态：`pending`、`completed`、`partial`、`failed`、`missing` |
 | `last_error` | TEXT | 是 | — | 最近刮削错误 |
 | `scraped_at` | DATETIME | 是 | — | 刮削时间 |
 
 约束：主键 `id`；外键删除级联；唯一索引 `ix_show_artwork_source_id(source_id)`。
 
 此表只保存文件路径和状态，图片内容存放在文件系统中。
+
+### `episode_thumbnails`：单集缩略图
+
+| 字段 | 类型 | 可空 | 默认值 | 说明 |
+| --- | --- | --- | --- | --- |
+| `id` | INTEGER | 否 | 自动生成 | 主键 |
+| `source_id` | INTEGER | 否 | — | 外键，关联 `feed_sources.id`，删除订阅时级联删除 |
+| `video_path` | TEXT | 否 | — | 视频相对于作品目录的路径 |
+| `image_path` | TEXT | 否 | — | 图片相对于同一作品目录的路径 |
+| `file_version` | VARCHAR(64) | 否 | — | 图片路径、大小与修改时间形成的缓存版本 |
+
+唯一约束：`(source_id, video_path)`；索引：`source_id`。扫描仅关联真实视频，完整扫描时清理失效数据库记录，不删除磁盘文件。图片由已认证接口 `/shows/{source_id}/thumbnails/{id}` 返回，禁止目录穿越及链接。
 
 ### 7. `downloader_configs`：下载器配置
 
@@ -201,6 +222,8 @@ erDiagram
 | `season` | INTEGER | 否 | — | 整理使用的季度编号 |
 | `plan` | TEXT | 是 | — | 文件筛选、重命名及整理计划的 JSON 文本；`show_tag` 记录 Mooncell 管理的 qB 番剧标签，元数据阶段可先只保存此字段 |
 | `last_error` | TEXT | 是 | — | 最近任务错误 |
+| `retry_attempts` | INTEGER | 否 | `0` | 本轮连续投递或连接失败次数，恢复后归零 |
+| `next_retry_at` | DATETIME | 是 | — | 下次自动重试的 UTC 时间，服务重启后继续等待 |
 
 约束：主键 `id`；`item_id`、`info_hash` 分别唯一。删除发布条目时级联删除任务；`downloader_id` 外键没有声明删除级联。没有额外声明的普通索引。
 
@@ -269,6 +292,42 @@ erDiagram
 
 `item_id` 指向季度 `season.json` 中的条目，不是 `feed_items.id`。记录存在即表示已收藏，取消收藏时删除记录；项目采用单用户设计，此表没有 `user_id`。
 
+### 14. `background_operations`：后台操作与提醒
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `id` | VARCHAR(36) | UUID 主键，一次用户操作对应一条记录 |
+| `user_id` | INTEGER | 操作发起者；外键指向 `users.id`，删除用户时级联删除 |
+| `kind` | VARCHAR(32) | `feed_scrape`、`metadata_refresh`、`artwork_scrape`、`library_migration` |
+| `source_id` | INTEGER，可空 | 关联订阅，删除订阅时置空，保留提醒历史 |
+| `source_name` | VARCHAR(160) | 提交操作时的番剧名称快照 |
+| `status` | VARCHAR(24) | `queued`、`running`、`blocked`、`completed`、`partial`、`failed`、`cancelled` |
+| `total_count` / `completed_count` | INTEGER | 下载任务总数与已完成数，默认 0，不代表文件数或字节进度 |
+| `summary` / `error_summary` | TEXT | 结果文案与可空的脱敏错误摘要 |
+| `context` | JSON | TMDB 选择、番名和季度变更快照 |
+| `created_at` / `updated_at` | DATETIME | 创建和状态、进度更新时间，默认当前 UTC 时间 |
+| `finished_at` | DATETIME，可空 | 终态时间，恢复运行时清空 |
+| `revision` | INTEGER | 状态或进度版本，初始 1 |
+| `attention_revision` / `read_revision` | INTEGER | 需要提醒的版本与用户已读版本，初始 0 |
+| `attention_at` | DATETIME，可空 | 最近一次值得提醒的结果时间，用于全部已读的快照边界 |
+| `attention_key` | TEXT，可空 | 上次提醒的状态或错误分类，重复重试同一问题不增加未读 |
+
+索引：`(user_id, updated_at, id)` 和 `source_id`。未读条件为 `attention_revision > read_revision`，所有提醒接口均按当前登录用户过滤。普通进度更新不改变 attention 版本；用户读过受阻提醒后，最终完成会再次变成未读。
+
+### 15. `background_operation_items`：迁移子项
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `id` | INTEGER | 主键 |
+| `operation_id` | VARCHAR(36) | 批次外键，批次删除时级联删除，并建立索引 |
+| `download_job_id` | INTEGER，可空 | 下载任务外键，任务删除时置空，保留批次记录 |
+| `migration_token` | VARCHAR(32) | 唯一迁移 token，关联持久化移动计划 |
+| `status` | VARCHAR(24) | `queued`、`running`、`blocked`、`completed`、`cancelled` |
+| `error_code` / `error_summary` | VARCHAR(64) / TEXT，可空 | 明确的错误分类与脱敏摘要 |
+| `updated_at` | DATETIME | 子项更新时间，默认当前 UTC 时间 |
+
+唯一约束：`(operation_id, download_job_id)` 与 `migration_token`。批次完成数从子项状态汇总，不通过重复累加计数；恢复运行状态、保存最终迁移计划后才将子项标为完成。
+
 ## 初始化与结构更新
 
 后端启动时调用 `init_database()`，通过 `Base.metadata.create_all()` 创建尚不存在的表。SQLite 连接启用 `PRAGMA foreign_keys=ON`，并设置 `busy_timeout=5000`。
@@ -278,7 +337,11 @@ erDiagram
 - `season INTEGER`。
 - `excluded_keywords JSON NOT NULL DEFAULT '[]'`。
 
+同时检查 `download_jobs`，为旧库补充 `retry_attempts INTEGER NOT NULL DEFAULT 0` 与 `next_retry_at DATETIME`，保留原任务、整理计划和下载进度。
+
 当前没有使用 Alembic 等版本化迁移机制。`create_all()` 不会自动更新已有表的其他字段、索引或约束，因此本文描述的是当前模型定义，旧数据库的实际结构可能不同。
+
+提醒中心的两张表通过同一路径首次创建，无需清空已有数据库。启动后将遗留刮削标为中断失败，并从迁移计划和子项恢复批次汇总。进程内刮削任务不会自动重跑。
 
 ## 数据库之外的持久化内容
 

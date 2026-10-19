@@ -1,4 +1,7 @@
 import json
+from datetime import UTC, datetime, timedelta
+from email import policy
+from email.parser import BytesParser
 from pathlib import PurePosixPath
 from types import SimpleNamespace
 from urllib.parse import parse_qs
@@ -11,7 +14,15 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from app import download_queue, rss_service
 from app.database import Base
 from app.download_queue import build_plan, language_preference, remote_root
-from app.models import DownloaderConfig, DownloadJob, FeedItem, FeedSource, LibrarySettings
+from app.models import (
+    DomainEvent,
+    DownloaderConfig,
+    DownloadJob,
+    FeedItem,
+    FeedSource,
+    LibrarySettings,
+    SubscriptionSettings,
+)
 from app.release_parser import parse_release_title
 
 RELEASE = parse_release_title("[Group] Example - 05 [1080p]")
@@ -65,6 +76,247 @@ async def database(monkeypatch):
         await session.commit()
     yield sessions
     await engine.dispose()
+
+
+@pytest.mark.parametrize(("error", "reason"), [
+    (httpx.ReadError(""), "读取下载器响应失败"),
+    (httpx.ConnectError("All connection attempts failed"), "无法连接下载器"),
+])
+async def test_download_network_failure_is_saved_in_chinese(database, monkeypatch, error, reason):
+    async def fail_job(*args):
+        raise error
+
+    monkeypatch.setattr(download_queue, "process_job", fail_job)
+    async with database() as session:
+        await download_queue.enqueue_source(session, await session.get(FeedSource, 1))
+        await session.commit()
+    await download_queue.process_queue()
+    await download_queue.process_queue()
+    async with database() as session:
+        job = await session.scalar(select(DownloadJob))
+        events = list(await session.scalars(select(DomainEvent).where(
+            DomainEvent.event_type == "download.failed")))
+        assert reason in job.last_error
+        assert type(error).__name__ in job.last_error
+        assert len(events) == 1, "重复失败不应重复写入相同日志"
+        assert json.loads(events[0].payload)["error"] == job.last_error
+
+
+@pytest.mark.parametrize("failure", ["network", "rejected", "server"])
+async def test_retry_backoff_survives_sessions_and_recovers(database, monkeypatch, failure):
+    now = datetime(2026, 10, 18, tzinfo=UTC)
+    monkeypatch.setattr(download_queue, "retry_now", lambda: now)
+    attempts = 0
+    recovered = False
+
+    async def process(*args):
+        nonlocal attempts
+        attempts += 1
+        if recovered:
+            return
+        if failure == "network":
+            raise httpx.ReadTimeout("timeout")
+        if failure == "server":
+            response = httpx.Response(503, request=httpx.Request("POST", "http://qb.test/add"))
+            response.raise_for_status()
+        raise download_queue.DownloadDeliveryError("qBittorrent 未接受种子文件")
+
+    monkeypatch.setattr(download_queue, "process_job", process)
+    async with database() as session:
+        await download_queue.enqueue_source(session, await session.get(FeedSource, 1))
+        await session.commit()
+    for index, delay in enumerate([30, 60, 120, 240, 480, 900, 900], start=1):
+        await download_queue.process_queue()
+        async with database() as session:
+            job = await session.scalar(select(DownloadJob))
+            assert job.retry_attempts == index
+            assert job.next_retry_at.replace(tzinfo=UTC) == now + timedelta(seconds=delay)
+        now += timedelta(seconds=delay - 1)
+        await download_queue.process_queue()
+        assert attempts == index, "新会话不能绕过持久化等待时间"
+        now += timedelta(seconds=1)
+    recovered = True
+    await download_queue.process_queue()
+    await download_queue.process_queue()
+    async with database() as session:
+        job = await session.scalar(select(DownloadJob))
+        assert (job.retry_attempts, job.next_retry_at, job.last_error) == (0, None, None)
+        events = list(await session.scalars(select(DomainEvent)))
+        assert sum(event.event_type == "download.failed" for event in events) == 1
+        assert sum(event.event_type == "download.recovered" for event in events) == 1
+
+
+async def test_immediate_retry_preserves_progress(database):
+    from app import api
+
+    async with database() as session:
+        await download_queue.enqueue_source(session, await session.get(FeedSource, 1))
+        job = await session.scalar(select(DownloadJob))
+        job.state = "organizing"
+        job.plan = '{"files": [{"old": "a", "new": "b"}]}'
+        job.last_error = "读取下载器响应失败"
+        job.retry_attempts = 3
+        job.next_retry_at = datetime.now(UTC) + timedelta(minutes=15)
+        await session.commit()
+        plan = job.plan
+        await api.retry_download_automation(1, _user=None, session=session)
+        assert job.next_retry_at is None
+        assert (job.state, job.plan, job.retry_attempts) == ("organizing", plan, 3)
+
+
+async def test_download_center_exposes_retry_time_with_timezone(database, monkeypatch):
+    from app import api
+
+    async def offline(*args):
+        raise httpx.ConnectError("All connection attempts failed")
+
+    monkeypatch.setattr(api, "get_qbittorrent_snapshot", offline)
+    async with database() as session:
+        await download_queue.enqueue_source(session, await session.get(FeedSource, 1))
+        job = await session.scalar(select(DownloadJob))
+        job.retry_attempts = 2
+        job.last_error = "无法连接下载器"
+        job.next_retry_at = datetime(2026, 10, 18, 1, 2, 3)
+        await session.commit()
+        data = await api.download_center(_user=None, session=session)
+        assert "无法连接下载器" in data.error
+        assert data.tasks[0].retry_attempts == 2
+        assert data.tasks[0].next_retry_at == datetime(2026, 10, 18, 1, 2, 3, tzinfo=UTC)
+
+
+@pytest.mark.parametrize("invalid", ["missing", "done", "disabled", "healthy"])
+async def test_immediate_retry_rejects_invalid_jobs(database, invalid):
+    from fastapi import HTTPException
+
+    from app import api
+
+    async with database() as session:
+        if invalid != "missing":
+            await download_queue.enqueue_source(session, await session.get(FeedSource, 1))
+            job = await session.scalar(select(DownloadJob))
+            job.last_error = "失败"
+            if invalid == "done":
+                job.state = "done"
+            elif invalid == "disabled":
+                (await session.get(FeedSource, 1)).active = False
+            elif invalid == "healthy":
+                job.last_error = None
+            await session.commit()
+        with pytest.raises(HTTPException) as error:
+            await api.retry_download_automation(1, _user=None, session=session)
+        assert error.value.status_code == (404 if invalid == "missing" else 409)
+
+
+async def test_accepted_torrent_with_lost_response_is_not_added_twice(database, monkeypatch):
+    now = datetime(2026, 10, 18, tzinfo=UTC)
+    monkeypatch.setattr(download_queue, "retry_now", lambda: now)
+    accepted = False
+    additions = 0
+
+    def handle(request):
+        nonlocal accepted, additions
+        endpoint = request.url.path.rsplit("/", 1)[-1]
+        if endpoint == "login":
+            return httpx.Response(200, text="Ok.")
+        if endpoint == "info":
+            return httpx.Response(200, json=[{
+                "save_path": f"/media/.mooncell/{HASH}", "state": "metaDL",
+            }] if accepted else [])
+        assert endpoint == "add"
+        accepted = True
+        additions += 1
+        raise httpx.ReadTimeout("response lost", request=request)
+
+    original_client = httpx.AsyncClient
+    monkeypatch.setattr(download_queue.httpx, "AsyncClient", lambda **kwargs: original_client(
+        **kwargs, transport=httpx.MockTransport(handle),
+    ))
+    async with database() as session:
+        await download_queue.enqueue_source(session, await session.get(FeedSource, 1))
+        await session.commit()
+    await download_queue.process_queue()
+    now += timedelta(seconds=30)
+    await download_queue.process_queue()
+    assert additions == 1
+    async with database() as session:
+        job = await session.scalar(select(DownloadJob))
+        assert job.state == "metadata"
+        assert job.last_error is None
+        assert job.next_retry_at is None
+
+
+@pytest.mark.parametrize("result", ["valid", "html", "http_error", "network_error", "qb_reject"])
+async def test_http_torrent_is_fetched_with_proxy_and_uploaded(database, monkeypatch, result):
+    torrent = b"d4:infod4:name7:exampleee"
+    proxy = "http://127.0.0.1:7890/"
+    url = f"https://mikanani.me/Download/{HASH}.torrent"
+    async with database() as session:
+        item = await session.get(FeedItem, 1)
+        item.download_url = url
+        session.add(SubscriptionSettings(id=1, proxy_url=proxy))
+        await download_queue.enqueue_source(session, await session.get(FeedSource, 1))
+        await session.commit()
+    uploads = []
+
+    def qb_transport(request):
+        endpoint = request.url.path.rsplit("/", 1)[-1]
+        if endpoint == "login":
+            return httpx.Response(200, text="Ok.")
+        if endpoint == "info":
+            return httpx.Response(200, json=[])
+        assert endpoint == "add"
+        assert request.headers["content-type"].startswith("multipart/form-data;")
+        mime = BytesParser(policy=policy.default).parsebytes(
+            b"Content-Type: " + request.headers["content-type"].encode() + b"\r\n\r\n"
+            + request.content
+        )
+        parts = {part.get_param("name", header="content-disposition"): part
+                 for part in mime.iter_parts()}
+        assert "urls" not in parts, "不能再要求 qB 自行连接种子源站"
+        assert parts["torrents"].get_payload(decode=True) == torrent
+        assert parts["torrents"].get_filename() == f"{HASH}.torrent"
+        assert parts["savepath"].get_payload(decode=True).decode() == f"/media/.mooncell/{HASH}"
+        assert parts["stopCondition"].get_payload(decode=True) == b"MetadataReceived"
+        assert parts["tags"].get_payload(decode=True).decode() == "番名"
+        uploads.append(request)
+        return httpx.Response(200, text="Fails." if result == "qb_reject" else "Ok.")
+
+    def source_transport(request):
+        assert str(request.url) == url
+        assert request.headers["user-agent"] == download_queue.settings.rss_user_agent
+        if result == "network_error":
+            raise httpx.ConnectError("source offline", request=request)
+        if result == "http_error":
+            return httpx.Response(403)
+        content = "<html>访问限制</html>".encode() if result == "html" else torrent
+        return httpx.Response(200, content=content)
+
+    original_client = httpx.AsyncClient
+
+    def client(**kwargs):
+        if kwargs.get("base_url"):
+            return original_client(**kwargs, transport=httpx.MockTransport(qb_transport))
+        assert kwargs["proxy"] == proxy
+        assert kwargs["trust_env"] is False
+        kwargs.pop("proxy")  # 测试传输替代代理，不连接任何真实服务。
+        return original_client(**kwargs, transport=httpx.MockTransport(source_transport))
+
+    monkeypatch.setattr(download_queue.httpx, "AsyncClient", client)
+    await download_queue.process_queue()
+    async with database() as session:
+        job = await session.scalar(select(DownloadJob))
+        if result == "valid":
+            assert len(uploads) == 1
+            assert job.state == "metadata"
+            assert job.last_error is None
+        else:
+            assert job.state == "queued"
+            assert "种子" in job.last_error
+            assert len(uploads) == int(result == "qb_reject")
+            if result == "http_error":
+                assert "HTTP 403" in job.last_error
+            if result == "network_error":
+                assert "种子文件获取失败" in job.last_error
 
 
 async def test_refresh_304_enqueues_existing_records_idempotently(database, monkeypatch):

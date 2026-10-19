@@ -1,7 +1,7 @@
 import * as React from "react"
 import { X } from "lucide-react"
 import { Dialog as DialogPrimitive } from "radix-ui"
-import { AnimatePresence, motion, useReducedMotion } from "motion/react"
+import { AnimatePresence, motion, useReducedMotion, type HTMLMotionProps } from "motion/react"
 import { cn } from "@/lib/utils"
 
 const DialogOpenContext = React.createContext(false)
@@ -18,21 +18,57 @@ export function Dialog({ open: controlledOpen, defaultOpen = false, onOpenChange
 export const DialogTrigger = DialogPrimitive.Trigger
 export const DialogClose = DialogPrimitive.Close
 
-export function DialogContent({ className, children, ...props }: React.ComponentProps<typeof DialogPrimitive.Content>) {
+const DialogSurface = React.forwardRef<HTMLDivElement, Omit<HTMLMotionProps<"div">, "children"> & { animateSize: boolean; children?: React.ReactNode }>(function DialogSurface({ animateSize, children, ...props }, forwardedRef) {
+  const surfaceRef = React.useRef<HTMLDivElement>(null)
+  const bodyRef = React.useRef<HTMLDivElement>(null)
+  const [height, setHeight] = React.useState<number | null>(null)
+  const reducedMotion = useReducedMotion()
+
+  React.useLayoutEffect(() => {
+    if (!animateSize || !surfaceRef.current || !bodyRef.current) return
+    const surface = surfaceRef.current
+    const body = bodyRef.current
+    function measure() {
+      const style = getComputedStyle(surface)
+      const spacing = [style.paddingTop, style.paddingBottom, style.borderTopWidth, style.borderBottomWidth].reduce((sum, value) => sum + parseFloat(value), 0)
+      setHeight(Math.min(Math.ceil(body.offsetHeight + spacing), window.innerHeight * .9))
+    }
+    measure()
+    const observer = new ResizeObserver(measure)
+    observer.observe(body)
+    window.addEventListener("resize", measure)
+    return () => { observer.disconnect(); window.removeEventListener("resize", measure) }
+  }, [animateSize])
+
+  return <motion.div {...props} ref={node => {
+    surfaceRef.current = node
+    if (typeof forwardedRef === "function") forwardedRef(node)
+    else if (forwardedRef) forwardedRef.current = node
+  }} initial={{ opacity: 0, scale: reducedMotion ? 1 : animateSize ? .985 : .98, y: reducedMotion || !animateSize ? 0 : 10 }} animate={{ opacity: 1, scale: 1, y: 0, ...(animateSize && height !== null ? { height } : {}) }} exit={{ opacity: 0, scale: reducedMotion ? 1 : .99, y: reducedMotion || !animateSize ? 0 : 6 }} transition={animateSize ? {
+    height: reducedMotion ? { duration: 0 } : { type: "spring", stiffness: 240, damping: 32, mass: .8 },
+    scale: { duration: reducedMotion ? 0 : .24, ease: [.22, 1, .36, 1] },
+    y: { duration: reducedMotion ? 0 : .24, ease: [.22, 1, .36, 1] },
+    opacity: { duration: reducedMotion ? 0 : .18 },
+  } : dialogSpring}>
+    {animateSize ? <div ref={bodyRef}>{children}</div> : children}
+  </motion.div>
+})
+
+export function DialogContent({ className, children, animateSize = false, ...props }: React.ComponentProps<typeof DialogPrimitive.Content> & { animateSize?: boolean }) {
   const open = React.useContext(DialogOpenContext)
   const reducedMotion = useReducedMotion()
   return <DialogPrimitive.Portal forceMount>
     <AnimatePresence>
       {open && <DialogPrimitive.Overlay forceMount asChild key="overlay">
-        <motion.div className="radix-overlay fixed inset-0 z-50 bg-black/50 backdrop-blur-sm" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={dialogSpring}/>
+        <motion.div className="radix-overlay fixed inset-0 z-50 bg-black/50 backdrop-blur-sm" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={reducedMotion ? { duration: 0 } : animateSize ? { duration: .22 } : dialogSpring}/>
       </DialogPrimitive.Overlay>}
       {open && <DialogPrimitive.Content {...props} forceMount asChild key="content">
-        <motion.div className={cn("radix-dialog-content fixed left-1/2 top-1/2 z-50 max-h-[90vh] w-[calc(100%-2rem)] max-w-3xl -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-[2px] border border-[var(--border)] bg-[var(--surface-raised)] p-6 shadow-2xl outline-none sm:p-7", className)} initial={{ opacity: 0, scale: reducedMotion ? 1 : .98 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: reducedMotion ? 1 : .99 }} transition={dialogSpring}>
+        <DialogSurface animateSize={animateSize} className={cn("radix-dialog-content fixed left-1/2 top-1/2 z-50 max-h-[90vh] w-[calc(100%-2rem)] max-w-3xl -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-[2px] border border-[var(--border)] bg-[var(--surface-raised)] p-6 shadow-2xl outline-none sm:p-7", className)}>
           {children}
           <DialogPrimitive.Close className="absolute right-4 top-4 grid size-9 place-items-center rounded-[2px] text-[var(--muted)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]/40" aria-label="关闭">
             <X size={17}/>
           </DialogPrimitive.Close>
-        </motion.div>
+        </DialogSurface>
       </DialogPrimitive.Content>}
     </AnimatePresence>
   </DialogPrimitive.Portal>

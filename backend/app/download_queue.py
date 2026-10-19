@@ -4,24 +4,46 @@ import asyncio
 import json
 import logging
 import re
+from datetime import UTC, datetime, timedelta
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from time import monotonic
+from urllib.parse import urlsplit
 
 import httpx
 from sqlalchemy import select
 from sqlalchemy.dialects.sqlite import insert
 
 from .artwork_service import safe_folder_name
+from .config import settings
 from .database import SessionFactory
 from .downloader_service import extract_info_hash
 from .library import get_library_root
-from .models import DomainEvent, DownloaderConfig, DownloadJob, FeedItem, FeedSource
+from .models import DownloaderConfig, DownloadJob, FeedItem, FeedSource
 from .qb_tags import show_tag, sync_show_tag
 from .release_parser import parse_release_title
 from .release_versions import release_identity, select_revisions
 from .schemas import ParsedRelease
 from .security import decrypt_secret
 from .staging_cleanup import cleanup_stale_temporary_directories, cleanup_temporary_directories
+from .subscription_settings import get_options
+
+
+class DownloadDeliveryError(ValueError):
+    """投递失败时保留队列，由持久化退避机制再次尝试。"""
+
+
+def retry_delay(error, attempts):
+    if isinstance(error, (DownloadDeliveryError, httpx.RequestError)):
+        return min(30 * 2 ** min(attempts - 1, 5), 900)
+    if isinstance(error, httpx.HTTPStatusError) and error.response.status_code != 409:
+        return min(30 * 2 ** min(attempts - 1, 5), 900)
+    # 文件整理冲突仍交给原状态机等待或审核。
+    return None
+
+
+def retry_now():
+    return datetime.now(UTC)
+
 
 logger = logging.getLogger(__name__)
 VIDEO_EXTENSIONS = {".mkv", ".mp4", ".ts", ".m2ts", ".avi", ".mov", ".webm"}
@@ -206,6 +228,30 @@ async def request(client, method, endpoint, **kwargs):
     return response
 
 
+async def fetch_torrent_file(session, url):
+    """由 Mooncell 使用订阅代理获取种子，qB 无需直接连接种子源站。"""
+    options = await get_options(session)
+    await session.commit()  # 网络请求期间归还数据库连接。
+    try:
+        async with httpx.AsyncClient(
+            proxy=str(options.proxy_url) if options.proxy_url else None,
+            trust_env=False, timeout=settings.rss_timeout_seconds, follow_redirects=True,
+            headers={"User-Agent": settings.rss_user_agent},
+        ) as client:
+            response = await client.get(url)
+            response.raise_for_status()
+    except httpx.HTTPError as exc:
+        detail = (f"HTTP {exc.response.status_code}" if isinstance(exc, httpx.HTTPStatusError)
+                  else type(exc).__name__)
+        raise DownloadDeliveryError(
+            f"种子文件获取失败，请检查订阅代理或种子源站连接（{detail}）"
+        ) from exc
+    content = response.content
+    if not (content.startswith(b"d") and content.endswith(b"e") and b"4:info" in content):
+        raise DownloadDeliveryError("种子源站未返回有效的种子文件，可能是错误页面或访问限制")
+    return content
+
+
 async def set_running(client, info_hash, running):
     """兼容 qBittorrent 5 的 start/stop 和 4 的 resume/pause。"""
     try:
@@ -226,7 +272,7 @@ async def process_job(session, job, config, item):
             "password": decrypt_secret(config.encrypted_secret) or "",
         })
         if login.status_code != 204 and not login.text.startswith("Ok"):
-            raise ValueError("qBittorrent 拒绝登录，请检查凭据")
+            raise DownloadDeliveryError("qBittorrent 拒绝登录，请检查凭据")
         response = await request(client, "GET", "torrents/info", params={"hashes": job.info_hash})
         torrents = response.json()
         if job.plan and "season_change" in json.loads(job.plan):
@@ -240,13 +286,25 @@ async def process_job(session, job, config, item):
                 raise ValueError("下载任务已从下载器移除，不会自动重新添加")
             # 每个种子独立暂存，避免未重命名的资源互相覆盖。
             staging = str(path_type(job.target_root)(job.target_root) / ".mooncell" / job.info_hash)
-            added = await request(client, "POST", "torrents/add", data={
-                "urls": item.download_url, "savepath": staging, "autoTMM": "false",
+            data = {
+                "savepath": staging, "autoTMM": "false",
                 "contentLayout": "Original", "paused": "false", "stopped": "false",
                 "stopCondition": "MetadataReceived", "tags": show_tag(job.title),
-            })
+            }
+            files = None
+            if urlsplit(item.download_url or "").scheme.lower() in {"http", "https"}:
+                content = await fetch_torrent_file(session, item.download_url)
+                files = {"torrents": (
+                    f"{job.info_hash}.torrent", content, "application/x-bittorrent",
+                )}
+            else:
+                data["urls"] = item.download_url
+            added = await request(client, "POST", "torrents/add", data=data, files=files)
             if not added.text.strip().startswith("Ok"):
-                raise ValueError("qBittorrent 未接受下载任务")
+                kind = "种子文件" if files else "磁力下载任务"
+                raise DownloadDeliveryError(
+                    f"qBittorrent 未接受{kind}，请检查下载器日志（HTTP {added.status_code}）"
+                )
             job.state = "metadata"
             job.plan = json.dumps({"show_tag": show_tag(job.title)}, ensure_ascii=False)
             await session.commit()
@@ -285,8 +343,13 @@ async def process_job(session, job, config, item):
             return
         if not plan.get("files"):
             try:
-                plan = build_plan(files, job.title, job.season,
-                                  ParsedRelease.model_validate_json(item.parse_data))
+                release = ParsedRelease.model_validate_json(item.parse_data)
+                if "magnet_collection" in release.evidence:
+                    from .collection_plan import build_collection_plan
+
+                    plan = build_collection_plan(files, job.title, job.season, release)
+                else:
+                    plan = build_plan(files, job.title, job.season, release)
             except ValueError:
                 job.state = "needs_review"
                 raise
@@ -298,7 +361,8 @@ async def process_job(session, job, config, item):
         skipped_ids = set(plan.get("skip_file_ids", []))
         selected_ids = [int(f.get("index", index)) for index, f in enumerate(files)
                         if int(f.get("index", index)) not in skipped_ids
-                        and PurePosixPath(f["name"]).suffix.lower() in VIDEO_EXTENSIONS
+                        and PurePosixPath(f["name"]).suffix.lower()
+                        in (VIDEO_EXTENSIONS | SUBTITLE_EXTENSIONS)
                         and f.get("priority", 1) == 0]
         if selected_ids:
             await request(client, "POST", "torrents/filePrio", data={
@@ -395,8 +459,14 @@ async def process_job(session, job, config, item):
 
 
 async def process_queue():
+    from .events import commit_and_publish, record_event
+    from .notifications import reconcile_migrations, update_migration
+    from .season_change import MigrationBlocked
+
     async with queue_lock:
         async with SessionFactory() as session:
+            await reconcile_migrations(session)
+            await commit_and_publish(session)
             ids = list(await session.scalars(select(DownloadJob.id).where(
                 DownloadJob.state.in_(["queued", "metadata", "organizing", "moving",
                                        "upgrading", "season_changing"]),
@@ -404,6 +474,10 @@ async def process_queue():
         for job_id in ids:
             async with SessionFactory() as session:
                 job = await session.get(DownloadJob, job_id)
+                if job is None:
+                    continue
+                if job.next_retry_at and job.next_retry_at.replace(tzinfo=UTC) > retry_now():
+                    continue
                 config = await session.get(DownloaderConfig, job.downloader_id)
                 item = await session.get(FeedItem, job.item_id)
                 source = await session.get(FeedSource, item.source_id) if item else None
@@ -411,34 +485,62 @@ async def process_queue():
                 if not config or not config.active or not source:
                     if migrating:
                         job.last_error = "请启用此任务对应的下载器，媒体库迁移将在后台继续"
-                        await session.commit()
+                        await update_migration(session, job, "blocked", job.last_error,
+                                               "downloader_disabled")
+                        await commit_and_publish(session)
                     continue
                 if migrating and config.kind != "qbittorrent":
                     job.last_error = "媒体库迁移需要此任务原有的 qBittorrent 下载器配置"
-                    await session.commit()
+                    await update_migration(session, job, "blocked", job.last_error,
+                                           "downloader_changed")
+                    await commit_and_publish(session)
                     continue
                 if not source.active and not migrating:
                     continue
                 if (migrating and not source.active
                         and json.loads(job.plan)["season_change"]["previous_state"] == "queued"):
                     job.last_error = "请启用订阅后继续尚未投递任务的季度同步"
-                    await session.commit()
+                    await update_migration(session, job, "blocked", job.last_error,
+                                           "source_disabled")
+                    await commit_and_publish(session)
                     continue
                 await session.commit()
                 try:
                     await process_job(session, job, config, item)
+                    if job.last_error and job.retry_attempts:
+                        record_event(session, "download.recovered", "feed_item", str(item.id), {
+                            "title": item.title, "source_id": item.source_id,
+                        })
                     job.last_error = None
+                    job.retry_attempts = 0
+                    job.next_retry_at = None
+                    if migrating and job.state == "season_changing":
+                        await update_migration(session, job, "running")
                 except Exception as exc:
-                    from .events import _redact
-                    error = _redact(f"{type(exc).__name__}: {exc}")[:1000]
+                    from .events import _redact, describe_download_error
+                    error = _redact(describe_download_error(exc))[:1000]
+                    delay = retry_delay(exc, job.retry_attempts + 1)
+                    if delay and not isinstance(exc, MigrationBlocked):
+                        job.retry_attempts += 1
+                        job.next_retry_at = retry_now() + timedelta(seconds=delay)
+                    else:
+                        job.retry_attempts = 0
+                        job.next_retry_at = None
+                    operation_id = None
+                    if migrating:
+                        operation_id = await update_migration(
+                            session, job,
+                            "blocked" if isinstance(exc, MigrationBlocked) else "running",
+                            error, exc.code if isinstance(exc, MigrationBlocked) else "retrying",
+                        )
                     if error != job.last_error:
-                        session.add(DomainEvent(
-                            event_type="download.failed", resource_type="feed_item",
-                            resource_id=str(item.id),
-                            payload=json.dumps({"error": error}, ensure_ascii=False),
-                        ))
+                        record_event(session, "download.failed", "feed_item", str(item.id), {
+                            "error": error, "source_id": item.source_id,
+                            "operation_id": operation_id,
+                            "retry_seconds": delay,
+                        })
                     job.last_error = error
-                await session.commit()
+                await commit_and_publish(session)
 
 
 async def download_queue_loop():
