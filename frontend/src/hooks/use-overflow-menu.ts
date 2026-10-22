@@ -9,7 +9,7 @@ export function useOverflowMenu(container: RefObject<HTMLElement | null>, count:
     const measure = measureRef.current
     if (!row || !measure) return
     const update = () => {
-      const widths = Array.from(measure.children, child => child.getBoundingClientRect().width)
+      const widths = Array.from(measure.children, (child) => child.getBoundingClientRect().width)
       const gap = parseFloat(getComputedStyle(row).columnGap) || 0
       const style = getComputedStyle(row)
       const available = row.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight)

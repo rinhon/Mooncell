@@ -18,7 +18,7 @@ function playbackUuid(): string {
   const bytes = provider.getRandomValues(new Uint8Array(16))
   bytes[6] = (bytes[6] & 0x0f) | 0x40
   bytes[8] = (bytes[8] & 0x3f) | 0x80
-  const value = Array.from(bytes, byte => byte.toString(16).padStart(2, "0")).join("")
+  const value = Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("")
   return `${value.slice(0, 8)}-${value.slice(8, 12)}-${value.slice(12, 16)}-${value.slice(16, 20)}-${value.slice(20)}`
 }
 
@@ -30,9 +30,15 @@ function playbackClientId(): string {
       tabClientId = stored
       return stored
     }
-  } catch { /* Restricted storage still gets a stable ID for this loaded module. */ }
+  } catch {
+    /* Restricted storage still gets a stable ID for this loaded module. */
+  }
   tabClientId = playbackUuid()
-  try { window.sessionStorage.setItem(CLIENT_ID_KEY, tabClientId) } catch { /* Use the module fallback. */ }
+  try {
+    window.sessionStorage.setItem(CLIENT_ID_KEY, tabClientId)
+  } catch {
+    /* Use the module fallback. */
+  }
   return tabClientId
 }
 
@@ -79,82 +85,192 @@ export function usePlaybackSession(mediaId: string, info: PlaybackInfo | undefin
     pageHidden.current = false
     closedOnHide.current = null
     unauthorized.current = false
-    current.current = null; setSession(null); setError(null); setLocating(false); sequence.current = 0
-    changing.current = false; heartbeatInFlight.current = false; heartbeatQueued.current = false
-    snapshotSequence.current = 0; acceptedSnapshot.current = 0
-    clock.current = { position: restartPosition.current ?? (info.progress?.completed ? 0 : info.progress?.position ?? 0), paused: true, playbackRate: 1 }
+    current.current = null
+    setSession(null)
+    setError(null)
+    setLocating(false)
+    sequence.current = 0
+    changing.current = false
+    heartbeatInFlight.current = false
+    heartbeatQueued.current = false
+    snapshotSequence.current = 0
+    acceptedSnapshot.current = 0
+    clock.current = {
+      position: restartPosition.current ?? (info.progress?.completed ? 0 : (info.progress?.position ?? 0)),
+      paused: true,
+      playbackRate: 1,
+    }
     restartPosition.current = null
     let ownedId: string | null = null
     let stopped = false
     // StrictMode 的首次 effect 在发请求前可取消；已发送的请求仍有独立回收责任。
-    lifecycleQueue = lifecycleQueue.catch(() => {}).then(async () => {
-      if (stopped) return
-      try {
-        const value = await api<PlaybackSession>("/playback/sessions", { method: "POST", body: JSON.stringify({ media_id: mediaId, client_id: playbackClientId(), start_time: clock.current.position, quality: info.qualities.at(-1) ?? 720, audio_track: info.audio_tracks.find(track => track.default)?.id ?? info.audio_tracks[0]?.id ?? null, request_id: playbackUuid() }) })
-        ownedId = value.id
-        if (stopped || pageHidden.current || epoch.current !== token) {
-          if (pageHidden.current && epoch.current === token) closedOnHide.current = value.id
-          await api(`/playback/sessions/${value.id}`, { method: "DELETE", keepalive: true }).catch(() => {})
-        } else accept(value, token)
-      } catch (cause) { if (!stopped) fail(cause, token) }
-    })
+    lifecycleQueue = lifecycleQueue
+      .catch(() => {})
+      .then(async () => {
+        if (stopped) return
+        try {
+          const value = await api<PlaybackSession>("/playback/sessions", {
+            method: "POST",
+            body: JSON.stringify({
+              media_id: mediaId,
+              client_id: playbackClientId(),
+              start_time: clock.current.position,
+              quality: info.qualities.at(-1) ?? 720,
+              audio_track: info.audio_tracks.find((track) => track.default)?.id ?? info.audio_tracks[0]?.id ?? null,
+              request_id: playbackUuid(),
+            }),
+          })
+          ownedId = value.id
+          if (stopped || pageHidden.current || epoch.current !== token) {
+            if (pageHidden.current && epoch.current === token) closedOnHide.current = value.id
+            await api(`/playback/sessions/${value.id}`, { method: "DELETE", keepalive: true }).catch(() => {})
+          } else accept(value, token)
+        } catch (cause) {
+          if (!stopped) fail(cause, token)
+        }
+      })
     let polling = false
     const poll = window.setInterval(() => {
       const value = current.current
-      if (stopped || pageHidden.current || polling || changing.current || unauthorized.current || !value || value.status === "closed" || value.status === "failed") return
+      if (
+        stopped ||
+        pageHidden.current ||
+        polling ||
+        changing.current ||
+        unauthorized.current ||
+        !value ||
+        value.status === "closed" ||
+        value.status === "failed"
+      )
+        return
       const revision = control.current
       const snapshot = ++snapshotSequence.current
       polling = true
-      void api<PlaybackSession>(`/playback/sessions/${value.id}`).then(next => {
-        if (!stopped && !changing.current && revision === control.current) accept(next, token, snapshot)
-      }).catch(cause => { if (!stopped) fail(cause, token) }).finally(() => { polling = false })
+      void api<PlaybackSession>(`/playback/sessions/${value.id}`)
+        .then((next) => {
+          if (!stopped && !changing.current && revision === control.current) accept(next, token, snapshot)
+        })
+        .catch((cause) => {
+          if (!stopped) fail(cause, token)
+        })
+        .finally(() => {
+          polling = false
+        })
     }, 1500)
     return () => {
-      stopped = true; alive.current = false; ++epoch.current; ++control.current
+      stopped = true
+      alive.current = false
+      ++epoch.current
+      ++control.current
       window.clearInterval(poll)
       const value = current.current
       if (!pageHidden.current && !unauthorized.current && !changing.current && value && value.id === ownedId) {
-        const update = { session_id: value.id, generation: value.generation, sequence: ++sequence.current, position: clock.current.position, completed: clock.current.completed ?? false }
-        void api(`/media/${mediaId}/progress`, { method: "PUT", body: JSON.stringify(update), keepalive: true }).catch(() => {})
+        const update = {
+          session_id: value.id,
+          generation: value.generation,
+          sequence: ++sequence.current,
+          position: clock.current.position,
+          completed: clock.current.completed ?? false,
+        }
+        void api(`/media/${mediaId}/progress`, { method: "PUT", body: JSON.stringify(update), keepalive: true }).catch(
+          () => {},
+        )
       }
       const controlFinished = pending.current
-      if (ownedId && closedOnHide.current !== ownedId) lifecycleQueue = lifecycleQueue.catch(() => {}).then(async () => {
-        await controlFinished.catch(() => {})
-        await api(`/playback/sessions/${ownedId}`, { method: "DELETE", keepalive: true }).catch(() => {})
-      })
+      if (ownedId && closedOnHide.current !== ownedId)
+        lifecycleQueue = lifecycleQueue
+          .catch(() => {})
+          .then(async () => {
+            await controlFinished.catch(() => {})
+            await api(`/playback/sessions/${ownedId}`, { method: "DELETE", keepalive: true }).catch(() => {})
+          })
       current.current = null
     }
   }, [mediaId, info?.version, accept, fail, attempt])
 
-  const save = useCallback((keepalive = false) => {
-    const value = current.current
-    if (!alive.current || unauthorized.current || changing.current || !value || value.status === "failed" || value.status === "closed") return
-    const token = epoch.current
-    void api(`/media/${mediaId}/progress`, { method: "PUT", body: JSON.stringify({ session_id: value.id, generation: value.generation, sequence: ++sequence.current, position: clock.current.position, completed: clock.current.completed ?? false }), keepalive }).catch(cause => { if (cause instanceof ApiError && (cause.status === 401 || cause.status === 403)) fail(cause, token) })
-  }, [mediaId, fail])
+  const save = useCallback(
+    (keepalive = false) => {
+      const value = current.current
+      if (
+        !alive.current ||
+        unauthorized.current ||
+        changing.current ||
+        !value ||
+        value.status === "failed" ||
+        value.status === "closed"
+      )
+        return
+      const token = epoch.current
+      void api(`/media/${mediaId}/progress`, {
+        method: "PUT",
+        body: JSON.stringify({
+          session_id: value.id,
+          generation: value.generation,
+          sequence: ++sequence.current,
+          position: clock.current.position,
+          completed: clock.current.completed ?? false,
+        }),
+        keepalive,
+      }).catch((cause) => {
+        if (cause instanceof ApiError && (cause.status === 401 || cause.status === 403)) fail(cause, token)
+      })
+    },
+    [mediaId, fail],
+  )
 
-  const heartbeat = useCallback(function sendHeartbeat() {
-    const value = current.current
-    if (!alive.current || changing.current || unauthorized.current || !value || value.status === "failed" || value.status === "closed") return
-    if (heartbeatInFlight.current) { heartbeatQueued.current = true; return }
-    const revision = control.current
-    const token = epoch.current
-    const snapshot = ++snapshotSequence.current
-    heartbeatInFlight.current = true
-    void api<PlaybackSession>(`/playback/sessions/${value.id}/heartbeat`, { method: "POST", body: JSON.stringify({ generation: value.generation, position: clock.current.position, paused: clock.current.paused, playback_rate: clock.current.playbackRate }) }).then(next => {
-      if (!changing.current && revision === control.current) accept(next, token, snapshot)
-    }).catch(cause => {
-      if (cause instanceof ApiError && cause.status === 409) return
-      fail(cause, token)
-    }).finally(() => {
-      if (token !== epoch.current) return
-      heartbeatInFlight.current = false
-      if (heartbeatQueued.current) { heartbeatQueued.current = false; sendHeartbeat() }
-    })
-  }, [accept, fail])
+  const heartbeat = useCallback(
+    function sendHeartbeat() {
+      const value = current.current
+      if (
+        !alive.current ||
+        changing.current ||
+        unauthorized.current ||
+        !value ||
+        value.status === "failed" ||
+        value.status === "closed"
+      )
+        return
+      if (heartbeatInFlight.current) {
+        heartbeatQueued.current = true
+        return
+      }
+      const revision = control.current
+      const token = epoch.current
+      const snapshot = ++snapshotSequence.current
+      heartbeatInFlight.current = true
+      void api<PlaybackSession>(`/playback/sessions/${value.id}/heartbeat`, {
+        method: "POST",
+        body: JSON.stringify({
+          generation: value.generation,
+          position: clock.current.position,
+          paused: clock.current.paused,
+          playback_rate: clock.current.playbackRate,
+        }),
+      })
+        .then((next) => {
+          if (!changing.current && revision === control.current) accept(next, token, snapshot)
+        })
+        .catch((cause) => {
+          if (cause instanceof ApiError && cause.status === 409) return
+          fail(cause, token)
+        })
+        .finally(() => {
+          if (token !== epoch.current) return
+          heartbeatInFlight.current = false
+          if (heartbeatQueued.current) {
+            heartbeatQueued.current = false
+            sendHeartbeat()
+          }
+        })
+    },
+    [accept, fail],
+  )
 
   useEffect(() => {
-    const timer = window.setInterval(() => { heartbeat(); save() }, 15000)
+    const timer = window.setInterval(() => {
+      heartbeat()
+      save()
+    }, 15000)
     const leave = () => {
       if (pageHidden.current) return
       save(true)
@@ -173,41 +289,81 @@ export function usePlaybackSession(mediaId: string, info: PlaybackInfo | undefin
     const restore = (event: PageTransitionEvent) => {
       if (!event.persisted) return
       restartPosition.current = clock.current.position
-      setAttempt(value => value + 1)
+      setAttempt((value) => value + 1)
     }
     window.addEventListener("pagehide", leave)
     window.addEventListener("pageshow", restore)
-    return () => { clearInterval(timer); window.removeEventListener("pagehide", leave); window.removeEventListener("pageshow", restore) }
+    return () => {
+      clearInterval(timer)
+      window.removeEventListener("pagehide", leave)
+      window.removeEventListener("pageshow", restore)
+    }
   }, [heartbeat, save])
 
-  const change = useCallback((kind: "seek" | "options", body: object) => {
-    if (!alive.current || unauthorized.current) return
-    const revision = ++control.current
-    const token = epoch.current
-    const lifecycleReady = lifecycleQueue
-    changing.current = true
-    setLocating(true); setError(null)
-    // 串行执行已发出的控制请求，忽略连续拖动中的中间请求。
-    pending.current = pending.current.catch(() => {}).then(async () => {
-      if (revision !== control.current || token !== epoch.current) return
-      if (!current.current) await lifecycleReady.catch(() => {})
-      if (revision !== control.current || token !== epoch.current) return
-      const value = current.current
-      if (!value || unauthorized.current) { setLocating(false); return }
-      const next = await api<PlaybackSession>(`/playback/sessions/${value.id}/${kind}`, { method: kind === "seek" ? "POST" : "PATCH", body: JSON.stringify({ ...body, generation: value.generation, request_id: playbackUuid() }) })
-      if (revision === control.current && token === epoch.current) accept(next, token)
-      else if (token === epoch.current && current.current?.id === next.id && next.generation >= current.current.generation) current.current = next
-    }).catch(cause => {
-      const authFailure = cause instanceof ApiError && (cause.status === 401 || cause.status === 403)
-      if (token === epoch.current && (revision === control.current || authFailure)) { setLocating(false); fail(cause, token) }
-    }).finally(() => {
-      if (revision === control.current && token === epoch.current) changing.current = false
-    })
-  }, [accept, fail])
+  const change = useCallback(
+    (kind: "seek" | "options", body: object) => {
+      if (!alive.current || unauthorized.current) return
+      const revision = ++control.current
+      const token = epoch.current
+      const lifecycleReady = lifecycleQueue
+      changing.current = true
+      setLocating(true)
+      setError(null)
+      // 串行执行已发出的控制请求，忽略连续拖动中的中间请求。
+      pending.current = pending.current
+        .catch(() => {})
+        .then(async () => {
+          if (revision !== control.current || token !== epoch.current) return
+          if (!current.current) await lifecycleReady.catch(() => {})
+          if (revision !== control.current || token !== epoch.current) return
+          const value = current.current
+          if (!value || unauthorized.current) {
+            setLocating(false)
+            return
+          }
+          const next = await api<PlaybackSession>(`/playback/sessions/${value.id}/${kind}`, {
+            method: kind === "seek" ? "POST" : "PATCH",
+            body: JSON.stringify({ ...body, generation: value.generation, request_id: playbackUuid() }),
+          })
+          if (revision === control.current && token === epoch.current) accept(next, token)
+          else if (
+            token === epoch.current &&
+            current.current?.id === next.id &&
+            next.generation >= current.current.generation
+          )
+            current.current = next
+        })
+        .catch((cause) => {
+          const authFailure = cause instanceof ApiError && (cause.status === 401 || cause.status === 403)
+          if (token === epoch.current && (revision === control.current || authFailure)) {
+            setLocating(false)
+            fail(cause, token)
+          }
+        })
+        .finally(() => {
+          if (revision === control.current && token === epoch.current) changing.current = false
+        })
+    },
+    [accept, fail],
+  )
 
-  return { session, error, locating, clock, setError, save, heartbeat,
-    restart: (position?: number) => { restartPosition.current = position ?? clock.current.position; setAttempt(value => value + 1) },
-    seek: (position: number) => { clock.current.position = position; change("seek", { position }) },
-    options: (quality: number, audio_track: number | null) => change("options", { quality, audio_track, position: clock.current.position }),
+  return {
+    session,
+    error,
+    locating,
+    clock,
+    setError,
+    save,
+    heartbeat,
+    restart: (position?: number) => {
+      restartPosition.current = position ?? clock.current.position
+      setAttempt((value) => value + 1)
+    },
+    seek: (position: number) => {
+      clock.current.position = position
+      change("seek", { position })
+    },
+    options: (quality: number, audio_track: number | null) =>
+      change("options", { quality, audio_track, position: clock.current.position }),
   }
 }

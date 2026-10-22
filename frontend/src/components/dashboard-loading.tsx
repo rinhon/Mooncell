@@ -1,34 +1,45 @@
-import type { ReactNode } from "react"
-import { Link } from "react-router-dom"
 import { AddSubscriptionButton } from "@/components/add-subscription-button"
 import { PageHeading } from "@/components/page-heading"
 import { Skeleton } from "@/components/ui/skeleton"
+import { ModuleSkeleton } from "@/components/dashboard/module-state"
 
-export function DashboardHeading({ count, loading = false }: { count?: number; loading?: boolean }) {
-  return <PageHeading eyebrow="OVERVIEW" title="首页" description={<>已订阅 {count ?? <span className="skeleton inline-block h-[1em] w-6 align-middle" aria-label="正在读取番剧数量"/>} 部番剧，查看最近发布和下载任务。</>} action={loading ? <AddSubscriptionButton disabled/> : <AddSubscriptionButton to="/feeds"/>}/>
+export function DashboardHeading({ count }: { count?: number }) {
+  return (
+    <PageHeading
+      eyebrow="状态总览"
+      title="首页"
+      description={
+        count === undefined
+          ? "查看订阅、今日放送与下载任务的最新状态。"
+          : `已订阅 ${count} 部番剧，查看今日放送、最近发布与下载任务。`
+      }
+      action={<AddSubscriptionButton to="/feeds" />}
+    />
+  )
 }
 
-export function DashboardRecent({ children, loading = false }: { children: ReactNode; loading?: boolean }) {
-  return <section className="recent-section">
-    <div className="recent-heading"><p>最近添加</p>{loading ? <span className="text-[var(--muted)]">查看全部</span> : <Link to="/shows">查看全部</Link>}</div>
-    <div className="recent-grid">{children}</div>
-  </section>
-}
-
+/** 仅用于路由代码的 Suspense；数据请求由首页各模块独立呈现。 */
 export function DashboardLoading() {
-  return <div className="dashboard-loading">
-    <DashboardHeading loading/>
-    <div role="status" aria-label="正在加载首页" aria-busy="true">
-      <span className="sr-only">正在读取首页番剧订阅…</span>
-      <div aria-hidden="true">
-        <div className="dashboard-gallery-skeleton">{[0, 1, 2, 3].map(index => <div key={index} className="relative min-h-0 min-w-0 overflow-hidden rounded-[var(--radius-card)]">
-          <Skeleton className="absolute inset-0 size-full"/>
-          {index === 0 && <div className="absolute inset-x-6 bottom-7 grid gap-3"><Skeleton className="h-8 w-3/4"/><Skeleton className="h-4 w-2/3"/><Skeleton className="mt-1 h-10 w-28"/></div>}
-        </div>)}</div>
-        <DashboardRecent loading>{[0, 1, 2, 3, 4].map(index => <div className="recent-item" key={index}>
-          <span className="recent-image"><Skeleton className="size-full"/></span>
-        </div>)}</DashboardRecent>
+  return (
+    <div className="dashboard-v2">
+      <DashboardHeading />
+      <div className="dashboard-stat-strip" aria-label="正在加载状态总览" role="status" aria-busy="true">
+        {[0, 1, 2, 3].map((index) => (
+          <div className="dashboard-stat" key={index}>
+            <Skeleton className="h-4 w-20" />
+            <Skeleton className="h-8 w-12" />
+            <Skeleton className="h-3 w-28" />
+          </div>
+        ))}
+      </div>
+      <div className="dashboard-main-grid">
+        <div className="dashboard-panel">
+          <ModuleSkeleton label="正在加载今日放送" rows={4} />
+        </div>
+        <div className="dashboard-panel">
+          <ModuleSkeleton label="正在加载下载任务" />
+        </div>
       </div>
     </div>
-  </div>
+  )
 }

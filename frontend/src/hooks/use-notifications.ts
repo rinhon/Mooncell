@@ -9,20 +9,28 @@ export function useNotifications(open: boolean) {
     refetchOnWindowFocus: true,
   })
   const list = useInfiniteQuery({
-    queryKey: ["notifications", "list"], initialPageParam: "",
-    queryFn: ({ pageParam, signal }) => api<NotificationPage>(`/notifications?limit=20${pageParam ? `&cursor=${encodeURIComponent(pageParam)}` : ""}`, { signal }),
+    queryKey: ["notifications", "list"],
+    initialPageParam: "",
+    queryFn: ({ pageParam, signal }) =>
+      api<NotificationPage>(`/notifications?limit=20${pageParam ? `&cursor=${encodeURIComponent(pageParam)}` : ""}`, {
+        signal,
+      }),
     getNextPageParam: (page) => page.next_cursor ?? undefined,
-    enabled: open, refetchOnWindowFocus: true,
+    enabled: open,
+    refetchOnWindowFocus: true,
   })
   const refresh = () => client.invalidateQueries({ queryKey: ["notifications"] })
   const read = useMutation({
-    mutationFn: (item: BackgroundOperation) => api(`/notifications/${item.id}/read`, {
-      method: "PATCH", body: JSON.stringify({ attention_revision: item.attention_revision }),
-    }),
+    mutationFn: (item: BackgroundOperation) =>
+      api(`/notifications/${item.id}/read`, {
+        method: "PATCH",
+        body: JSON.stringify({ attention_revision: item.attention_revision }),
+      }),
     onSuccess: refresh,
   })
   const readAll = useMutation({
-    mutationFn: (cutoff: string) => api("/notifications/read-all", { method: "POST", body: JSON.stringify({ cutoff }) }),
+    mutationFn: (cutoff: string) =>
+      api("/notifications/read-all", { method: "POST", body: JSON.stringify({ cutoff }) }),
     onSuccess: refresh,
   })
   const byId = new Map<string, BackgroundOperation>()

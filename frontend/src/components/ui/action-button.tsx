@@ -10,6 +10,30 @@ type Props = ButtonHTMLAttributes<HTMLButtonElement> & {
   size?: ButtonProps["size"]
 }
 
-export function ActionButton({ icon: Icon, pending = false, pendingLabel, emphasis = "primary", disabled, className, children, type = "button", ...props }: Props) {
-  return <Button {...props} type={type} disabled={disabled} pending={pending} pendingLabel={pendingLabel} icon={Icon} iconSlot variant={emphasis === "primary" ? "default" : "secondary"} className={className}>{children}</Button>
+export function ActionButton({
+  icon: Icon,
+  pending = false,
+  pendingLabel,
+  emphasis = "primary",
+  disabled,
+  className,
+  children,
+  type = "button",
+  ...props
+}: Props) {
+  return (
+    <Button
+      {...props}
+      type={type}
+      disabled={disabled}
+      pending={pending}
+      pendingLabel={pendingLabel}
+      icon={Icon}
+      iconSlot
+      variant={emphasis === "primary" ? "default" : "secondary"}
+      className={className}
+    >
+      {children}
+    </Button>
+  )
 }

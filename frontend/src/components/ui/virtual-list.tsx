@@ -12,7 +12,15 @@ type VirtualListProps<T> = {
 }
 
 /** Measured rows support wrapped content while keeping large lists inexpensive to render. */
-export function VirtualList<T>({ items, itemKey, renderItem, label, estimatedItemHeight = 180, overscan = 3, className }: VirtualListProps<T>) {
+export function VirtualList<T>({
+  items,
+  itemKey,
+  renderItem,
+  label,
+  estimatedItemHeight = 180,
+  overscan = 3,
+  className,
+}: VirtualListProps<T>) {
   const viewport = useRef<HTMLDivElement>(null)
   const heights = useRef(new Map<string | number, number>())
   const [revision, setRevision] = useState(0)
@@ -20,7 +28,8 @@ export function VirtualList<T>({ items, itemKey, renderItem, label, estimatedIte
   const keys = useMemo(() => items.map(itemKey), [items, itemKey])
   const offsets = useMemo(() => {
     const result = [0]
-    for (const item of items) result.push(result[result.length - 1] + (heights.current.get(itemKey(item)) ?? estimatedItemHeight))
+    for (const item of items)
+      result.push(result[result.length - 1] + (heights.current.get(itemKey(item)) ?? estimatedItemHeight))
     return result
   }, [items, itemKey, estimatedItemHeight, revision])
   const totalHeight = offsets[offsets.length - 1]
@@ -71,22 +80,50 @@ export function VirtualList<T>({ items, itemKey, renderItem, label, estimatedIte
     }
   }, [items, itemKey, totalHeight])
 
-  return <div ref={viewport} className={cn("virtual-list", className)} role="region" aria-label={label} tabIndex={0}
-    onScroll={(event) => setView({ top: event.currentTarget.scrollTop, height: event.currentTarget.clientHeight })}>
-    <div role="list" aria-label={label} className="virtual-list-track" style={{ height: totalHeight }}>
-      {items.slice(start, end).map((item, localIndex) => {
-        const index = start + localIndex
-        return <MeasuredRow key={keys[index]} rowKey={keys[index]} index={index} count={items.length} top={offsets[index]} measure={measure}>
-          {renderItem(item, index)}
-        </MeasuredRow>
-      })}
+  return (
+    <div
+      ref={viewport}
+      className={cn("virtual-list", className)}
+      role="region"
+      aria-label={label}
+      tabIndex={0}
+      onScroll={(event) => setView({ top: event.currentTarget.scrollTop, height: event.currentTarget.clientHeight })}
+    >
+      <div role="list" aria-label={label} className="virtual-list-track" style={{ height: totalHeight }}>
+        {items.slice(start, end).map((item, localIndex) => {
+          const index = start + localIndex
+          return (
+            <MeasuredRow
+              key={keys[index]}
+              rowKey={keys[index]}
+              index={index}
+              count={items.length}
+              top={offsets[index]}
+              measure={measure}
+            >
+              {renderItem(item, index)}
+            </MeasuredRow>
+          )
+        })}
+      </div>
     </div>
-  </div>
+  )
 }
 
-function MeasuredRow({ rowKey, index, count, top, measure, children }: {
-  rowKey: string | number; index: number; count: number; top: number
-  measure: (key: string | number, height: number) => void; children: ReactNode
+function MeasuredRow({
+  rowKey,
+  index,
+  count,
+  top,
+  measure,
+  children,
+}: {
+  rowKey: string | number
+  index: number
+  count: number
+  top: number
+  measure: (key: string | number, height: number) => void
+  children: ReactNode
 }) {
   const row = useRef<HTMLDivElement>(null)
   useLayoutEffect(() => {
@@ -101,6 +138,16 @@ function MeasuredRow({ rowKey, index, count, top, measure, children }: {
     observer.observe(element)
     return () => observer.disconnect()
   }, [rowKey, measure])
-  return <div ref={row} role="listitem" aria-posinset={index + 1} aria-setsize={count}
-    className="virtual-list-row" style={{ transform: `translateY(${top}px)` }}>{children}</div>
+  return (
+    <div
+      ref={row}
+      role="listitem"
+      aria-posinset={index + 1}
+      aria-setsize={count}
+      className="virtual-list-row"
+      style={{ transform: `translateY(${top}px)` }}
+    >
+      {children}
+    </div>
+  )
 }

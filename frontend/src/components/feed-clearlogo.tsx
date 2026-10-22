@@ -11,7 +11,9 @@ export function FeedClearlogo({ show, onError }: { show: Show; onError?: () => v
     staleTime: Infinity,
     retry: false,
   })
-  return <div className="clearlogo-plate" data-background={appearance.data?.background ?? "dark"}>
-    <img src={`/api/v1${path}?v=${version}`} alt="" loading="lazy" onError={onError}/>
-  </div>
+  return (
+    <div className="clearlogo-plate" data-background={appearance.data?.background ?? "dark"}>
+      <img src={`/api/v1${path}?v=${version}`} alt="" loading="lazy" onError={onError} />
+    </div>
+  )
 }

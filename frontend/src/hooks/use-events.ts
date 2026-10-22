@@ -13,21 +13,48 @@ export function useEvents(enabled: boolean) {
     }
     let connected = false
     const stream = new EventSource("/api/v1/events/stream", { withCredentials: true })
-    const notifications = () => { void client.invalidateQueries({ queryKey: ["notifications"] }) }
+    const notifications = () => {
+      void client.invalidateQueries({ queryKey: ["notifications"] })
+    }
     const refresh = () => {
       for (const key of ["dashboard", "feeds", "shows", "reviews", "downloads"]) {
         void client.invalidateQueries({ queryKey: [key] })
       }
     }
-    stream.onopen = () => { connected = true; notifications(); refresh() }
-    stream.onerror = () => { connected = false; notifications() }
-    stream.addEventListener("notification.changed", () => { notifications(); refresh() })
+    stream.onopen = () => {
+      connected = true
+      notifications()
+      refresh()
+    }
+    stream.onerror = () => {
+      connected = false
+      notifications()
+    }
+    stream.addEventListener("notification.changed", () => {
+      notifications()
+      refresh()
+    })
     stream.addEventListener("library.scan.changed", refresh)
     stream.addEventListener("download.episode.renamed", refresh)
-    for (const name of ["feed.setup.completed", "feed.setup.partial", "feed.setup.failed", "feed.updated", "feed.refresh.completed", "feed.refresh.failed", "item.discovered", "review.approved", "review.ignored", "review.reparsed", "download.library.changed"]) {
+    for (const name of [
+      "feed.setup.completed",
+      "feed.setup.partial",
+      "feed.setup.failed",
+      "feed.updated",
+      "feed.refresh.completed",
+      "feed.refresh.failed",
+      "item.discovered",
+      "review.approved",
+      "review.ignored",
+      "review.reparsed",
+      "download.library.changed",
+    ]) {
       stream.addEventListener(name, refresh)
     }
-    const focus = () => { notifications(); refresh() }
+    const focus = () => {
+      notifications()
+      refresh()
+    }
     window.addEventListener("focus", focus)
     const interval = window.setInterval(() => {
       // 连创建和完成事件都漏收时也能自愈；关闭面板后只会补查活跃的摘要查询。

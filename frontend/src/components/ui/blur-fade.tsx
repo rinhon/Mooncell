@@ -1,100 +1,58 @@
 // Adapted from Magic UI's Blur Fade. See blur-fade.LICENSE.
-// https://magicui.design/docs/components/blur-fade
-"use client"
-
-import { useRef } from "react"
-import {
-  AnimatePresence,
-  motion,
-  useInView,
-  useReducedMotion,
-  type MotionProps,
-  type UseInViewOptions,
-  type Variants,
-} from "motion/react"
-
-type MarginType = UseInViewOptions["margin"]
+import { useContext, useRef } from "react"
+import { motion, useInView, useReducedMotion, type MotionProps, type UseInViewOptions } from "motion/react"
+import { spring } from "@/lib/motion"
+import { PageMotionContext } from "@/lib/page-motion"
 
 interface BlurFadeProps extends MotionProps {
   children: React.ReactNode
   className?: string
-  variant?: {
-    hidden: { y: number }
-    visible: { y: number }
-  }
+  variant?: { hidden: { y: number }; visible: { y: number } }
+  /** 兼容旧调用；入场速度由统一 Spring 决定，不再动画模糊滤镜。 */
   duration?: number
+  blur?: string
   delay?: number
   offset?: number
   direction?: "up" | "down" | "left" | "right"
   inView?: boolean
-  inViewMargin?: MarginType
-  blur?: string
+  inViewMargin?: UseInViewOptions["margin"]
 }
-
-const getFilter = (v: Variants[string]) =>
-  typeof v === "function" ? undefined : v.filter
 
 export function BlurFade({
   children,
   className,
   variant,
-  duration = 0.4,
+  duration: _duration,
+  blur: _blur,
   delay = 0,
   offset = 6,
   direction = "down",
   inView = false,
   inViewMargin = "-50px",
-  blur = "6px",
   ...props
 }: BlurFadeProps) {
   const ref = useRef(null)
   const reducedMotion = useReducedMotion()
-  const inViewResult = useInView(ref, { once: true, margin: inViewMargin })
-  const isInView = !inView || inViewResult
-  const defaultVariants: Variants = {
-    hidden: {
-      [direction === "left" || direction === "right" ? "x" : "y"]:
-        direction === "right" || direction === "down" ? -offset : offset,
-      opacity: 0,
-      filter: `blur(${blur})`,
-    },
-    visible: {
-      [direction === "left" || direction === "right" ? "x" : "y"]: 0,
-      opacity: 1,
-      filter: `blur(0px)`,
-    },
-  }
-  const combinedVariants = variant ?? defaultVariants
-
-  const hiddenFilter = getFilter(combinedVariants.hidden)
-  const visibleFilter = getFilter(combinedVariants.visible)
-
-  const shouldTransitionFilter =
-    hiddenFilter != null &&
-    visibleFilter != null &&
-    hiddenFilter !== visibleFilter
-
+  const { animateEntry } = useContext(PageMotionContext)
+  const visible = useInView(ref, { once: true, margin: inViewMargin })
+  const skip = reducedMotion || !animateEntry
+  const axis = direction === "left" || direction === "right" ? "x" : "y"
   return (
-    <AnimatePresence>
-      <motion.div
-        ref={ref}
-        initial={reducedMotion ? false : "hidden"}
-        animate={reducedMotion || isInView ? "visible" : "hidden"}
-        exit={reducedMotion ? undefined : "hidden"}
-        variants={combinedVariants}
-        transition={reducedMotion ? { duration: 0 } : {
-          delay: 0.04 + delay,
-          type: "spring",
-          stiffness: 380,
-          damping: 32,
-          opacity: { duration, delay: 0.04 + delay },
-          ...(shouldTransitionFilter ? { filter: { duration, delay: 0.04 + delay } } : {}),
-        }}
-        className={className}
-        {...props}
-      >
-        {children}
-      </motion.div>
-    </AnimatePresence>
+    <motion.div
+      {...props}
+      ref={ref}
+      initial={skip ? false : "hidden"}
+      animate={skip || !inView || visible ? "visible" : "hidden"}
+      variants={
+        variant ?? {
+          hidden: { [axis]: direction === "right" || direction === "down" ? -offset : offset, opacity: 0 },
+          visible: { [axis]: 0, opacity: 1 },
+        }
+      }
+      transition={skip ? { duration: 0 } : { ...spring.gentle, delay }}
+      className={className}
+    >
+      {children}
+    </motion.div>
   )
 }

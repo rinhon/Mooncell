@@ -1,17 +1,40 @@
 export type PlaybackInfo = {
-  media_id: string; source_id: number; filename: string; version: string
-  duration: number; video_width: number; video_height: number; video_codec: string
-  hdr: boolean; supported: boolean; unsupported_reason: string | null; qualities: number[]
+  media_id: string
+  source_id: number
+  filename: string
+  version: string
+  duration: number
+  video_width: number
+  video_height: number
+  video_codec: string
+  hdr: boolean
+  supported: boolean
+  unsupported_reason: string | null
+  qualities: number[]
   audio_tracks: { id: number; codec: string; language: string | null; title: string | null; default: boolean }[]
-  subtitle_tracks: { id: string; codec: string; language: string | null; title: string | null; supported: boolean; reason: string | null; url: string | null }[]
+  subtitle_tracks: {
+    id: string
+    codec: string
+    language: string | null
+    title: string | null
+    supported: boolean
+    reason: string | null
+    url: string | null
+  }[]
   progress: { position: number; duration: number; completed: boolean } | null
 }
 
 export type PlaybackSession = {
-  id: string; media_id: string; generation: number
+  id: string
+  media_id: string
+  generation: number
   status: "preparing" | "ready" | "paused" | "failed" | "closed"
-  duration: number; source_anchor: number; media_anchor: number
-  playlist_url: string | null; quality: number; audio_track: number | null
+  duration: number
+  source_anchor: number
+  media_anchor: number
+  playlist_url: string | null
+  quality: number
+  audio_track: number | null
   cached_ranges: [number, number][]
   segments: { sequence: number; source_start: number; duration: number }[]
   error: { code: string; message: string } | null

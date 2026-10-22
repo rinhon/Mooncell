@@ -8,10 +8,22 @@ type DemoData = {
   organizeTasks: DemoOrganizeTask[]
   reviews: DemoReview[]
   logs: Array<{ time: string; level: string; scope: string; message: string }>
-  calendar: Array<{ day: string; date: string; items: Array<{ title: string; episode: number; time: string; accent: string }> }>
+  calendar: Array<{
+    day: string
+    date: string
+    items: Array<{ title: string; episode: number; time: string; accent: string }>
+  }>
 }
 
-const EMPTY_DATA: DemoData = { enabled: false, shows: [], downloads: [], organizeTasks: [], reviews: [], logs: [], calendar: [] }
+const EMPTY_DATA: DemoData = {
+  enabled: false,
+  shows: [],
+  downloads: [],
+  organizeTasks: [],
+  reviews: [],
+  logs: [],
+  calendar: [],
+}
 export const DEMO_MODE = import.meta.env.DEV && import.meta.env.VITE_DEMO_DATA !== "false"
 
 /**
@@ -22,15 +34,17 @@ export function useDemoData() {
   const [data, setData] = useState<DemoData>(EMPTY_DATA)
   useEffect(() => {
     if (!DEMO_MODE) return
-    void import("@/mocks/demo-data").then((module) => setData({
-      enabled: true,
-      shows: module.demoShows,
-      downloads: module.demoDownloads,
-      organizeTasks: module.demoOrganizeTasks,
-      reviews: module.demoReviews,
-      logs: module.demoLogs,
-      calendar: module.demoCalendar,
-    }))
+    void import("@/mocks/demo-data").then((module) =>
+      setData({
+        enabled: true,
+        shows: module.demoShows,
+        downloads: module.demoDownloads,
+        organizeTasks: module.demoOrganizeTasks,
+        reviews: module.demoReviews,
+        logs: module.demoLogs,
+        calendar: module.demoCalendar,
+      }),
+    )
   }, [])
   return data
 }

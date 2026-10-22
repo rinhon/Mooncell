@@ -12,22 +12,43 @@ export class HlsEngine {
   private bufferedPts = new Map<number, number>()
   private session: PlaybackSession
 
-  constructor(private video: HTMLVideoElement, session: PlaybackSession, private onError: (message: string, expired?: boolean) => void, private onReady: () => void) {
+  constructor(
+    private video: HTMLVideoElement,
+    session: PlaybackSession,
+    private onError: (message: string, expired?: boolean) => void,
+    private onReady: () => void,
+  ) {
     this.session = session
     if (!Hls.isSupported()) throw new Error("此浏览器暂不支持本站 HLS 播放，请使用 Chrome、Edge 或 Firefox。")
     this.hls = new Hls({
-      enableWorker: true, lowLatencyMode: false, startPosition: 0,
-      maxBufferLength: 30, maxMaxBufferLength: 45, maxBufferSize: 40 * 1024 * 1024,
-      backBufferLength: 30, liveBackBufferLength: 30,
+      enableWorker: true,
+      lowLatencyMode: false,
+      startPosition: 0,
+      maxBufferLength: 30,
+      maxMaxBufferLength: 45,
+      maxBufferSize: 40 * 1024 * 1024,
+      backBufferLength: 30,
+      liveBackBufferLength: 30,
       liveSyncDuration: Number.MAX_SAFE_INTEGER,
-      liveMaxLatencyDuration: Infinity, maxLiveSyncPlaybackRate: 1,
+      liveMaxLatencyDuration: Infinity,
+      maxLiveSyncPlaybackRate: 1,
       // The default controller clamps the enormous latency to the window start,
       // and can still seek there when stalled outside the sliding window.
       // With no controller the public liveSyncPosition is null, disabling that seek.
       latencyController: undefined,
-      liveDurationInfinity: true, capLevelToPlayerSize: true,
-      manifestLoadPolicy: { default: { maxTimeToFirstByteMs: 10000, maxLoadTimeMs: 15000, timeoutRetry: { maxNumRetry: 2, retryDelayMs: 1000, maxRetryDelayMs: 3000 }, errorRetry: { maxNumRetry: 2, retryDelayMs: 1000, maxRetryDelayMs: 3000 } } },
-      xhrSetup(xhr) { xhr.withCredentials = true },
+      liveDurationInfinity: true,
+      capLevelToPlayerSize: true,
+      manifestLoadPolicy: {
+        default: {
+          maxTimeToFirstByteMs: 10000,
+          maxLoadTimeMs: 15000,
+          timeoutRetry: { maxNumRetry: 2, retryDelayMs: 1000, maxRetryDelayMs: 3000 },
+          errorRetry: { maxNumRetry: 2, retryDelayMs: 1000, maxRetryDelayMs: 3000 },
+        },
+      },
+      xhrSetup(xhr) {
+        xhr.withCredentials = true
+      },
     })
     this.hls.on(Events.FRAG_BUFFERED, (_event, { frag }) => {
       if (this.destroyed || this.expired || typeof frag.sn !== "number" || this.anchor) return
@@ -45,13 +66,17 @@ export class HlsEngine {
       if (status === 401 || status === 403) {
         this.expired = true
         data.fatal = true
-        this.hls.stopLoad(); this.video.pause()
+        this.hls.stopLoad()
+        this.video.pause()
         this.onError("登录已过期，请刷新页面重新登录。", true)
         return
       }
       if (!data.fatal) return
       if (data.type === ErrorTypes.MEDIA_ERROR && this.retries++ < 2) this.hls.recoverMediaError()
-      else { this.hls.stopLoad(); this.onError("视频加载失败，请重试播放。") }
+      else {
+        this.hls.stopLoad()
+        this.onError("视频加载失败，请重试播放。")
+      }
     })
     this.hls.attachMedia(video)
     this.hls.loadSource(session.playlist_url!)
@@ -85,7 +110,7 @@ export class HlsEngine {
     const target = position - this.anchor.source + this.anchor.media
     if (!Number.isFinite(target) || target < 0) return false
     for (let index = 0; index < this.video.buffered.length; index++) {
-      if (target >= this.video.buffered.start(index) && target < this.video.buffered.end(index) - .1) {
+      if (target >= this.video.buffered.start(index) && target < this.video.buffered.end(index) - 0.1) {
         this.video.currentTime = target
         return true
       }

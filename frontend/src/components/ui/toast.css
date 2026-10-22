@@ -13,19 +13,46 @@
   pointer-events: none;
 }
 
-.toast-notice { flex: none; pointer-events: auto; }
-.toast-notice--success { --toast-tone: var(--success); }
-.toast-notice--warning { --toast-tone: var(--warning); }
-.toast-notice--error { --toast-tone: var(--danger); }
-.toast-notice .swipe-toast__card { border: 1px solid var(--border); }
-.toast-notice .swipe-toast__icon { color: var(--toast-tone); }
-.toast-notice .swipe-toast__body { overflow-wrap: anywhere; }
-.toast-notice .swipe-toast__title { font-size: 14px; }
-.toast-notice .swipe-toast__desc { margin-top: 3px; font-size: 13px; line-height: 1.6; }
-.toast-notice[data-phase="closing"], .toast-notice[data-phase="gone"] { pointer-events: none; }
+.toast-notice {
+  flex: none;
+  pointer-events: auto;
+}
+.toast-notice--success {
+  --toast-tone: var(--success);
+}
+.toast-notice--warning {
+  --toast-tone: var(--warning);
+}
+.toast-notice--error {
+  --toast-tone: var(--danger);
+}
+.toast-notice .swipe-toast__card {
+  border: 1px solid var(--border);
+}
+.toast-notice .swipe-toast__icon {
+  color: var(--toast-tone);
+}
+.toast-notice .swipe-toast__body {
+  overflow-wrap: anywhere;
+}
+.toast-notice .swipe-toast__title {
+  font-size: 14px;
+}
+.toast-notice .swipe-toast__desc {
+  margin-top: 3px;
+  font-size: 13px;
+  line-height: 1.6;
+}
+.toast-notice[data-phase="closing"],
+.toast-notice[data-phase="gone"] {
+  pointer-events: none;
+}
 .toast-notice .swipe-toast__card:focus-visible,
 .toast-notice .swipe-toast__close:focus-visible,
-.toast-notice .swipe-toast__action:focus-visible { outline: 2px solid var(--accent); outline-offset: -3px; }
+.toast-notice .swipe-toast__action:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -3px;
+}
 
 @media (max-width: 600px) {
   .toast-viewport {

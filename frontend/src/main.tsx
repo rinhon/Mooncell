@@ -9,5 +9,15 @@ import { MotionConfig } from "motion/react"
 
 const queryClient = new QueryClient({ defaultOptions: { queries: { retry: 1, refetchOnWindowFocus: false } } })
 createRoot(document.getElementById("root")!).render(
-  <StrictMode><MotionConfig reducedMotion="user"><QueryClientProvider client={queryClient}><TooltipProvider delayDuration={350}><ToastProvider><App /></ToastProvider></TooltipProvider></QueryClientProvider></MotionConfig></StrictMode>,
+  <StrictMode>
+    <MotionConfig reducedMotion="user">
+      <QueryClientProvider client={queryClient}>
+        <TooltipProvider delayDuration={350}>
+          <ToastProvider>
+            <App />
+          </ToastProvider>
+        </TooltipProvider>
+      </QueryClientProvider>
+    </MotionConfig>
+  </StrictMode>,
 )

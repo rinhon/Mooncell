@@ -12,7 +12,6 @@ export default defineConfig({
         manualChunks(id) {
           const moduleId = id.split("\\").join("/")
           if (/\/node_modules\/(motion|framer-motion|motion-dom|motion-utils)\//.test(moduleId)) return "motion"
-          if (/\/node_modules\/(gsap|ogl)\//.test(moduleId)) return "visual-effects"
           if (/\/node_modules\/(react|react-dom|scheduler|react-router|react-router-dom|@tanstack)\//.test(moduleId)) return "framework"
         },
       },

@@ -1,13 +1,9 @@
 "use client"
 
 // Adapted from Magic UI for Mooncell's dark theme. See magic-card.LICENSE.
+import { spring } from "@/lib/motion"
 import React, { useCallback, useEffect, useRef } from "react"
-import {
-  motion,
-  useMotionTemplate,
-  useMotionValue,
-  useSpring,
-} from "motion/react"
+import { motion, useMotionTemplate, useMotionValue, useSpring } from "motion/react"
 
 import { cn } from "@/lib/utils"
 
@@ -59,15 +55,15 @@ export function MagicCard(props: MagicCardProps) {
     children,
     className,
     gradientSize = 200,
-    gradientColor = "#262626",
+    gradientColor = "var(--surface-raised)",
     gradientOpacity = 0.8,
-    gradientFrom = "#9E7AFF",
-    gradientTo = "#FE8BBB",
+    gradientFrom = "var(--accent)",
+    gradientTo = "var(--success)",
     mode = "gradient",
   } = props
 
-  const glowFrom = isOrbMode(props) ? (props.glowFrom ?? "#ee4f27") : "#ee4f27"
-  const glowTo = isOrbMode(props) ? (props.glowTo ?? "#6b21ef") : "#6b21ef"
+  const glowFrom = isOrbMode(props) ? (props.glowFrom ?? "var(--warning)") : "var(--warning)"
+  const glowTo = isOrbMode(props) ? (props.glowTo ?? "var(--accent)") : "var(--accent)"
   const glowAngle = isOrbMode(props) ? (props.glowAngle ?? 90) : 90
   const glowSize = isOrbMode(props) ? (props.glowSize ?? 420) : 420
   const glowBlur = isOrbMode(props) ? (props.glowBlur ?? 60) : 60
@@ -76,9 +72,9 @@ export function MagicCard(props: MagicCardProps) {
   const mouseX = useMotionValue(-gradientSize)
   const mouseY = useMotionValue(-gradientSize)
 
-  const orbX = useSpring(mouseX, { stiffness: 250, damping: 30, mass: 0.6 })
-  const orbY = useSpring(mouseY, { stiffness: 250, damping: 30, mass: 0.6 })
-  const orbVisible = useSpring(0, { stiffness: 300, damping: 35 })
+  const orbX = useSpring(mouseX, spring.gentle)
+  const orbY = useSpring(mouseY, spring.gentle)
+  const orbVisible = useSpring(0, spring.gentle)
 
   const modeRef = useRef(mode)
   const glowOpacityRef = useRef(glowOpacity)
@@ -110,7 +106,7 @@ export function MagicCard(props: MagicCardProps) {
       mouseX.set(off)
       mouseY.set(off)
     },
-    [mouseX, mouseY, orbVisible]
+    [mouseX, mouseY, orbVisible],
   )
 
   const handlePointerMove = useCallback(
@@ -119,7 +115,7 @@ export function MagicCard(props: MagicCardProps) {
       mouseX.set(e.clientX - rect.left)
       mouseY.set(e.clientY - rect.top)
     },
-    [mouseX, mouseY]
+    [mouseX, mouseY],
   )
 
   useEffect(() => {
@@ -148,10 +144,7 @@ export function MagicCard(props: MagicCardProps) {
 
   return (
     <motion.div
-      className={cn(
-        "group relative isolate overflow-hidden rounded-[inherit] border border-transparent",
-        className
-      )}
+      className={cn("group relative isolate overflow-hidden rounded-[inherit] border border-transparent", className)}
       onPointerMove={handlePointerMove}
       onPointerLeave={() => reset("leave")}
       onPointerEnter={() => reset("enter")}
@@ -166,12 +159,19 @@ export function MagicCard(props: MagicCardProps) {
         `,
       }}
     >
-      <div aria-hidden="true" className="pointer-events-none absolute inset-px z-20 rounded-[inherit]" style={{ background: "var(--magic-card-background, var(--surface))" }} />
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-px z-20 rounded-[inherit]"
+        style={{ background: "var(--magic-card-background, var(--surface))" }}
+      />
 
       {mode === "gradient" && (
         <motion.div
           suppressHydrationWarning
-          className="pointer-events-none absolute inset-px z-30 rounded-[inherit] opacity-0 transition-opacity duration-300 group-hover:opacity-100"
+          className={[
+            "pointer-events-none absolute inset-px z-30 rounded-[inherit] opacity-0 transition-opacity",
+            "duration-300 group-hover:opacity-100",
+          ].join(" ")}
           style={{
             background: useMotionTemplate`
               radial-gradient(${gradientSize}px circle at ${mouseX}px ${mouseY}px,

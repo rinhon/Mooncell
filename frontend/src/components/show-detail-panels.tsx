@@ -1,3 +1,4 @@
+import { spring } from "@/lib/motion"
 import { useLayoutEffect, useRef, useState, type ReactNode } from "react"
 import { motion, useReducedMotion } from "motion/react"
 
@@ -53,7 +54,13 @@ export function ShowDetailPanels({ activeKey, children }: { activeKey: string; c
     }
     const tabs = resolveTabs()
     const observer = new ResizeObserver(scheduleClip)
-    for (const element of [outer, tabs, outer.parentElement, outer.closest(".detail-grid"), tabs?.previousElementSibling]) {
+    for (const element of [
+      outer,
+      tabs,
+      outer.parentElement,
+      outer.closest(".detail-grid"),
+      tabs?.previousElementSibling,
+    ]) {
       if (element) observer.observe(element)
     }
     window.addEventListener("scroll", updateClip, { passive: true })
@@ -69,13 +76,15 @@ export function ShowDetailPanels({ activeKey, children }: { activeKey: string; c
     }
   }, [activeKey])
 
-  return <motion.div
-    ref={container}
-    className="detail-panels"
-    initial={false}
-    animate={{ height: height ?? "auto" }}
-    transition={reducedMotion ? { duration: 0 } : { type: "spring", stiffness: 360, damping: 34 }}
-  >
-    <div ref={content}>{children}</div>
-  </motion.div>
+  return (
+    <motion.div
+      ref={container}
+      className="detail-panels"
+      initial={false}
+      animate={{ height: height ?? "auto" }}
+      transition={reducedMotion ? { duration: 0 } : spring.layout}
+    >
+      <div ref={content}>{children}</div>
+    </motion.div>
+  )
 }

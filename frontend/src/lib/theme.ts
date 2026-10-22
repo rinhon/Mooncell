@@ -21,7 +21,7 @@ export const themes = {
     description: "柔奶白底色，搭配沉静的深海蓝。",
     background: "#F5EFEA",
     surface: "#FFFAF6",
-    ink: "#122E8A",
+    ink: "#1D2433",
     accent: "#122E8A",
     secondary: "#4563AD",
     gradient: ["#F5EFEA", "#E5E8F2", "#F5EFEA"],

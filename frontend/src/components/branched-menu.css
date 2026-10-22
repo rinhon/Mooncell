@@ -24,33 +24,113 @@
 .branched-menu-lines .branched-menu-trace {
   stroke: var(--accent);
   stroke-dasharray: 1;
-  transition: stroke-dashoffset 400ms cubic-bezier(.23, 1, .32, 1);
+  transition: stroke-dashoffset 400ms cubic-bezier(0.23, 1, 0.32, 1);
 }
 
-.branched-menu-list { position: relative; margin: 0; padding: 0 0 0 36px; list-style: none; }
-.branched-menu-item { position: relative; min-width: 0; }
-.branched-menu-row { display: flex; align-items: center; min-height: 40px; color: var(--muted); transition: color 200ms ease; }
-.branched-menu-row:hover, .branched-menu-row[data-open="true"] { color: var(--ink); }
-.branched-menu-row[data-active="true"] { color: var(--accent); }
-.branched-menu-row button { border: 0; background: transparent; color: inherit; }
-.branched-menu-select { display: flex; flex: 1; align-items: center; gap: 8px; min-width: 0; height: 40px; padding: 0 6px; text-align: left; }
-.branched-menu-select > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.branched-menu-row[data-active="true"] .branched-menu-select { font-weight: 600; }
-.branched-menu-toggle { display: grid; flex: none; width: 32px; height: 32px; padding: 0; place-items: center; }
-.branched-menu-toggle svg { transition: transform 300ms cubic-bezier(.23, 1, .32, 1); }
-.branched-menu-row[data-open="true"] .branched-menu-toggle svg { transform: rotate(90deg); }
-.branched-menu-fold { display: grid; grid-template-rows: 0fr; visibility: hidden; transition: grid-template-rows 300ms cubic-bezier(.23, 1, .32, 1), visibility 300ms; }
-.branched-menu-fold[data-open="true"] { grid-template-rows: 1fr; visibility: visible; }
-.branched-menu-fold[data-open="false"] .branched-menu-fold { visibility: hidden; }
-.branched-menu-fold > div { min-height: 0; overflow: hidden; }
-.branched-menu-status { margin: 0; padding: 10px 6px 12px 16px; color: var(--muted); font-size: 12px; }
-.branched-menu-status[role="alert"] { color: var(--danger); }
+.branched-menu-list {
+  position: relative;
+  margin: 0;
+  padding: 0 0 0 36px;
+  list-style: none;
+}
+.branched-menu-item {
+  position: relative;
+  min-width: 0;
+}
+.branched-menu-row {
+  display: flex;
+  align-items: center;
+  min-height: 40px;
+  color: var(--muted);
+  transition: color 200ms ease;
+}
+.branched-menu-row:hover,
+.branched-menu-row[data-open="true"] {
+  color: var(--ink);
+}
+.branched-menu-row[data-active="true"] {
+  color: var(--accent);
+}
+.branched-menu-row button {
+  border: 0;
+  background: transparent;
+  color: inherit;
+}
+.branched-menu-select {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  height: 40px;
+  padding: 0 6px;
+  text-align: left;
+}
+.branched-menu-select > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.branched-menu-row[data-active="true"] .branched-menu-select {
+  font-weight: 600;
+}
+.branched-menu-toggle {
+  display: grid;
+  flex: none;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  place-items: center;
+}
+.branched-menu-toggle svg {
+  transition: transform 300ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+.branched-menu-row[data-open="true"] .branched-menu-toggle svg {
+  transform: rotate(90deg);
+}
+.branched-menu-fold {
+  display: grid;
+  grid-template-rows: 0fr;
+  visibility: hidden;
+  transition:
+    grid-template-rows 300ms cubic-bezier(0.23, 1, 0.32, 1),
+    visibility 300ms;
+}
+.branched-menu-fold[data-open="true"] {
+  grid-template-rows: 1fr;
+  visibility: visible;
+}
+.branched-menu-fold[data-open="false"] .branched-menu-fold {
+  visibility: hidden;
+}
+.branched-menu-fold > div {
+  min-height: 0;
+  overflow: hidden;
+}
+.branched-menu-status {
+  margin: 0;
+  padding: 10px 6px 12px 16px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.branched-menu-status[role="alert"] {
+  color: var(--danger);
+}
 
 @media (max-width: 480px) {
-  .branched-menu-list { padding-left: 24px; }
-  .branched-menu-lines { left: -8px; }
+  .branched-menu-list {
+    padding-left: 24px;
+  }
+  .branched-menu-lines {
+    left: -8px;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .branched-menu-trace, .branched-menu-row, .branched-menu-toggle svg, .branched-menu-fold { transition: none !important; }
+  .branched-menu-trace,
+  .branched-menu-row,
+  .branched-menu-toggle svg,
+  .branched-menu-fold {
+    transition: none !important;
+  }
 }

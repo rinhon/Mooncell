@@ -22,11 +22,11 @@ export interface GradualBlurProps {
 }
 
 const CURVE_FUNCTIONS: Record<GradualBlurCurve, (p: number) => number> = {
-  linear: p => p,
-  bezier: p => p * p * (3 - 2 * p),
-  "ease-in": p => p * p,
-  "ease-out": p => 1 - Math.pow(1 - p, 2),
-  "ease-in-out": p => (p < 0.5 ? 2 * p * p : 1 - Math.pow(-2 * p + 2, 2) / 2),
+  linear: (p) => p,
+  bezier: (p) => p * p * (3 - 2 * p),
+  "ease-in": (p) => p * p,
+  "ease-out": (p) => 1 - Math.pow(1 - p, 2),
+  "ease-in-out": (p) => (p < 0.5 ? 2 * p * p : 1 - Math.pow(-2 * p + 2, 2) / 2),
 }
 
 const DIRECTION_MAP: Record<GradualBlurPosition, string> = {
@@ -116,21 +116,12 @@ export function GradualBlur({
   }
 
   return (
-    <div
-      aria-hidden="true"
-      className={cn("gradual-blur select-none", className)}
-      style={containerStyle}
-    >
+    <div aria-hidden="true" className={cn("gradual-blur select-none", className)} style={containerStyle}>
       <div className="relative size-full">
         {layers.map((layerStyle, index) => (
           <div key={index} style={layerStyle} />
         ))}
-        {tint && (
-          <div
-            className="absolute inset-0"
-            style={{ background: tint }}
-          />
-        )}
+        {tint && <div className="absolute inset-0" style={{ background: tint }} />}
       </div>
     </div>
   )
