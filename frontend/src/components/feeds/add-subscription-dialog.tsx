@@ -27,7 +27,8 @@ function SubscriptionPanel({ value, active, children }: { value: string; active:
         inert={!active}
         aria-hidden={!active || undefined}
         initial={false}
-        animate={{ opacity: active ? 1 : 0, y: active || reducedMotion ? 0 : 5 }}
+        // 从上方滑入：向上的位移不计入滚动区域，不会撑出滚动条。
+        animate={{ opacity: active ? 1 : 0, y: active || reducedMotion ? 0 : -5 }}
         transition={reducedMotion ? { duration: 0 } : spring.snappy}
       >
         {children}

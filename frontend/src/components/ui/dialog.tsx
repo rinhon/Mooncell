@@ -7,6 +7,8 @@ import { cn } from "@/lib/utils"
 
 const DialogOpenContext = React.createContext(false)
 const dialogSpring = spring.snappy
+// 高度弹簧使用临界阻尼（damping ≥ 2√stiffness），避免回弹时短暂低于内容高度而闪出滚动条。
+const heightSpring = { type: "spring", stiffness: 300, damping: 35 } as const
 
 export function Dialog({
   open: controlledOpen,
@@ -38,10 +40,16 @@ export const DialogClose = DialogPrimitive.Close
 const DialogSurface = React.forwardRef<
   HTMLDivElement,
   Omit<HTMLMotionProps<"div">, "children"> & { animateSize: boolean; children?: React.ReactNode }
->(function DialogSurface({ animateSize, children, ...props }, forwardedRef) {
+>(function DialogSurface(
+  { animateSize, children, style, onAnimationStart, onAnimationComplete, ...props },
+  forwardedRef,
+) {
   const surfaceRef = React.useRef<HTMLDivElement>(null)
   const bodyRef = React.useRef<HTMLDivElement>(null)
   const [height, setHeight] = React.useState<number | null>(null)
+  // 仅当内容确实超过 90vh 且高度动画已结束时才允许滚动，避免过渡期间滚动条闪烁导致重排抖动。
+  const [scrollable, setScrollable] = React.useState(false)
+  const [resizing, setResizing] = React.useState(false)
   const reducedMotion = useReducedMotion()
 
   React.useLayoutEffect(() => {
@@ -54,7 +62,10 @@ const DialogSurface = React.forwardRef<
         (sum, value) => sum + parseFloat(value),
         0,
       )
-      setHeight(Math.min(Math.ceil(body.offsetHeight + spacing), window.innerHeight * 0.9))
+      const natural = Math.ceil(body.offsetHeight + spacing)
+      const max = window.innerHeight * 0.9
+      setScrollable(natural > max)
+      setHeight(Math.min(natural, max))
     }
     measure()
     const observer = new ResizeObserver(measure)
@@ -74,6 +85,15 @@ const DialogSurface = React.forwardRef<
         if (typeof forwardedRef === "function") forwardedRef(node)
         else if (forwardedRef) forwardedRef.current = node
       }}
+      style={animateSize ? { ...style, overflowY: scrollable && !resizing ? "auto" : "hidden" } : style}
+      onAnimationStart={(definition) => {
+        if (animateSize) setResizing(true)
+        onAnimationStart?.(definition)
+      }}
+      onAnimationComplete={(definition) => {
+        if (animateSize) setResizing(false)
+        onAnimationComplete?.(definition)
+      }}
       initial={{
         opacity: 0,
         scale: reducedMotion ? 1 : animateSize ? 0.985 : 0.98,
@@ -84,7 +104,7 @@ const DialogSurface = React.forwardRef<
       transition={
         animateSize
           ? {
-              height: reducedMotion ? { duration: 0 } : spring.gentle,
+              height: reducedMotion ? { duration: 0 } : heightSpring,
               scale: reducedMotion ? { duration: 0 } : dialogSpring,
               y: reducedMotion ? { duration: 0 } : dialogSpring,
               opacity: reducedMotion ? { duration: 0 } : spring.snappy,
