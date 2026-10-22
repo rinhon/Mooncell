@@ -33,6 +33,7 @@ from .models import (
     ShowMetadata,
     User,
 )
+from .notifications import notify_task
 from .release_parser import parse_release_title
 from .schemas import FeedRead, TmdbSelection
 from .security import decrypt_secret
@@ -282,6 +283,7 @@ async def create_collection(
                 state="queued",
             )
         )
+        await notify_task(session, item, "download_added", source=source, user_id=user.id)
         operation = await _create_scrape_operation(session, user.id, source, "feed_scrape")
         try:
             await commit_and_publish(session)

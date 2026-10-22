@@ -158,6 +158,8 @@ def local_path(remote_path, config):
 
 async def advance_upgrade(session, client, job, config, torrent, files):
     from .download_queue import path_type, request, set_running
+    from .playback.leases import begin_mutation, finish_mutation
+    from .season_change import MigrationWaiting
 
     plan = json.loads(job.plan)
     upgrade = plan["replacement"]
@@ -173,6 +175,9 @@ async def advance_upgrade(session, client, job, config, torrent, files):
     staging = path_type(job.target_root)(upgrade["staging"])
     original = path_type(old.target_root)(upgrade["old_destination"])
     old_location = path_type(old.target_root)(old_torrent["save_path"]) if old_torrent else None
+    item = await session.get(FeedItem, job.item_id)
+    if phase != "downloading" and item and not begin_mutation(item.source_id):
+        raise MigrationWaiting("正在播放旧版文件，关闭播放器后自动继续替换")
 
     if phase == "downloading":
         if new_location != staging or old_location != original:
@@ -192,6 +197,8 @@ async def advance_upgrade(session, client, job, config, torrent, files):
         if not paused(old_torrent):
             await set_running(client, old.info_hash, False)
             return
+        if item and not begin_mutation(item.source_id):
+            raise MigrationWaiting("正在播放旧版文件，关闭播放器后自动继续替换")
         old.state = "replacing"
         await save(session, job, plan, "backup")
         return
@@ -279,6 +286,8 @@ async def advance_upgrade(session, client, job, config, torrent, files):
         old.state = "done"
         await cleanup_temporary_directories(client, job.target_root, config)
         upgrade["phase"] = "rolled_back"
+        if item:
+            finish_mutation(item.source_id)
         job.plan = json.dumps(plan, ensure_ascii=False)
         job.state = "needs_review"
         raise ValueError(f"修订版替换失败，已恢复旧版：{upgrade['rollback_reason']}")
@@ -311,6 +320,8 @@ async def advance_upgrade(session, client, job, config, torrent, files):
         await cleanup_temporary_directories(client, job.target_root, config)
         job.state = "done"
         upgrade["phase"] = "done"
+        if item:
+            finish_mutation(item.source_id)
         job.plan = json.dumps(plan, ensure_ascii=False)
         session.add(DomainEvent(
             event_type="download.upgraded", resource_type="feed_item",

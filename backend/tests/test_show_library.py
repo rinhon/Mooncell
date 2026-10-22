@@ -1,4 +1,8 @@
+import os
+from datetime import UTC, datetime
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -40,6 +44,32 @@ def test_no_files_are_invented_from_collection_range(tmp_path):
     assert result.total == 1 and len(result.seasons[0].items) == 1
     assert result.seasons[0].items[0].episode_start == 1
     assert result.seasons[0].items[0].episode_end == 12
+
+
+@pytest.mark.parametrize("birthtime", [None, 1_800_000_000])
+def test_episode_added_time_prefers_creation_time_and_falls_back_to_modified(
+    tmp_path, monkeypatch, birthtime,
+):
+    video(tmp_path, "作品 S01E01.mkv")
+    path = tmp_path / "作品 S01E01.mkv"
+    modified = 1_700_000_000
+    os.utime(path, (modified, modified))
+    stat = SimpleNamespace(st_size=5, st_mtime=modified, st_ctime=1_900_000_000)
+    if birthtime is not None:
+        stat.st_birthtime = birthtime
+    entry = MagicMock(name=path.name)
+    entry.name, entry.path = path.name, str(path)
+    entry.is_symlink.return_value = False
+    entry.is_dir.return_value = False
+    entry.is_file.return_value = True
+    entry.stat.return_value = stat
+    entries = MagicMock()
+    entries.__enter__.return_value = [entry]
+    monkeypatch.setattr("app.show_library.os.scandir", lambda _: entries)
+
+    item = scan_show_library(tmp_path, 1).seasons[0].items[0]
+    assert item.modified_at == datetime.fromtimestamp(modified, UTC)
+    assert item.added_at == datetime.fromtimestamp(birthtime or modified, UTC)
 
 
 def test_missing_folder_and_movie_and_unknown_season(tmp_path):

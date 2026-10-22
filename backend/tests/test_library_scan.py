@@ -240,16 +240,34 @@ async def test_manual_scan_status_and_auth(show_client, monkeypatch, tmp_path):
 
     client, sessions, app = show_client
     app.include_router(router)
+    monkeypatch.setattr("app.library_scan.settings.library_scan_interval_seconds", 0)
     monkeypatch.setattr("app.library_scan.SessionFactory", sessions)
     await bind(sessions, tmp_path)
     put(tmp_path, "poster.jpg")
     assert (await client.post("/api/v1/settings/library-scan")).status_code == 202
     status = (await client.get("/api/v1/settings/library-scan")).json()
     assert not status["running"] and status["finished_at"]
-    assert status["changed"] == 1 and status["interval_seconds"] >= 10
+    assert status["changed"] == 1 and status["interval_seconds"] == 0
     app.dependency_overrides.pop(require_user)
     assert (await client.get("/api/v1/settings/library-scan")).status_code == 401
     assert (await client.post("/api/v1/settings/library-scan")).status_code == 401
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("interval", [0, -1])
+async def test_disabled_auto_scan_does_not_start(monkeypatch, interval):
+    from unittest.mock import AsyncMock
+
+    from app.library_scan import library_scan_loop
+
+    scan = AsyncMock()
+    sleep = AsyncMock()
+    monkeypatch.setattr("app.library_scan.settings.library_scan_interval_seconds", interval)
+    monkeypatch.setattr("app.library_scan.scan_media_library", scan)
+    monkeypatch.setattr("app.library_scan.asyncio.sleep", sleep)
+    await library_scan_loop()
+    scan.assert_not_awaited()
+    sleep.assert_not_awaited()
 
 
 @pytest.mark.asyncio

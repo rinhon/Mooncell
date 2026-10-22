@@ -2,11 +2,13 @@
 
 import json
 from datetime import UTC, datetime
+from uuid import NAMESPACE_URL, uuid5
 
 from sqlalchemy import select
+from sqlalchemy.dialects.sqlite import insert
 
 from .events import _redact, commit_and_publish, record_event
-from .models import BackgroundOperation, BackgroundOperationItem, DownloadJob
+from .models import BackgroundOperation, BackgroundOperationItem, DownloadJob, FeedSource, User
 
 ACTIVE = ("queued", "running", "blocked")
 TERMINAL = ("completed", "partial", "failed", "cancelled")
@@ -15,6 +17,8 @@ LABELS = {
     "metadata_refresh": "元数据更新",
     "artwork_scrape": "重新刮削",
     "library_migration": "文件整理",
+    "download_added": "新增下载",
+    "review_required": "任务审核",
 }
 
 
@@ -55,6 +59,46 @@ async def create_operation(session, user_id, source, kind, *, context=None, migr
         )
     changed(session, operation)
     return operation
+
+
+async def notify_task(session, item, kind, *, source=None, reason=None, user_id=None):
+    """全局队列通知唯一管理员；同一条目和类型复用一条持久化提醒。"""
+    if user_id is None:
+        user_id = await session.scalar(select(User.id).order_by(User.id).limit(1))
+    if user_id is None:
+        return
+    source = source or await session.get(FeedSource, item.source_id)
+    if source is None:
+        return
+    # SQLite 可能复用已删除条目的 ID；加入发现时间，保留旧提醒且不漏报新任务。
+    discovered = item.discovered_at.replace(tzinfo=UTC).isoformat()
+    operation_id = str(uuid5(NAMESPACE_URL,
+                            f"mooncell/task/{user_id}/{kind}/{item.id}/{discovered}"))
+    inserted = await session.scalar(insert(BackgroundOperation).values(
+        id=operation_id, user_id=user_id, kind=kind,
+        source_id=source.id, source_name=source.name, context={"item_id": item.id},
+    ).on_conflict_do_nothing(index_elements=["id"]).returning(BackgroundOperation.id))
+    operation = await session.get(BackgroundOperation, operation_id)
+    if kind == "download_added":
+        if inserted:
+            transition(session, operation, "completed", f"新增下载任务：{item.title}")
+    else:
+        transition(session, operation, "blocked", f"任务需要审核：{item.title}", reason)
+    return operation
+
+
+async def resolve_task_review(session, item, *, ignored=False):
+    operations = await session.scalars(select(BackgroundOperation).where(
+        BackgroundOperation.kind == "review_required",
+        BackgroundOperation.source_id == item.source_id,
+        BackgroundOperation.context["item_id"].as_integer() == item.id,
+        BackgroundOperation.status == "blocked",
+    ))
+    for operation in operations:
+        operation.read_revision = operation.attention_revision
+        operation.attention_key = None
+        transition(session, operation, "cancelled" if ignored else "completed",
+                   f"已{'忽略' if ignored else '批准'}：{item.title}", attention=False)
 
 
 def transition(session, operation, status, summary, error=None, *, attention=True, key=None):
@@ -205,6 +249,8 @@ async def recover_operations(session):
         )
     )
     for operation in operations:
+        if operation.kind in {"download_added", "review_required"}:
+            continue
         if operation.kind != "library_migration":
             transition(
                 session,

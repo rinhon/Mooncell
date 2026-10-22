@@ -25,6 +25,7 @@ from .download_queue import (
 from .events import _redact
 from .library import get_library_root
 from .models import DownloaderConfig, DownloadJob, FeedItem, FeedSource
+from .notifications import resolve_task_review
 from .release_parser import parse_release_title
 from .schemas import ApiMessage, ParsedRelease
 from .security import decrypt_secret
@@ -172,6 +173,7 @@ async def ignore(item_id: int, session: AsyncSession = Depends(get_session)):
             await job_files(session, job, stop=True, require_files=False)
             job.state = "ignored"
         item.parse_status = "ignored"
+        await resolve_task_review(session, item, ignored=True)
         await _record_and_publish_event(session, "review.ignored", "feed_item", str(item_id),
                                         {"title": item.title})
     return ApiMessage(message="已忽略条目；不会再次自动下载，已有文件保留")
@@ -235,6 +237,7 @@ async def approve(item_id: int, data: ReviewApproval,
             raise HTTPException(422, "尚未获取种子文件，不能提交逐文件修正")
         item.parse_data = parsed.model_dump_json()
         item.parse_status = "parsed"
+        await resolve_task_review(session, item)
         if not job:
             # 季与番名是此条目的确认值，不修改整个订阅。
             await session.flush()

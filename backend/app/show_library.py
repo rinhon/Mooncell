@@ -60,6 +60,11 @@ def scan_show_library(
                                 episode_end=None if movie else parsed.episode_end,
                                 size=stat.st_size,
                                 modified_at=datetime.fromtimestamp(stat.st_mtime, UTC),
+                                # Windows/macOS 提供创建时间；其他文件系统回退修改时间，
+                                # 不使用 Unix 上会随权限等元数据变更的 st_ctime。
+                                added_at=datetime.fromtimestamp(
+                                    getattr(stat, "st_birthtime", stat.st_mtime), UTC,
+                                ),
                             ))
                     except (OSError, ValueError):
                         partial = True

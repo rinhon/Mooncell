@@ -1,0 +1,405 @@
+{
+  "environment": {
+    "system": "Windows",
+    "gpu": "NVIDIA GeForce RTX 4070 SUPER",
+    "driver": "610.88",
+    "gpu_total_memory_mib": 12282,
+    "ffmpeg": "7.1-essentials_build-www.gyan.dev"
+  },
+  "sustained_encoding": {
+    "requested_seconds": 1800,
+    "interval_seconds": 15.0,
+    "started_utc": "2026-10-20T05:29:18.694367+00:00",
+    "started_shanghai": "2026-10-20T13:29:18.694367+08:00",
+    "command": [
+      "C:\\MySoftware\\ffmpeg-7.1-essentials_build\\bin\\ffmpeg.EXE",
+      "-hide_banner",
+      "-loglevel",
+      "warning",
+      "-nostats",
+      "-progress",
+      "pipe:1",
+      "-stats_period",
+      "1",
+      "-threads",
+      "2",
+      "-re",
+      "-f",
+      "lavfi",
+      "-i",
+      "testsrc2=size=1280x720:rate=24",
+      "-f",
+      "lavfi",
+      "-i",
+      "sine=frequency=440:sample_rate=48000",
+      "-t",
+      "1800",
+      "-map",
+      "0:v:0",
+      "-map",
+      "1:a:0",
+      "-c:v",
+      "h264_nvenc",
+      "-preset",
+      "p3",
+      "-rc",
+      "vbr",
+      "-cq",
+      "23",
+      "-b:v",
+      "4500k",
+      "-maxrate",
+      "6000k",
+      "-bufsize",
+      "12000k",
+      "-pix_fmt",
+      "yuv420p",
+      "-g",
+      "72",
+      "-c:a",
+      "aac",
+      "-ac",
+      "2",
+      "-ar",
+      "48000",
+      "-b:a",
+      "128k",
+      "-f",
+      "null",
+      "-"
+    ],
+    "state": "passed",
+    "passed": true,
+    "parallel_gpu_workload": "与同机浏览器普通播放及 Anime4K 持续验收并行；GPU 未隔离",
+    "pid": 56736,
+    "windows_job_protected": true,
+    "wall_elapsed_seconds": 1814.109,
+    "source_seconds": 1799.958333,
+    "exitcode": 0,
+    "finished_utc": "2026-10-20T05:59:32.801420+00:00",
+    "stderr_tail": [],
+    "error": null,
+    "rss_min_bytes": 2445312,
+    "rss_max_bytes": 202133504,
+    "rss_final_bytes": 202133504,
+    "warm_rss_min_bytes": 201613312,
+    "warm_rss_max_bytes": 202133504,
+    "warm_first_five_mean_bytes": 201699328,
+    "warm_last_five_mean_bytes": 202131046.4,
+    "raw_evidence": ".cache/playback-hardware-stability/run-20261020-1"
+  },
+  "hls_before_fix": {
+    "passed": false,
+    "encoder": "h264_nvenc",
+    "source_duration": 12,
+    "segments": [
+      {
+        "sequence": 0,
+        "source_start": 0,
+        "duration": 10.416667,
+        "bytes": 6200428,
+        "decoded_frames": 250,
+        "expected_frames": 250,
+        "decode_exitcode": 0,
+        "stderr_tail": []
+      },
+      {
+        "sequence": 1,
+        "source_start": 10.416667,
+        "duration": 1.583333,
+        "bytes": 937932,
+        "decoded_frames": 38,
+        "expected_frames": 38,
+        "decode_exitcode": 0,
+        "stderr_tail": []
+      }
+    ],
+    "started_utc": "2026-10-20T06:01:29.698097+00:00",
+    "playlist": "#EXTM3U\n#EXT-X-VERSION:6\n#EXT-X-TARGETDURATION:11\n#EXT-X-MEDIA-SEQUENCE:0\n#EXT-X-INDEPENDENT-SEGMENTS\n#EXTINF:10.416667,\nsegments/segment-0000000.ts\n#EXTINF:1.583333,\nsegments/segment-0000001.ts\n#EXT-X-ENDLIST\n",
+    "error": "AssertionError: ",
+    "encoder_stderr_tail": [],
+    "finished_utc": "2026-10-20T06:01:33.037161+00:00"
+  },
+  "hls_after_fix": {
+    "passed": true,
+    "encoder": "h264_nvenc",
+    "source_duration": 12,
+    "segments": [
+      {
+        "sequence": 0,
+        "source_start": 0,
+        "duration": 3.0,
+        "bytes": 1783556,
+        "decoded_frames": 72,
+        "expected_frames": 72,
+        "decode_exitcode": 0,
+        "stderr_tail": []
+      },
+      {
+        "sequence": 1,
+        "source_start": 3.0,
+        "duration": 3.0,
+        "bytes": 1793708,
+        "decoded_frames": 72,
+        "expected_frames": 72,
+        "decode_exitcode": 0,
+        "stderr_tail": []
+      },
+      {
+        "sequence": 2,
+        "source_start": 6.0,
+        "duration": 3.0,
+        "bytes": 1773968,
+        "decoded_frames": 72,
+        "expected_frames": 72,
+        "decode_exitcode": 0,
+        "stderr_tail": []
+      },
+      {
+        "sequence": 3,
+        "source_start": 9.0,
+        "duration": 3.0,
+        "bytes": 1770960,
+        "decoded_frames": 72,
+        "expected_frames": 72,
+        "decode_exitcode": 0,
+        "stderr_tail": []
+      }
+    ],
+    "started_utc": "2026-10-20T06:03:01.194739+00:00",
+    "playlist": "#EXTM3U\n#EXT-X-VERSION:6\n#EXT-X-TARGETDURATION:3\n#EXT-X-MEDIA-SEQUENCE:0\n#EXT-X-INDEPENDENT-SEGMENTS\n#EXTINF:3.000000,\nsegments/segment-0000000.ts\n#EXTINF:3.000000,\nsegments/segment-0000001.ts\n#EXTINF:3.000000,\nsegments/segment-0000002.ts\n#EXTINF:3.000000,\nsegments/segment-0000003.ts\n#EXT-X-ENDLIST\n",
+    "encoded_exitcode": 0,
+    "encoder_stderr_tail": [],
+    "finished_utc": "2026-10-20T06:03:04.655792+00:00",
+    "total_decoded_frames": 288,
+    "total_frames_source": "Derived from the four recorded independent decoders."
+  },
+  "fix": {
+    "file": "backend/app/playback/transcode.py",
+    "nvenc_only_arguments": [
+      "-forced-idr",
+      "1"
+    ],
+    "unit_result": "1 passed, 16 deselected",
+    "strict_ruff": "passed",
+    "full_session_suite_result": "17 passed in 23.28s",
+    "full_session_suite_runner": "root"
+  },
+  "gpu_browser_tail": {
+    "state": "completed",
+    "started_utc": "2026-10-20T06:01:59.118635+00:00",
+    "finished_utc": "2026-10-20T06:13:00.042591+00:00",
+    "samples": 23,
+    "interval_seconds": 30,
+    "process_exitcode": 0,
+    "gpu_percent_range": [
+      6,
+      12
+    ],
+    "encoder_percent_range": [
+      2,
+      6
+    ],
+    "decoder_percent_range": [
+      0,
+      2
+    ],
+    "memory_used_mib_range": [
+      2172,
+      2228
+    ],
+    "first_memory_used_mib": 2188,
+    "last_memory_used_mib": 2192,
+    "first_five_memory_mean_mib": 2197,
+    "last_five_memory_mean_mib": 2189.2,
+    "raw_evidence": ".cache/playback-hardware-stability/run-20261020-1/gpu-browser-tail.jsonl",
+    "gap_reason": "Paused for isolated 12-second NVENC HLS fix verification between 06:02:29 and 06:03:15 UTC.",
+    "isolation": "Whole-machine GPU data includes browser/desktop and cannot attribute every allocation to one process.",
+    "samples_raw": [
+      {
+        "utc": "2026-10-20T06:01:59.118635+00:00",
+        "gpu": {
+          "returncode": 0,
+          "csv": "NVIDIA GeForce RTX 4070 SUPER, 8, 5, 0, 2188"
+        },
+        "test_encoder_running": false
+      },
+      {
+        "utc": "2026-10-20T06:02:29.217052+00:00",
+        "gpu": {
+          "returncode": 0,
+          "csv": "NVIDIA GeForce RTX 4070 SUPER, 6, 3, 0, 2228"
+        },
+        "test_encoder_running": false
+      },
+      {
+        "utc": "2026-10-20T06:03:15.685678+00:00",
+        "gpu": {
+          "returncode": 0,
+          "csv": "NVIDIA GeForce RTX 4070 SUPER, 8, 5, 2, 2176"
+        },
+        "test_encoder_running": false
+      },
+      {
+        "utc": "2026-10-20T06:03:45.768852+00:00",
+        "gpu": {
+          "returncode": 0,
+          "csv": "NVIDIA GeForce RTX 4070 SUPER, 8, 3, 2, 2200"
+        },
+        "test_encoder_running": false
+      },
+      {
+        "utc": "2026-10-20T06:04:15.854820+00:00",
+        "gpu": {
+          "returncode": 0,
+          "csv": "NVIDIA GeForce RTX 4070 SUPER, 8, 3, 2, 2193"
+        },
+        "test_encoder_running": false
+      },
+      {
+        "utc": "2026-10-20T06:04:45.925340+00:00",
+        "gpu": {
+          "returncode": 0,
+          "csv": "NVIDIA GeForce RTX 4070 SUPER, 7, 3, 2, 2172"
+        },
+        "test_encoder_running": false
+      },
+      {
+        "utc": "2026-10-20T06:05:15.980811+00:00",
+        "gpu": {
+          "returncode": 0,
+          "csv": "NVIDIA GeForce RTX 4070 SUPER, 7, 4, 2, 2185"
+        },
+        "test_encoder_running": false
+      },
+      {
+        "utc": "2026-10-20T06:05:46.057509+00:00",
+        "gpu": {
+          "returncode": 0,
+          "csv": "NVIDIA GeForce RTX 4070 SUPER, 12, 6, 2, 2191"
+        },
+        "test_encoder_running": false
+      },
+      {
+        "utc": "2026-10-20T06:06:16.126826+00:00",
+        "gpu": {
+          "returncode": 0,
+          "csv": "NVIDIA GeForce RTX 4070 SUPER, 8, 4, 2, 2190"
+        },
+        "test_encoder_running": false
+      },
+      {
+        "utc": "2026-10-20T06:06:46.185678+00:00",
+        "gpu": {
+          "returncode": 0,
+          "csv": "NVIDIA GeForce RTX 4070 SUPER, 7, 3, 2, 2179"
+        },
+        "test_encoder_running": false
+      },
+      {
+        "utc": "2026-10-20T06:07:16.248465+00:00",
+        "gpu": {
+          "returncode": 0,
+          "csv": "NVIDIA GeForce RTX 4070 SUPER, 7, 3, 2, 2200"
+        },
+        "test_encoder_running": false
+      },
+      {
+        "utc": "2026-10-20T06:07:46.322179+00:00",
+        "gpu": {
+          "returncode": 0,
+          "csv": "NVIDIA GeForce RTX 4070 SUPER, 7, 5, 0, 2182"
+        },
+        "test_encoder_running": false
+      },
+      {
+        "utc": "2026-10-20T06:08:16.379606+00:00",
+        "gpu": {
+          "returncode": 0,
+          "csv": "NVIDIA GeForce RTX 4070 SUPER, 9, 4, 0, 2204"
+        },
+        "test_encoder_running": false
+      },
+      {
+        "utc": "2026-10-20T06:08:46.438345+00:00",
+        "gpu": {
+          "returncode": 0,
+          "csv": "NVIDIA GeForce RTX 4070 SUPER, 8, 3, 2, 2193"
+        },
+        "test_encoder_running": false
+      },
+      {
+        "utc": "2026-10-20T06:09:16.495805+00:00",
+        "gpu": {
+          "returncode": 0,
+          "csv": "NVIDIA GeForce RTX 4070 SUPER, 7, 3, 2, 2192"
+        },
+        "test_encoder_running": false
+      },
+      {
+        "utc": "2026-10-20T06:09:46.558549+00:00",
+        "gpu": {
+          "returncode": 0,
+          "csv": "NVIDIA GeForce RTX 4070 SUPER, 7, 2, 2, 2183"
+        },
+        "test_encoder_running": false
+      },
+      {
+        "utc": "2026-10-20T06:10:16.624473+00:00",
+        "gpu": {
+          "returncode": 0,
+          "csv": "NVIDIA GeForce RTX 4070 SUPER, 6, 3, 2, 2193"
+        },
+        "test_encoder_running": false
+      },
+      {
+        "utc": "2026-10-20T06:10:46.686764+00:00",
+        "gpu": {
+          "returncode": 0,
+          "csv": "NVIDIA GeForce RTX 4070 SUPER, 8, 3, 2, 2187"
+        },
+        "test_encoder_running": false
+      },
+      {
+        "utc": "2026-10-20T06:11:16.757772+00:00",
+        "gpu": {
+          "returncode": 0,
+          "csv": "NVIDIA GeForce RTX 4070 SUPER, 11, 5, 2, 2191"
+        },
+        "test_encoder_running": false
+      },
+      {
+        "utc": "2026-10-20T06:11:46.836509+00:00",
+        "gpu": {
+          "returncode": 0,
+          "csv": "NVIDIA GeForce RTX 4070 SUPER, 10, 6, 2, 2188"
+        },
+        "test_encoder_running": false
+      },
+      {
+        "utc": "2026-10-20T06:12:16.901006+00:00",
+        "gpu": {
+          "returncode": 0,
+          "csv": "NVIDIA GeForce RTX 4070 SUPER, 9, 5, 0, 2188"
+        },
+        "test_encoder_running": false
+      },
+      {
+        "utc": "2026-10-20T06:12:46.976345+00:00",
+        "gpu": {
+          "returncode": 0,
+          "csv": "NVIDIA GeForce RTX 4070 SUPER, 7, 3, 0, 2187"
+        },
+        "test_encoder_running": false
+      },
+      {
+        "utc": "2026-10-20T06:13:00.042591+00:00",
+        "gpu": {
+          "returncode": 0,
+          "csv": "NVIDIA GeForce RTX 4070 SUPER, 7, 4, 0, 2192"
+        },
+        "test_encoder_running": false
+      }
+    ]
+  }
+}

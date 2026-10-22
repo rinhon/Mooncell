@@ -1,8 +1,10 @@
 name: mooncell
 
 services:
-  backend:
-    build: ./backend
+  mooncell:
+    image: mooncell:local
+    build: .
+    init: true
     restart: unless-stopped
     environment:
       MOONCELL_ENVIRONMENT: production
@@ -10,19 +12,16 @@ services:
       MOONCELL_SECRET_KEY: ${MOONCELL_SECRET_KEY:?请在 .env 中设置 MOONCELL_SECRET_KEY}
       MOONCELL_ALLOWED_ORIGINS: http://localhost:3000
       MOONCELL_MEDIA_LIBRARY_ROOT: /library
+      MOONCELL_PLAYBACK_CACHE_PATH: /app/data/playback
+      MOONCELL_PLAYBACK_ENCODER: ${MOONCELL_PLAYBACK_ENCODER:-libx264}
+      MOONCELL_PLAYBACK_MAX_SESSIONS: ${MOONCELL_PLAYBACK_MAX_SESSIONS:-1}
+      MOONCELL_PLAYBACK_SESSION_QUOTA_MB: ${MOONCELL_PLAYBACK_SESSION_QUOTA_MB:-512}
+      MOONCELL_PLAYBACK_GLOBAL_QUOTA_MB: ${MOONCELL_PLAYBACK_GLOBAL_QUOTA_MB:-4096}
+      MOONCELL_PLAYBACK_MIN_FREE_MB: ${MOONCELL_PLAYBACK_MIN_FREE_MB:-512}
       TZ: ${TZ:-Asia/Shanghai}
     volumes:
       - ./data:/app/data
       - ${MOONCELL_DOWNLOADS_PATH:-./data/downloads}:/downloads
       - ${MOONCELL_LIBRARY_PATH:-./data/library}:/library
     ports:
-      - "127.0.0.1:8000:8000"
-
-  frontend:
-    build: ./frontend
-    restart: unless-stopped
-    depends_on:
-      backend:
-        condition: service_healthy
-    ports:
-      - "3000:80"
+      - "3000:8000"

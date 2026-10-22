@@ -10,8 +10,8 @@
 .calendar-day h3 { margin: 0; font-size: 1rem; font-weight: 500; }
 .calendar-day header span { font-size: var(--fs-caption); color: var(--muted); }
 .calendar-items { display: grid; gap: 20px; padding-top: 16px; }
-.calendar-item { min-width: 0; overflow: hidden; border: 1px solid var(--border-soft); border-radius: 2px; background: var(--paper); }
-.calendar-cover { position: relative; display: grid; place-items: center; aspect-ratio: 3 / 4; background: rgba(237,240,238,.04); color: var(--muted); overflow: hidden; }
+.calendar-item { min-width: 0; overflow: hidden; border: 1px solid var(--island-border); border-radius: var(--radius-panel); background: var(--island-background); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); box-shadow: var(--island-shadow); }
+.calendar-cover { position: relative; display: grid; place-items: center; aspect-ratio: 3 / 4; background: var(--hover-background); color: var(--muted); overflow: hidden; }
 .calendar-cover-skeleton { position: absolute; inset: 0; pointer-events: none; }
 .calendar-cover img { width: 100%; height: 100%; object-fit: cover; }
 .calendar-item-copy { padding: 10px; }
@@ -21,7 +21,7 @@
 .calendar-title-link:hover { color: var(--ink); text-decoration: underline; text-underline-offset: 3px; }
 .calendar-search-link:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .calendar-title-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.calendar-favorite { position: absolute; top: 8px; right: 8px; display: grid; place-items: center; width: 34px; height: 34px; border: 1px solid rgba(237,240,238,.14); border-radius: 50%; background: var(--surface); color: var(--muted); cursor: pointer; transition: color 180ms ease, background-color 180ms ease; }
+.calendar-favorite { position: absolute; top: 8px; right: 8px; z-index: 3; display: grid; place-items: center; width: 34px; height: 34px; border: 1px solid var(--island-border); border-radius: 50%; background: var(--island-background); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); color: var(--muted); box-shadow: var(--island-shadow); cursor: pointer; transition: color 180ms ease, background-color 180ms ease, transform 180ms ease; }
 .calendar-favorite[aria-pressed="true"] { color: var(--accent); background: var(--accent-soft); }
 .calendar-favorite:hover { color: var(--ink); }
 .calendar-favorite:disabled { opacity: .6; cursor: wait; }
@@ -45,18 +45,18 @@
 .calendar-skeleton-meta { width: 210px; max-width: 100%; height: calc(var(--fs-small) * 1.5); }
 .calendar-skeleton-tabs .calendar-week-tab { cursor: default; }
 .calendar-skeleton-tabs .calendar-week-tab:hover { background: transparent; }
-.calendar-skeleton-count { width: 14px; height: 12px; border-radius: 2px; }
+.calendar-skeleton-count { width: 14px; height: 12px; border-radius: var(--radius-inset); }
 .calendar-skeleton-favorite { position: absolute; top: 8px; right: 8px; width: 34px; height: 34px; border: 1px solid var(--border-soft); border-radius: 50%; background: var(--paper); }
 .calendar-skeleton-time { width: 48px; height: 17px; }
 .calendar-skeleton-title { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; height: 44.8px; padding-top: 3px; }
-.calendar-skeleton-title > .skeleton { width: 92%; height: 14px; border-radius: 2px; }
+.calendar-skeleton-title > .skeleton { width: 92%; height: 14px; border-radius: var(--radius-inset); }
 .calendar-day-grid { grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); align-items: start; padding-top: 0; }
 .calendar-day-grid > .calendar-empty { grid-column: 1 / -1; padding: 36px 0; text-align: center; }
 @media (max-width: 480px) { .calendar-day-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; } }
 @media (max-width: 1200px) { .season-calendar { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 28px 16px; } }
 @media (max-width: 720px) { .season-calendar { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px 12px; } .calendar-toolbar { align-items: flex-start; flex-wrap: wrap; } }
 
-.calendar-week-hover { position: absolute; left: 0; top: 0; bottom: 0; z-index: 0; pointer-events: none; background: rgba(237,240,238,.06); opacity: 0; transition: opacity 160ms ease; }
+.calendar-week-hover { position: absolute; left: 0; top: 0; bottom: 0; z-index: 0; pointer-events: none; background: var(--hover-background); opacity: 0; transition: opacity 160ms ease; }
 @media (hover: hover) and (pointer: fine) {
   .calendar-week-hover[data-visible="true"] { opacity: 1; }
 }

@@ -7,14 +7,18 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
-    "lint": "tsc -b --pretty false"
+    "lint": "tsc -b --pretty false",
+    "test:player": "node --test tests/*.test.cjs"
   },
   "dependencies": {
     "@base-ui/react": "^1.7.0",
     "@tanstack/react-query": "^5.90.2",
+    "anime4k-webgpu": "1.0.0",
+    "canvas-confetti": "^1.9.4",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "gsap": "^3.15.0",
+    "hls.js": "1.7.3",
     "lucide-react": "^0.468.0",
     "motion": "^14.2.0",
     "ogl": "^1.0.11",
@@ -26,10 +30,12 @@
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.1.14",
+    "@types/canvas-confetti": "^1.9.0",
     "@types/node": "^22.10.2",
     "@types/react": "^19.1.16",
     "@types/react-dom": "^19.1.9",
     "@vitejs/plugin-react": "^4.3.4",
+    "@webgpu/types": "0.1.74",
     "tailwindcss": "^4.1.14",
     "typescript": "~5.7.2",
     "vite": "^6.0.5"

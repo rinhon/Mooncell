@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { useMutation, useQueryClient } from "@tanstack/react-query"
 import { Upload } from "lucide-react"
 import { api, type Show } from "@/lib/api"
@@ -7,6 +7,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { useToast } from "@/components/ui/toast"
 
 import { artworkUrl } from "@/lib/show-artwork"
+import "./artwork-upload.css"
 
 type Kind = "poster" | "fanart" | "clearlogo"
 const labels: Record<Kind, string> = { poster: "海报 poster", fanart: "背景 fanart", clearlogo: "透明标志 clearlogo" }
@@ -14,6 +15,7 @@ const labels: Record<Kind, string> = { poster: "海报 poster", fanart: "背景 
 function UploadField({ show, kind }: { show: Show; kind: Kind }) {
   const [file, setFile] = useState<File | null>(null)
   const [preview, setPreview] = useState<string | null>(null)
+  const fileInput = useRef<HTMLInputElement>(null)
   const client = useQueryClient()
   const toast = useToast()
   useEffect(() => {
@@ -38,8 +40,14 @@ function UploadField({ show, kind }: { show: Show; kind: Kind }) {
   const existing = show[`${kind}_ready`] ? artworkUrl(show, kind) : null
   return <section className="grid gap-3 border border-[var(--border)] bg-[var(--paper)] p-4">
     <h3 className="text-sm font-medium">{labels[kind]}</h3>
-    <div className="grid h-32 place-items-center overflow-hidden bg-white/[.04]">{preview || existing ? <img src={preview ?? existing!} alt={`${labels[kind]}预览`} className="max-h-32 max-w-full object-contain"/> : <span className="text-xs text-[var(--muted)]">暂无图片</span>}</div>
-    <input type="file" aria-label={`选择${labels[kind]}`} accept="image/jpeg,image/png,image/webp" disabled={upload.isPending} className="w-full min-w-0 text-xs" onChange={event => {
+    <button type="button" className="artwork-upload-preview" disabled={upload.isPending} aria-label={`选择${labels[kind]}图片`} onClick={() => fileInput.current?.click()}>
+      {preview || existing ? <>
+        <img src={preview ?? existing!} alt={`${labels[kind]}预览`}/>
+        <span className="artwork-upload-overlay" aria-hidden="true"><Upload size={22}/><span>点击选择图片</span></span>
+      </> : <span className="artwork-upload-placeholder" aria-hidden="true"><Upload size={24}/><span>点击选择图片</span></span>}
+    </button>
+    {file && <p className="text-xs text-[var(--muted)] break-all" role="status">已选择：{file.name}</p>}
+    <input ref={fileInput} type="file" aria-label={`选择${labels[kind]}`} accept="image/jpeg,image/png,image/webp" disabled={upload.isPending} className="artwork-upload-input w-full min-w-0 text-xs" onChange={event => {
       const image = event.target.files?.[0]
       // 清空原生选择值，允许再次选择同一个文件进行覆盖上传。
       event.target.value = ""

@@ -19,7 +19,14 @@ from .dependencies import require_user
 from .download_queue import VIDEO_EXTENSIONS
 from .events import commit_and_publish, record_event
 from .library import get_library_root
-from .models import BackgroundOperation, EpisodeThumbnail, FeedSource, ShowArtwork
+from .models import (
+    BackgroundOperation,
+    DownloadJob,
+    EpisodeThumbnail,
+    FeedItem,
+    FeedSource,
+    ShowArtwork,
+)
 
 router = APIRouter(prefix="/api/v1/settings/library-scan", dependencies=[Depends(require_user)])
 logger = logging.getLogger(__name__)
@@ -155,10 +162,26 @@ def binding(source: FeedSource, root: str) -> tuple:
 
 
 async def source_busy(session, source_id: int) -> bool:
-    return bool(await session.scalar(select(BackgroundOperation.id).where(
+    if await session.scalar(select(BackgroundOperation.id).where(
         BackgroundOperation.source_id == source_id,
         BackgroundOperation.status.in_({"queued", "running"}),
+    ).limit(1)):
+        return True
+    return bool(await session.scalar(select(DownloadJob.id).join(FeedItem).where(
+        FeedItem.source_id == source_id, DownloadJob.plan.contains('"episode_rename"'),
     ).limit(1)))
+
+
+def valid_thumbnail_binding(directory: Path, item: EpisodeThumbnail) -> bool:
+    # 手动改名后视频和缩略图可以不同名；仍有效的显式关联应当保留。
+    from .playback.media import MediaError, safe_file
+
+    try:
+        safe_file(directory, directory, item.video_path)
+        local_image(directory, item.image_path)
+        return True
+    except (MediaError, OSError, ValueError):
+        return False
 
 
 async def scan_source(source_id: int) -> tuple[bool, int]:
@@ -216,6 +239,8 @@ async def scan_source(source_id: int) -> tuple[bool, int]:
                 changed = True
         if not images.partial:
             for item in saved.values():
+                if await asyncio.to_thread(valid_thumbnail_binding, Path(before[1]), item):
+                    continue
                 await session.delete(item)
                 changed = True
         if changed:
@@ -253,6 +278,8 @@ async def scan_media_library() -> None:
 
 
 async def library_scan_loop() -> None:
+    if settings.library_scan_interval_seconds <= 0:
+        return
     await asyncio.sleep(5)
     while True:
         try:
@@ -264,7 +291,8 @@ async def library_scan_loop() -> None:
 
 @router.get("")
 async def get_scan_status():
-    return {**scan_state, "interval_seconds": max(10, settings.library_scan_interval_seconds)}
+    interval = settings.library_scan_interval_seconds
+    return {**scan_state, "interval_seconds": max(10, interval) if interval > 0 else 0}
 
 
 @router.post("", status_code=202)

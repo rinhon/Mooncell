@@ -179,6 +179,40 @@ class EpisodeThumbnail(Base):
     file_version: Mapped[str] = mapped_column(String(64))
 
 
+class MediaFile(Base):
+    """文件版本不可变的媒体身份；替换或改名后使用新的媒体 ID。"""
+
+    __tablename__ = "media_files"
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    source_id: Mapped[int] = mapped_column(
+        ForeignKey("feed_sources.id", ondelete="CASCADE"), index=True,
+    )
+    relative_path: Mapped[str] = mapped_column(Text)
+    file_version: Mapped[str] = mapped_column(String(64))
+    size: Mapped[int] = mapped_column(Integer)
+    mtime_ns: Mapped[str] = mapped_column(String(32))
+    probe_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class PlaybackProgress(Base):
+    __tablename__ = "playback_progress"
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), primary_key=True,
+    )
+    media_id: Mapped[str] = mapped_column(
+        ForeignKey("media_files.id", ondelete="CASCADE"), primary_key=True,
+    )
+    position: Mapped[float] = mapped_column(Float, default=0)
+    duration: Mapped[float] = mapped_column(Float, default=0)
+    completed: Mapped[bool] = mapped_column(Boolean, default=False)
+    session_id: Mapped[str] = mapped_column(String(64))
+    session_created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    generation: Mapped[int] = mapped_column(Integer)
+    sequence: Mapped[int] = mapped_column(Integer)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 class FeedItem(Base):
     """RSS 中发现的一条发布；原始信息和解析结果同时保留以便审计。"""
 

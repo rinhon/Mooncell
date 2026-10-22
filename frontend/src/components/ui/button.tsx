@@ -6,7 +6,7 @@ import { motion, useReducedMotion } from "motion/react"
 import { cn } from "@/lib/utils"
 
 const buttonVariants = cva(
-  "ui-button relative isolate inline-flex shrink-0 items-center justify-center gap-2 overflow-hidden whitespace-nowrap rounded-[2px] border text-sm font-medium disabled:pointer-events-none disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent)]",
+  "ui-button relative isolate inline-flex shrink-0 items-center justify-center gap-2 overflow-hidden whitespace-nowrap rounded-[var(--radius-control)] border text-sm font-medium disabled:pointer-events-none disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent)]",
   { variants: {
       variant: {
         default: "border-[var(--accent)] bg-[var(--accent)] text-[var(--on-accent)]",
@@ -45,7 +45,7 @@ export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(function 
   const inactive = Boolean(disabled || pending)
   const label = pending && pendingLabel ? pendingLabel : asChild && React.isValidElement<{ children?: React.ReactNode }>(children) ? children.props.children : children
   const inner = <>
-    <motion.span className="ui-button-fill" aria-hidden="true" initial={false} animate={{ scaleX: !inactive && (hovered || focused) ? 1 : 0 }} transition={reducedMotion ? { duration: 0 } : buttonSpring}/>
+    {variant === "default" && <motion.span className="ui-button-fill" aria-hidden="true" initial={false} animate={{ scaleX: !inactive && (hovered || focused) ? 1 : 0 }} transition={reducedMotion ? { duration: 0 } : buttonSpring}/>}
     {(Icon || pending) && <motion.span className="ui-button-icon" aria-hidden="true" initial={false} animate={{ rotate: !reducedMotion && !inactive && hovered ? iconMotion === "refresh" ? 180 : iconMotion === "rotate" ? 90 : 0 : 0 }} transition={buttonSpring}>{pending ? <LoaderCircle size={16} className="motion-safe:animate-spin"/> : Icon && <Icon size={16}/>}</motion.span>}
     <span className="button-label">{label}</span>
   </>

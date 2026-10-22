@@ -83,7 +83,7 @@ const SwipeToast: React.FC<SwipeToastProps> = ({
   color = '#f5f5f5',
   fuseColor = '#29f524',
   width = 356,
-  radius = 2,
+  radius,
   slideMs = 400,
   settleBounce = 0.2,
   swipeDistance = 40,
@@ -290,7 +290,7 @@ const SwipeToast: React.FC<SwipeToastProps> = ({
           '--st-ink': color,
           '--st-fuse': fuseColor,
           '--st-w': `${width}px`,
-          '--st-radius': `${radius}px`,
+          '--st-radius': radius === undefined ? 'var(--radius-card)' : `${radius}px`,
           '--st-slide': `${slideMs}ms`,
           '--st-gap': '10px'
         } as CSSProperties

@@ -389,3 +389,50 @@ async def test_unrelated_spec_conflict_does_not_replace_old(
         assert "冲突" in new.last_error
     assert old_path.read_text(encoding="utf-8") == "old"
     assert not fake.deleted_paths
+
+
+@pytest.mark.parametrize("fail_promotion", [False, True])
+async def test_playing_old_version_defers_replacement_until_release(
+    revision_database, monkeypatch, tmp_path, fail_promotion,
+):
+    from app.playback.leases import (
+        acquire_source,
+        ensure_source_available,
+        finish_mutation,
+        release_source,
+    )
+    from app.playback.media import MediaError
+
+    finish_mutation(1)
+    fake = FakeQB(tmp_path, False, fail_promotion)
+    old_path = await existing_old_version(revision_database, fake)
+    original = httpx.AsyncClient
+    monkeypatch.setattr(download_queue.httpx, "AsyncClient", lambda **kwargs: original(
+        base_url="http://qb.test", transport=httpx.MockTransport(fake.handle),
+    ))
+    for _ in range(12):
+        await download_queue.process_queue()
+    acquire_source(1)
+    try:
+        fake.torrents[NEW_HASH].update(progress=1, amount_left=0)
+        fake.files[NEW_HASH][0]["progress"] = 1
+        for _ in range(4):
+            await download_queue.process_queue()
+        assert old_path.read_text(encoding="utf-8") == "old"
+        assert not fake.deleted_paths
+        async with revision_database() as session:
+            job = await session.scalar(select(DownloadJob).where(DownloadJob.info_hash == NEW_HASH))
+            assert json.loads(job.plan)["replacement"]["phase"] == "downloading"
+            assert "正在播放旧版文件" in job.last_error
+        with pytest.raises(MediaError):
+            acquire_source(1)
+        release_source(1)
+        for _ in range(18):
+            await download_queue.process_queue()
+        ensure_source_available(1)
+        async with revision_database() as session:
+            job = await session.scalar(select(DownloadJob).where(DownloadJob.info_hash == NEW_HASH))
+            assert job.state == ("needs_review" if fail_promotion else "done")
+    finally:
+        release_source(1)
+        finish_mutation(1)

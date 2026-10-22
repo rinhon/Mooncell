@@ -12,13 +12,14 @@ import { api, type Show } from "@/lib/api"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { BlurFade } from "@/components/ui/blur-fade"
+import { GradualBlur } from "@/components/ui/gradual-blur"
 import { ShowCover } from "@/components/show-cover"
 import { Card, CardContent } from "@/components/ui/card"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { useToast } from "@/components/ui/toast"
 
-import { artworkUrl, showReturnState } from "@/lib/show-artwork"
+import { artworkUrl, posterUrl, showReturnState } from "@/lib/show-artwork"
 
 function useCardColumns() {
   const getColumns = () => window.matchMedia("(min-width: 1280px)").matches ? 3
@@ -144,7 +145,7 @@ export function ShowsPage() {
   if (showsQuery.isPending || (!showsQuery.isError && !artworkReady && uploadId === null)) return <ShowsLoading query={query} view={view} filtered={params.has("id")} count={showsQuery.isPending ? undefined : shows.length}/>
 
   return <div ref={cursorScopeRef} className="shows-cursor-scope">
-    {!reducedMotion && uploadId === null && itemsShow === null && <TargetCursor container={cursorScopeRef} targetSelector='.shows-cursor-scope :is(button:not(:disabled):not([aria-disabled="true"]), a[href])' blendMode="difference" cursorColor="#e9f3ed" cursorColorOnTarget="#6be897" size={28} cornerSize={9} thickness={2} padding={4} hoverDuration={.24} spinDuration={3} showLabel/>}
+    {!reducedMotion && uploadId === null && itemsShow === null && <TargetCursor container={cursorScopeRef} targetSelector='.shows-cursor-scope :is(button:not(:disabled):not([aria-disabled="true"]), a[href])' blendMode="difference" cursorColor="var(--ink)" cursorColorOnTarget="var(--accent)" size={28} cornerSize={9} thickness={2} padding={4} hoverDuration={.24} spinDuration={3} showLabel/>}
     {rescrape.isError && <p role="alert" className="mb-4 text-sm text-[var(--danger)]">重新刮削提交失败：{rescrape.error.message}</p>}
     <ArtworkUpload show={showsQuery.data?.find(show => show.id === uploadId) ?? null} onClose={() => setUploadId(null)}/>
     <Dialog open={itemsShow !== null} onOpenChange={(open) => { if (!open) setItemsShow(null) }}>
@@ -154,7 +155,7 @@ export function ShowsPage() {
           <DialogDescription>RSS 中已发现的原始标题，共 {itemsShow?.discovered_items ?? 0} 条。</DialogDescription>
         </DialogHeader>
         {itemTitlesQuery.isPending && <div role="status" className="flex min-h-32 items-center justify-center gap-2 text-sm text-[var(--muted)]"><LoaderCircle size={16} className="animate-spin"/>正在读取标题…</div>}
-        {itemTitlesQuery.isError && <div role="alert" className="rounded-[2px] bg-[var(--danger-soft)] p-4 text-sm text-[var(--danger)]">读取失败：{itemTitlesQuery.error.message}<button type="button" className="ml-2 underline" onClick={() => void itemTitlesQuery.refetch()}>重试</button></div>}
+        {itemTitlesQuery.isError && <div role="alert" className="rounded-[var(--radius-control)] bg-[var(--danger-soft)] p-4 text-sm text-[var(--danger)]">读取失败：{itemTitlesQuery.error.message}<button type="button" className="ml-2 underline" onClick={() => void itemTitlesQuery.refetch()}>重试</button></div>}
         {itemTitlesQuery.isSuccess && itemTitlesQuery.data.length === 0 && <p className="py-10 text-center text-sm text-[var(--muted)]">暂无 RSS 标题。</p>}
         {itemTitlesQuery.isSuccess && itemTitlesQuery.data.length > 0 && <ul className="max-h-[60vh] divide-y divide-[var(--border-soft)] overflow-y-auto border-y border-[var(--border)]">{itemTitlesQuery.data.map((title, index) => <li key={`${index}-${title}`} className="break-words py-3 text-sm leading-6 text-[var(--ink)]">{title}</li>)}</ul>}
       </DialogContent>
@@ -167,36 +168,51 @@ export function ShowsPage() {
     {showsQuery.isError && <Card><CardContent className="p-8 text-center text-sm text-[var(--danger)]">读取番剧失败：{showsQuery.error.message}</CardContent></Card>}
     {!showsQuery.isError && !shows.length && <Card><CardContent className="grid min-h-56 place-items-center p-8 text-center"><div><ImageOff className="mx-auto mb-3 text-[var(--muted)]"/><p className="font-medium">还没有匹配的番剧订阅</p><p className="mt-1 text-sm text-[var(--muted)]">请先在 RSS 订阅页添加并关联 TMDB 条目。</p></div></CardContent></Card>}
 
+    {view === "posters" && shows.length > 0 && <div className="show-poster-grid" aria-label="番剧海报">{shows.map((show, index) => <BlurFade key={show.id} className="min-w-0" delay={(index % 5) * 0.08} duration={0.4} offset={8} inView inViewMargin="0px">
+      <motion.div whileHover={reducedMotion ? undefined : { y: -5, scale: 1.015 }} transition={{ type: "spring", stiffness: 400, damping: 30 }} className="transform-gpu">
+        <Link to={`/shows/${show.id}`} state={detailState()} onClick={event => openDetail(event, show.id)} aria-label={`查看 ${show.name} 详情`} title={show.name} className="show-poster-tile ring-1 ring-[var(--island-border)] hover:ring-[var(--accent)]/55">
+          {posterUrl(show) ? <img src={posterUrl(show)} alt={`${show.name} 海报`} className="size-full object-cover"/> : <ShowCover title={show.name}/>}
+          <GradualBlur position="bottom" height="22%" strength={1.6} divCount={3} exponential curve="bezier" tint="var(--poster-blur-tint)"/>
+          <span className="show-poster-caption">
+            <strong>{show.name}</strong>
+            <small>已发现 {show.discovered_items} 条发布</small>
+          </span>
+        </Link>
+      </motion.div>
+    </BlurFade>)}</div>}
+
     {view === "cards" && <div className="show-card-grid" aria-label="番剧卡片">{shows.map((show, index) => <BlurFade key={show.id} className="show-card-reveal min-w-0" delay={(index % cardColumns) * 0.08} duration={0.4} offset={8} inView inViewMargin="0px">
-      <Card className="group flex h-full min-w-0 flex-col overflow-hidden transition duration-200 hover:shadow-lg">
-      <Link to={`/shows/${show.id}`} state={detailState()} onClick={event => openDetail(event, show.id)} className="relative block h-52 shrink-0 overflow-hidden bg-[#222825]">
-        {show.fanart_ready && <img src={artworkUrl(show, "fanart")} alt="" className="absolute inset-0 size-full object-cover transition duration-500 group-hover:scale-105"/>}
-        <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/25 to-transparent"/>
-        <div className="absolute inset-x-4 bottom-4 flex items-end gap-4">
-          <div className="h-32 w-22 shrink-0 overflow-hidden rounded-[2px] bg-[var(--surface-raised)] shadow-xl ring-1 ring-white/30">
+      <motion.div whileHover={reducedMotion ? undefined : { y: -5 }} transition={{ type: "spring", stiffness: 400, damping: 30 }} className="h-full transform-gpu">
+      <Card className="group flex h-full min-w-0 flex-col overflow-hidden rounded-[var(--radius-panel)] border-[var(--island-border)] bg-[var(--island-background)] shadow-[var(--island-shadow)] backdrop-blur-xl transition-colors duration-200 hover:border-[var(--accent)]/45">
+      <Link to={`/shows/${show.id}`} state={detailState()} onClick={event => openDetail(event, show.id)} className="relative block h-56 shrink-0 overflow-hidden bg-[var(--skeleton)]">
+        {show.fanart_ready && <img src={artworkUrl(show, "fanart")} alt="" className="absolute inset-0 size-full object-cover transform-gpu"/>}
+        <GradualBlur position="bottom" height="24%" strength={1.8} divCount={3} exponential curve="bezier" tint="var(--card-hero-blur-tint)" className="z-[1]"/>
+        <div className="absolute inset-x-4 bottom-4 z-[2] flex items-end gap-4">
+          <div className="h-32 w-22 shrink-0 overflow-hidden rounded-[var(--radius-control)] bg-[var(--surface-raised)] shadow-2xl ring-1 ring-white/25">
             {(show.poster_ready || show.poster_url) ? <img src={show.poster_ready ? artworkUrl(show, "poster") : show.poster_url} alt={`${show.name} 海报`} className="size-full object-cover"/> : <ShowCover title={show.name}/>}
           </div>
-          <div className="min-w-0 flex-1 pb-1 text-white">
+          <div className="min-w-0 flex-1 pb-1 text-white drop-shadow-[0_2px_10px_rgba(0,0,0,0.65)]">
             {show.clearlogo_ready && <img src={artworkUrl(show, "clearlogo")} alt="" className="mb-3 max-h-12 max-w-48 object-contain object-left drop-shadow"/>}
             <p className="line-clamp-2 text-lg font-semibold leading-tight">{show.name}</p>
-            {show.metadata_title && show.metadata_title !== show.name && <p className="mt-1 truncate text-xs text-white/70">{show.metadata_title}</p>}
+            {show.metadata_title && show.metadata_title !== show.name && <p className="mt-1 truncate text-xs text-white/75">{show.metadata_title}</p>}
           </div>
         </div>
       </Link>
       <CardContent className="flex flex-1 flex-col p-5">
         <div className="flex items-center gap-2">{show.tmdb_id && <TmdbLink show={show}/>}{show.rating != null && <span className="flex items-center gap-1 text-xs text-[var(--muted)]"><Star size={13} className="fill-amber-400 text-amber-400"/>{show.rating.toFixed(1)}</span>}<DropdownMenu><DropdownMenuTrigger asChild><Button size="icon-sm" variant="ghost" pressMotion={false} className="ml-auto" aria-label="更多操作"><MoreHorizontal size={17}/></Button></DropdownMenuTrigger><DropdownMenuContent align="end" animateSize><DropdownMenuItem onSelect={() => setUploadId(show.id)}><Upload size={15}/>上传图片</DropdownMenuItem><DropdownMenuItem disabled={rescrape.isPending && rescrape.variables === show.id} onSelect={() => rescrape.mutate(show.id)}>{rescrape.isPending && rescrape.variables === show.id ? <LoaderCircle size={15} className="animate-spin"/> : <RefreshCw size={15}/>}重新刮削</DropdownMenuItem></DropdownMenuContent></DropdownMenu></div>
         <p className="mt-4 line-clamp-3 min-h-18 whitespace-pre-line break-words text-sm leading-6 text-[var(--muted)]">{show.overview || "暂无剧情简介"}</p>
-        <div className="mt-auto pt-4"><div className="grid grid-cols-2 gap-3 rounded-[2px] bg-[var(--surface)]/20 p-3 text-xs ring-1 ring-[var(--border)]"><div><p className="text-[var(--muted)]">已发现发布</p><div className="mt-1"><DiscoveredItemsButton show={show} onClick={() => setItemsShow(show)}/></div></div><div><p className="text-[var(--muted)]">TMDB 集数</p><p className="mt-1 font-semibold">{show.episode_count ?? "未知"}</p></div></div></div>
+        <div className="mt-auto pt-4"><div className="grid grid-cols-2 gap-3 rounded-[var(--radius-control)] border border-[var(--border-soft)] bg-[var(--surface)]/35 p-3 text-xs backdrop-blur-sm"><div><p className="text-[var(--muted)]">已发现发布</p><div className="mt-1"><DiscoveredItemsButton show={show} onClick={() => setItemsShow(show)}/></div></div><div><p className="text-[var(--muted)]">TMDB 集数</p><p className="mt-1 font-semibold">{show.episode_count ?? "未知"}</p></div></div></div>
         <ActionButton icon={FolderOpen} emphasis="secondary" className="mt-4 w-full" pending={openFolder.isPending && openFolder.variables === show.id} pendingLabel="打开中…" onClick={() => openFolder.mutate(show.id)}>打开文件夹</ActionButton>
       </CardContent>
       </Card>
+      </motion.div>
     </BlurFade>)}</div>}
 
     {view === "list" && shows.length > 0 && <ul className="show-row-list" aria-label="番剧列表">
       {shows.map((show, index) => <motion.li key={show.id}
         initial={reducedMotion ? false : { opacity: 0, y: 18 }}
         whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true, amount: 0.15 }}
-        transition={{ duration: reducedMotion ? 0 : 0.42, delay: reducedMotion ? 0 : Math.min(index, 6) * 0.06, ease: [0.22, 1, 0.36, 1] }}>
+        transition={reducedMotion ? { duration: 0 } : { type: "spring", stiffness: 380, damping: 32, delay: Math.min(index, 6) * 0.06 }}>
         <Card className="show-row-card">
           <Link to={`/shows/${show.id}`} state={detailState()} onClick={event => openDetail(event, show.id)} aria-label={`查看 ${show.name} 详情`} className="show-row-poster">
             {(show.poster_ready || show.poster_url) ? <img src={show.poster_ready ? artworkUrl(show, "poster") : show.poster_url} alt="" className="size-full object-cover"/> : <ShowCover title={show.name}/>}

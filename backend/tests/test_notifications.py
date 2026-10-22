@@ -9,7 +9,7 @@ from fastapi import FastAPI, Request
 from sqlalchemy import event, func, select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from app import api
+from app import api, download_queue, review, rss_service
 from app.artwork_service import ArtworkResult
 from app.database import Base, get_session
 from app.dependencies import optional_user
@@ -30,10 +30,12 @@ from app.notification_api import router
 from app.notifications import (
     aggregate_migration,
     create_operation,
+    notify_task,
     recover_operations,
     transition,
     update_migration,
 )
+from app.release_parser import parse_release_title
 from app.schemas import TmdbMetadata
 
 
@@ -448,3 +450,157 @@ async def test_metadata_failure_preserves_previously_scraped_fields(notification
     assert (await client.get(f"/api/v1/notifications/{operation_id}")).json()["unread"]
     async with sessions() as session:
         assert (await session.get(FeedSource, 1)).show_metadata.title == "旧标题"
+
+
+async def add_task_item(session, *, status="parsed"):
+    release = parse_release_title("[Group] Example - 05 [1080p]")
+    release.season = 1
+    item = FeedItem(source_id=1, title=release.raw_title, fingerprint="task",
+                    download_url=f"magnet:?xt=urn:btih:{'a' * 40}", info_hash="a" * 40,
+                    parse_status=status, parse_data=release.model_dump_json())
+    session.add(item)
+    await session.flush()
+    return item
+
+
+async def test_new_download_notification_is_committed_once_and_owned(notification_app):
+    client, sessions, _ = notification_app
+    async with broker.subscribe() as queue, sessions() as session:
+        await add_task_item(session)
+        source = await session.get(FeedSource, 1)
+        await download_queue.enqueue_source(session, source)
+        assert queue.empty()
+        await commit_and_publish(session)
+        assert queue.get_nowait().event_type == "notification.changed"
+        await download_queue.enqueue_source(session, source)
+        await commit_and_publish(session)
+        assert queue.empty()
+        assert await session.scalar(select(func.count(DownloadJob.id))) == 1
+    page = (await client.get("/api/v1/notifications")).json()
+    assert page["unread_count"] == 1 and page["active_count"] == 0
+    notice = page["items"][0]
+    assert notice["kind"] == "download_added" and "新增下载任务" in notice["summary"]
+    other = await client.get("/api/v1/notifications/summary", headers={"x-test-user": "2"})
+    assert other.json() == {"unread_count": 0, "active_count": 0}
+
+
+async def test_rss_creates_download_and_review_notifications_without_duplicates(
+    notification_app, monkeypatch,
+):
+    client, sessions, _ = notification_app
+    original = httpx.AsyncClient
+    xml = f'''<rss version="2.0"><channel><title>Example</title>
+    <item><guid>parsed</guid><title>[Group] Example - 05 [1080p]</title>
+    <enclosure url="magnet:?xt=urn:btih:{'a' * 40}" type="application/x-bittorrent"/></item>
+    <item><guid>review</guid><title>无法识别的发布</title>
+    <enclosure url="magnet:?xt=urn:btih:{'b' * 40}" type="application/x-bittorrent"/></item>
+    </channel></rss>'''
+    transport = httpx.MockTransport(lambda request: httpx.Response(200, text=xml))
+    monkeypatch.setattr(rss_service.httpx, "AsyncClient", lambda **kwargs: original(
+        transport=transport, **kwargs))
+    async with sessions() as session:
+        source = await session.get(FeedSource, 1)
+        source.season = 1
+        service = rss_service.FeedRefreshService(session)
+        assert (await service.refresh(source)).created == 2
+        assert (await service.refresh(source)).created == 0
+    page = (await client.get("/api/v1/notifications")).json()
+    assert page["unread_count"] == 2 and page["active_count"] == 1
+    assert {item["kind"] for item in page["items"]} == {"download_added", "review_required"}
+
+
+async def test_queue_review_notifies_once_and_survives_restart_and_rescrape(
+    notification_app, monkeypatch,
+):
+    client, sessions, _ = notification_app
+    monkeypatch.setattr(download_queue, "SessionFactory", sessions)
+
+    async def needs_review(session, job, config, item):
+        job.state = "needs_review"
+        raise ValueError("无法确定视频集数")
+
+    monkeypatch.setattr(download_queue, "process_job", needs_review)
+    async with sessions() as session:
+        await add_task_item(session)
+        await download_queue.enqueue_source(session, await session.get(FeedSource, 1))
+        await commit_and_publish(session)
+    await download_queue.process_queue()
+    await download_queue.process_queue()
+    page = (await client.get("/api/v1/notifications")).json()
+    pending = [item for item in page["items"] if item["kind"] == "review_required"]
+    assert len(pending) == 1 and pending[0]["unread"]
+    assert "集数" in pending[0]["error_summary"]
+    async with sessions() as session:
+        source = await session.get(FeedSource, 1)
+        await api._create_scrape_operation(session, 1, source, "artwork_scrape")
+        await recover_operations(session)
+        notice = await session.get(BackgroundOperation, pending[0]["id"])
+        assert notice.status == "blocked" and notice.attention_revision > notice.read_revision
+
+
+@pytest.mark.parametrize("action", ["approve", "ignore"])
+async def test_resolving_review_updates_notification(notification_app, action):
+    client, sessions, app = notification_app
+    app.include_router(review.router)
+    async with sessions() as session:
+        item = await add_task_item(session, status="needs_review")
+        notice = await notify_task(session, item, "review_required", reason="需要确认集数")
+        notice_id = notice.id
+        await commit_and_publish(session)
+    body = {"title": "测试番剧", "season": 1, "episode": 5} if action == "approve" else None
+    response = await client.post("/api/v1/review/1/" + action, json=body)
+    assert response.status_code == 200
+    detail = (await client.get(f"/api/v1/notifications/{notice_id}")).json()
+    assert detail["status"] == ("completed" if action == "approve" else "cancelled")
+    assert not detail["unread"] and detail["error_summary"] is None
+    page = (await client.get("/api/v1/notifications")).json()
+    assert page["active_count"] == 0
+    assert page["unread_count"] == (1 if action == "approve" else 0)
+
+
+async def test_review_reason_deduplication_and_reentry(notification_app):
+    _, sessions, _ = notification_app
+    from app.notifications import resolve_task_review
+
+    async with sessions() as session:
+        item = await add_task_item(session, status="needs_review")
+        notice = await notify_task(session, item, "review_required", reason="缺少集数")
+        await commit_and_publish(session)
+        notice.read_revision = notice.attention_revision
+        revision = notice.revision
+        await notify_task(session, item, "review_required", reason="缺少集数")
+        assert notice.revision == revision
+        assert notice.read_revision == notice.attention_revision
+        await resolve_task_review(session, item)
+        await notify_task(session, item, "review_required", reason="缺少集数")
+        assert notice.status == "blocked" and notice.attention_revision > notice.read_revision
+        await commit_and_publish(session)
+        assert await session.scalar(select(func.count(BackgroundOperation.id))) == 1
+
+
+async def test_task_notification_rollback_does_not_leave_reminder(notification_app):
+    _, sessions, _ = notification_app
+    async with broker.subscribe() as queue, sessions() as session:
+        item = await add_task_item(session)
+        await notify_task(session, item, "download_added")
+        await session.rollback()
+        await commit_and_publish(session)
+        assert queue.empty()
+        assert await session.scalar(select(func.count(BackgroundOperation.id))) == 0
+
+
+async def test_deleted_item_id_reuse_still_notifies_for_new_task(notification_app):
+    _, sessions, _ = notification_app
+    async with sessions() as session:
+        item = await add_task_item(session)
+        previous_id = item.id
+        first = await notify_task(session, item, "download_added")
+        await commit_and_publish(session)
+        await session.delete(item)
+        await session.flush()
+        replacement = await add_task_item(session)
+        assert replacement.id == previous_id
+        second = await notify_task(session, replacement, "download_added")
+        await commit_and_publish(session)
+        assert first.id != second.id
+        assert await session.scalar(select(func.count(BackgroundOperation.id))) == 2

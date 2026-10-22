@@ -1,8 +1,5 @@
 .ui-button { text-decoration: none; }
-.ui-button-fill { position: absolute; inset: 0; z-index: -1; pointer-events: none; background: var(--surface-raised); transform-origin: left; }
-.ui-button[data-variant="default"] > .ui-button-fill { background: var(--accent-hover); }
-.ui-button[data-variant="outline"] > .ui-button-fill { background: var(--accent); }
-.ui-button[data-variant="danger"] > .ui-button-fill { background: color-mix(in oklab, var(--danger) 14%, var(--surface)); }
+.ui-button-fill { border-radius: inherit; position: absolute; inset: 0; z-index: -1; pointer-events: none; background: var(--accent-hover); transform-origin: left; }
 .ui-button[data-icon-slot] { gap: 0; padding-inline: 0; min-width: 8.5rem; }
 .ui-button-icon { display: inline-grid; place-items: center; flex-shrink: 0; }
 .ui-button > .button-label { display: inline-flex; align-items: center; justify-content: center; gap: .5rem; }
@@ -12,11 +9,14 @@
 .ui-button[data-icon-slot][data-size="sm"] { min-width: 7rem; }
 .ui-button[data-icon-slot][data-size="sm"] > .ui-button-icon { width: 2rem; }
 .ui-button[data-size="icon"] > .button-label:empty, .ui-button[data-size="icon-sm"] > .button-label:empty { display: none; }
-.ui-button[data-variant="outline"]:focus-visible { color: var(--on-accent); }
+.ui-button[data-variant="outline"]:focus-visible { background: var(--accent); color: var(--on-accent); }
+.ui-button[data-variant="secondary"]:focus-visible, .ui-button[data-variant="ghost"]:focus-visible { background: var(--surface-raised); color: var(--ink); }
+.ui-button[data-variant="danger"]:focus-visible { background: color-mix(in oklab, var(--danger) 14%, var(--surface)); }
 .ui-button[data-as-child]:not(:disabled):active { transform: scale(.98); }
 @media (hover: hover) and (pointer: fine) {
-  .ui-button[data-variant="outline"]:hover { color: var(--on-accent); }
-  .ui-button[data-variant="secondary"]:hover, .ui-button[data-variant="ghost"]:hover { color: var(--ink); }
+  .ui-button[data-variant="outline"]:hover { background: var(--accent); color: var(--on-accent); }
+  .ui-button[data-variant="secondary"]:hover, .ui-button[data-variant="ghost"]:hover { background: var(--surface-raised); color: var(--ink); }
+  .ui-button[data-variant="danger"]:hover { background: color-mix(in oklab, var(--danger) 14%, var(--surface)); }
 }
 @media (prefers-reduced-motion: reduce) {
   .ui-button[data-as-child]:not(:disabled):active { transform: none; }

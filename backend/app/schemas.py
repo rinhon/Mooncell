@@ -244,13 +244,29 @@ class ShowReleasePage(BaseModel):
 
 class ShowEpisodeRead(BaseModel):
     path: str
+    media_id: str | None = None
+    progress: dict | None = None
     filename: str
     season: int | None
     episode_start: float | None
     episode_end: float | None
     size: int
     modified_at: datetime
+    added_at: datetime | None = None
     thumbnail_url: str | None = None
+    rename_pending: bool = False
+
+
+class EpisodeRenameRequest(BaseModel):
+    media_id: str = Field(pattern=r"^[a-f0-9]{64}$")
+    filename: str = Field(min_length=1, max_length=255)
+
+
+class EpisodeRenameRead(BaseModel):
+    message: str
+    path: str
+    filename: str
+    pending: bool
 
 
 class ShowSeasonRead(BaseModel):

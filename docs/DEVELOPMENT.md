@@ -1,32 +1,67 @@
 # Mooncell 开发指南
 
-[返回 README](../README.md) · [使用指南](USAGE.md)
+[返回 README](../README.md) · [使用指南](USAGE.md) · [前端特效与交互约定](FRONTEND_EFFECTS.md)
 
 以下命令使用 Windows PowerShell；除特别说明外，均从项目根目录执行。
 
 ## 环境准备
 
-- Python 3.12，以下命令使用 Windows Python 启动器 `py`。
-- Node.js（Docker 构建使用 Node.js 22）与 pnpm；pnpm 版本见 [frontend/package.json](../frontend/package.json) 的 `packageManager` 字段。
-- ImageMagick 7，用于图片上传转码和 Clearlogo 明暗分析。
+### 自动安装（推荐）
 
-### 安装 ImageMagick
+在项目根目录运行：
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\setup.ps1
+```
+
+脚本兼容 Windows PowerShell 5.1，会自动检查并安装：
+
+- Python 3.12，创建 `backend\.venv` 并安装后端运行依赖及 pytest、Ruff 等开发工具。
+- Node.js（至少 22.13；缺失时通过 WinGet 安装 LTS 版）。
+- `frontend\package.json` 声明的 pnpm 版本，并按锁文件安装前端依赖。
+- FFmpeg、ffprobe（WinGet 包 `Gyan.FFmpeg`）和 ImageMagick 7（`ImageMagick.Q16-HDRI`）。
+
+可重复运行：已有兼容工具会复用，不删除已有虚拟环境，不覆盖 `.env` 或业务数据。已有 pnpm 不可用或版本不匹配时，安装到项目 `.cache\tools\pnpm`，无需修改全局 pnpm 或 Corepack。此时后续依赖安装可继续运行本脚本；开发服务直接使用已安装的 Vite。
+
+安装需要联网；系统软件缺失时需要 [WinGet（应用安装程序）](https://aka.ms/getwinget)，部分安装程序可能弹出 Windows 管理员授权提示。脚本通过 [WinGet 安装参数](https://learn.microsoft.com/en-us/windows/package-manager/winget/install)自动接受包和源协议。`-ExecutionPolicy Bypass` 仅作用于本次 PowerShell 进程。
+
+只检查当前环境，不安装或修改文件：
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\setup.ps1 -CheckOnly
+```
+
+检查包括工具版本、后端依赖是否存在及 `pip check`、前端 pnpm 安装标记；缺失或不兼容时以非零状态退出。前端检查不代替构建验证。
+
+安装完成后重新打开 PowerShell，再按下方命令启动开发服务。脚本只准备环境，不自动启动服务。Docker 镜像已经包含媒体工具，使用 Docker Compose 时无需运行此脚本。
+
+### 手动安装
+
+- Python 3.12，以下命令使用 Windows Python 启动器 `py`。
+- Node.js 22.13 或更新版本（Docker 构建使用 Node.js 22）与 pnpm；pnpm 版本见 [frontend/package.json](../frontend/package.json) 的 `packageManager` 字段。
+- ImageMagick 7，用于图片上传转码和 Clearlogo 明暗分析。
+- FFmpeg 和 ffprobe，用于媒体探测、在线播放转码与字幕处理。
+
+#### 安装媒体工具
 
 Windows 可通过 winget 安装，其他方式参见 [ImageMagick 官方下载页](https://imagemagick.org/download/)：
 
 ```powershell
 winget install --id ImageMagick.Q16-HDRI --exact --source winget
+winget install --id Gyan.FFmpeg --exact --source winget
 ```
 
 安装后重新打开 PowerShell，确认命令可用：
 
 ```powershell
 magick -version
+ffmpeg -version
+ffprobe -version
 ```
 
 如果 Mooncell 已在运行，请在新终端中重新启动，使后端读取更新后的 PATH。Docker 镜像已内置 ImageMagick，无需在宿主机另行安装。
 
-### 安装项目依赖
+#### 安装项目依赖
 
 ```powershell
 py -3.12 -m venv ".\backend\.venv"

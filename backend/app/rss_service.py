@@ -18,8 +18,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from .config import settings
 from .database import SessionFactory
 from .downloader_service import extract_info_hash
-from .events import EventMessage, broker
+from .events import EventMessage, broker, commit_and_publish
 from .models import DomainEvent, FeedItem, FeedSource
+from .notifications import notify_task
 from .providers.mikan import is_mikan_feed, normalize_mikan_channel_title
 from .release_parser import parse_release_title
 from .schemas import FeedInspectResult, FeedRefreshResult
@@ -273,6 +274,7 @@ class FeedRefreshService:
 
             created = 0
             duplicates = 0
+            review_items = []
             excluded_keywords = [
                 value.casefold() for value in source.excluded_keywords or [] if value
             ]
@@ -300,28 +302,33 @@ class FeedRefreshService:
                 if source.season is not None:
                     release.season = source.season
                 # 低置信度或带警告的结果保留人工审核。
-                self.session.add(
-                    FeedItem(
-                        source_id=source.id,
-                        guid=str(guid) if guid else None,
-                        title=title,
-                        detail_url=str(detail_url) if detail_url else None,
-                        download_url=download_url,
-                        info_hash=extract_info_hash(download_url),
-                        published_at=_published_at(entry),
-                        fingerprint=fingerprint,
-                        parse_status=(
-                            "needs_review"
-                            if release.confidence < 0.9 or release.warnings
-                            else "parsed"
-                        ),
-                        parse_data=release.model_dump_json(),
-                    )
+                item = FeedItem(
+                    source_id=source.id,
+                    guid=str(guid) if guid else None,
+                    title=title,
+                    detail_url=str(detail_url) if detail_url else None,
+                    download_url=download_url,
+                    info_hash=extract_info_hash(download_url),
+                    published_at=_published_at(entry),
+                    fingerprint=fingerprint,
+                    parse_status=(
+                        "needs_review"
+                        if release.confidence < 0.9 or release.warnings
+                        else "parsed"
+                    ),
+                    parse_data=release.model_dump_json(),
                 )
+                self.session.add(item)
+                if item.parse_status == "needs_review":
+                    review_items.append((item, "；".join(release.warnings) or
+                                         "解析置信度不足，需要确认季与集数"))
                 created += 1
                 fingerprints.add(fingerprint)
 
             await self.session.flush()
+            for item, reason in review_items:
+                await notify_task(self.session, item, "review_required", source=source,
+                                  reason=reason)
             await self._enqueue_downloads(source)
             completed = await _store_event(
                 self.session,
@@ -330,7 +337,7 @@ class FeedRefreshService:
                 str(source.id),
                 {"fetched": len(parsed.entries), "created": created, "duplicates": duplicates},
             )
-            await self.session.commit()
+            await commit_and_publish(self.session)
             await _publish_event(completed)
             return FeedRefreshResult(
                 source_id=source.id,
@@ -357,12 +364,12 @@ class FeedRefreshService:
         from .download_queue import enqueue_source, queue_lock
 
         # 先释放 RSS 入库事务，避免持有 SQLite 写锁等待下载队列。
-        await self.session.commit()
+        await commit_and_publish(self.session)
         try:
             async with queue_lock:
                 async with self.session.begin_nested():
                     await enqueue_source(self.session, source)
-                await self.session.commit()
+                await commit_and_publish(self.session)
         except Exception as exc:
             from .events import _redact, describe_download_error
 

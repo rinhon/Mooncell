@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react"
 import { Link } from "react-router-dom"
-import { Pause, Play } from "lucide-react"
-import { animate, motion, useMotionValue, useReducedMotion } from "motion/react"
+import { AnimatePresence, animate, motion, useMotionValue, useReducedMotion } from "motion/react"
 import { useQuery } from "@tanstack/react-query"
 import { api, type Show } from "@/lib/api"
 import { artworkUrl, posterUrl } from "@/lib/show-artwork"
@@ -10,6 +9,9 @@ import { DashboardHeading, DashboardLoading, DashboardRecent } from "@/component
 import { AccordionGallery } from "@/components/accordion-gallery"
 import { AddSubscriptionButton } from "@/components/add-subscription-button"
 import { ShowCover } from "@/components/show-cover"
+import { BlurFade } from "@/components/ui/blur-fade"
+import { FadeInImage } from "@/components/ui/fade-in-image"
+import { GradualBlur } from "@/components/ui/gradual-blur"
 
 function Countdown({ paused, onNext }: { paused: boolean; onNext: () => void }) {
   const progress = useMotionValue(0)
@@ -28,7 +30,6 @@ export function DashboardPage() {
   const showsQuery = useQuery({ queryKey: ["shows"], queryFn: () => api<Show[]>("/shows") })
   const [activeIndex, setActiveIndex] = useState(0)
   const [focused, setFocused] = useState(false)
-  const [paused, setPaused] = useState(false)
   const [compact, setCompact] = useState(() => window.matchMedia("(max-width: 720px)").matches)
   const [pageHidden, setPageHidden] = useState(() => document.hidden)
   const reducedMotion = useReducedMotion()
@@ -56,10 +57,11 @@ export function DashboardPage() {
   const shows = galleryIds.map(id => showsQuery.data?.find(show => show.id === id)).filter((show): show is Show => show !== undefined)
   const selectedIndex = Math.min(activeIndex, Math.max(0, shows.length - 1))
   const next = useCallback(() => setActiveIndex(current => (current + 1) % Math.max(1, shows.length)), [shows.length])
-  if (showsQuery.isPending) return <DashboardLoading/>
-  return <>
-    <DashboardHeading count={allShows.length}/>
-    {showsQuery.isError ? <div role="alert" className="p-8 text-[var(--danger)]">订阅加载失败：{showsQuery.error.message}<Button variant="secondary" size="sm" className="ml-3" onClick={() => void showsQuery.refetch()}>重试</Button></div> : !shows.length ? <section className="grid min-h-64 place-items-center border border-[var(--border)] bg-[var(--surface)]/20 p-8 text-center"><div><h2 className="text-xl">从第一部番剧开始</h2><p className="mb-6 mt-3 text-sm text-[var(--muted)]">添加 RSS 订阅后，这里会显示你的番剧与发布信息。</p><AddSubscriptionButton to="/feeds"/></div></section> : <>
+  return <AnimatePresence mode="wait">
+    {showsQuery.isPending ? <motion.div key="loading" initial={{ opacity: 1 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: reducedMotion ? 0 : .14 }}><DashboardLoading/></motion.div> : <motion.div key="content" initial={false} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: reducedMotion ? 0 : .14 }}>
+    <BlurFade duration={.4} offset={10} direction="up" blur="4px"><DashboardHeading count={allShows.length}/></BlurFade>
+    {showsQuery.isError ? <BlurFade delay={.08} duration={.45} direction="up" offset={12} blur="4px"><div role="alert" className="p-8 text-[var(--danger)]">订阅加载失败：{showsQuery.error.message}<Button variant="secondary" size="sm" className="ml-3" onClick={() => void showsQuery.refetch()}>重试</Button></div></BlurFade> : !shows.length ? <BlurFade delay={.08} duration={.45} direction="up" offset={12} blur="4px"><section className="grid min-h-64 place-items-center rounded-[var(--radius-panel)] border border-[var(--island-border)] bg-[var(--island-background)] p-8 text-center backdrop-blur-xl"><div><h2 className="text-xl">从第一部番剧开始</h2><p className="mb-6 mt-3 text-sm text-[var(--muted)]">添加 RSS 订阅后，这里会显示你的番剧与发布信息。</p><AddSubscriptionButton to="/feeds"/></div></section></BlurFade> : <>
+      <BlurFade delay={.08} duration={.55} direction="up" offset={14} blur="4px">
       <section aria-label="番剧画廊"
         onFocusCapture={() => setFocused(true)}
         onBlurCapture={event => { if (!event.currentTarget.contains(event.relatedTarget)) setFocused(false) }}
@@ -70,14 +72,23 @@ export function DashboardPage() {
           label: show.name,
           link: `/shows/${show.id}`,
           caption: <span className="ag-panel__details"><span>已发现 {show.discovered_items} 条发布</span><span>{show.media_type === "movie" ? "电影" : show.episode_count != null ? `TMDB 共 ${show.episode_count} 集` : "总集数未知"}</span></span>,
-          footer: shows.length > 1 && !reducedMotion && !compact ? <Countdown key={show.id} paused={focused || paused || pageHidden} onNext={next}/> : undefined,
+          footer: shows.length > 1 && !reducedMotion && !compact ? <Countdown key={show.id} paused={focused || pageHidden} onNext={next}/> : undefined,
         }))}/>
       </section>
-      {shows.length > 1 && !reducedMotion && !compact && <div className="continue-controls"><Button variant="ghost" size="sm" icon={paused ? Play : Pause} aria-pressed={paused} onClick={() => setPaused(value => !value)}>{paused ? "继续自动切换" : "暂停自动切换"}</Button></div>}
-      <DashboardRecent>{allShows.slice(0, 5).map(show => <Link className="recent-item" key={show.id} to={`/shows/${show.id}`}>
-          <span className="recent-image">{show.poster_ready || show.poster_url ? <img src={posterUrl(show)} alt="" loading="lazy"/> : <ShowCover title={show.name}/>}</span>
-          <strong>{show.name}</strong><small>已发现 {show.discovered_items} 条发布</small>
-        </Link>)}</DashboardRecent>
+      </BlurFade>
+      <BlurFade delay={.18} duration={.5} direction="up" offset={14} blur="4px">
+      <DashboardRecent>{allShows.slice(0, 5).map(show => <motion.div key={show.id} whileHover={reducedMotion ? undefined : { y: -5, scale: 1.015 }} transition={{ type: "spring", stiffness: 400, damping: 30 }} className="min-w-0 transform-gpu"><Link className="recent-item" to={`/shows/${show.id}`}>
+          <span className="recent-image">
+            {posterUrl(show) ? <FadeInImage src={posterUrl(show)!} alt="" loading="lazy"/> : <ShowCover title={show.name}/>}
+            <GradualBlur position="bottom" height="22%" strength={1.6} divCount={3} exponential curve="bezier" tint="var(--poster-blur-tint)" className="recent-item-blur"/>
+            <span className="recent-item-caption">
+              <strong>{show.name}</strong>
+              <small>已发现 {show.discovered_items} 条发布</small>
+            </span>
+          </span>
+        </Link></motion.div>)}</DashboardRecent>
+      </BlurFade>
     </>}
-  </>
+    </motion.div>}
+  </AnimatePresence>
 }

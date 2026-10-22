@@ -21,8 +21,9 @@ export function useEvents(enabled: boolean) {
     }
     stream.onopen = () => { connected = true; notifications(); refresh() }
     stream.onerror = () => { connected = false; notifications() }
-    stream.addEventListener("notification.changed", notifications)
+    stream.addEventListener("notification.changed", () => { notifications(); refresh() })
     stream.addEventListener("library.scan.changed", refresh)
+    stream.addEventListener("download.episode.renamed", refresh)
     for (const name of ["feed.setup.completed", "feed.setup.partial", "feed.setup.failed", "feed.updated", "feed.refresh.completed", "feed.refresh.failed", "item.discovered", "review.approved", "review.ignored", "review.reparsed", "download.library.changed"]) {
       stream.addEventListener(name, refresh)
     }

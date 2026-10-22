@@ -37,7 +37,7 @@ export function ShowOverview({ overview }: { overview?: string | null }) {
       className="detail-overview-content"
       initial={false}
       animate={{ height: size.full ? isExpanded ? size.full : size.collapsed : "auto" }}
-      transition={{ duration, ease: [.22, 1, .36, 1] }}
+      transition={reducedMotion || !hasToggled ? { duration: 0 } : { type: "spring", stiffness: 360, damping: 32 }}
     >
       <motion.p ref={fullRef} initial={false} animate={{ opacity: canExpand && !isExpanded ? 0 : 1 }} transition={{ duration: Math.min(duration, .16) }}>{text}</motion.p>
       <motion.p ref={previewRef} className="detail-overview-preview is-collapsed" aria-hidden="true" initial={false} animate={{ opacity: canExpand && !isExpanded ? 1 : 0 }} transition={{ duration: Math.min(duration, .16) }}>{text}</motion.p>
@@ -51,7 +51,7 @@ export function ShowOverview({ overview }: { overview?: string | null }) {
       onClick={() => { setHasToggled(true); setExpanded(value => !value) }}
     >
       <span>{isExpanded ? "收起" : "展开全部"}</span>
-      <motion.span aria-hidden="true" initial={false} animate={{ rotate: isExpanded ? 180 : 0 }} transition={{ duration: reducedMotion ? 0 : .24, ease: [.22, 1, .36, 1] }}><ChevronDown size={14}/></motion.span>
+      <motion.span aria-hidden="true" initial={false} animate={{ rotate: isExpanded ? 180 : 0 }} transition={reducedMotion ? { duration: 0 } : { type: "spring", stiffness: 400, damping: 28 }}><ChevronDown size={14}/></motion.span>
     </motion.button>}
   </section>
 }

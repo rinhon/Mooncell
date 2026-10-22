@@ -1,22 +1,26 @@
 .dashboard-gallery-skeleton { display: grid; grid-template-columns: 3.8fr 1fr 1fr 1fr; gap: 10px; height: 460px; }
-.continue-countdown { position: absolute; inset: auto 0 0; z-index: 1; height: 2px; background: rgba(107,232,151,.1); pointer-events: none; }
+.dashboard-loading .skeleton { background: linear-gradient(105deg, var(--surface-raised) 32%, var(--skeleton-highlight) 46%, var(--surface-raised) 60%); background-size: 240% 100%; animation: dashboard-shimmer 1.6s ease-in-out infinite; }
+@keyframes dashboard-shimmer { from { background-position: 140% 0; } to { background-position: -100% 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .dashboard-loading .skeleton { animation: none; background: var(--skeleton); }
+}
+.continue-countdown { position: absolute; inset: auto 0 0; z-index: 1; height: 2px; background: color-mix(in srgb, var(--accent) 10%, transparent); pointer-events: none; }
 .continue-countdown > span { display: block; width: 100%; height: 100%; background: var(--accent); transform-origin: left; }
 @media (max-width: 720px) {
   .dashboard-gallery-skeleton { height: 620px; grid-template-columns: 1fr; grid-template-rows: 3.8fr 1fr 1fr 1fr; }
-  .continue-controls.dashboard-controls-skeleton { display: none; }
 }
 
-.recent-section { margin-top: 18px; }
-.recent-heading { display: flex; align-items: center; justify-content: space-between; padding: 0 4px 10px; font-size: var(--fs-small); }
-.recent-heading p { margin: 0; }
+.recent-section { margin-top: 24px; }
+.recent-heading { display: flex; align-items: center; justify-content: space-between; padding: 0 4px 12px; font-size: var(--fs-small); }
+.recent-heading p { margin: 0; font-weight: 500; }
 .recent-grid { display: grid; grid-template-columns: repeat(5,minmax(0,1fr)); gap: 20px; }
 .recent-item { display: block; min-width: 0; padding: 0; border: 0; background: transparent; text-align: left; color: var(--ink); text-decoration: none; }
-.recent-image { position: relative; display: block; aspect-ratio: 2 / 3; overflow: hidden; border: 1px solid var(--border-soft); background: #222825; }
-.recent-image img { display: block; width: 100%; height: 100%; object-fit: cover; transition: transform 300ms ease; }
-.recent-item:hover img { transform: none; }
-.recent-image i { position: absolute; left: 8px; bottom: 8px; display: flex; gap: 5px; align-items: center; padding: 4px 7px; background: rgba(18,18,18,.82); color: white; font-size: var(--fs-caption); font-style: normal; }
-.recent-item strong { display: block; margin-top: 7px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-small); font-weight: 500; text-align: center; }
-.recent-item small { display: block; margin-top: 2px; color: var(--muted); font-size: var(--fs-caption); text-align: center; }
-.continue-controls { display: flex; justify-content: flex-end; padding-top: .5rem; }
+.recent-image { border-radius: var(--radius-panel); position: relative; isolation: isolate; display: block; aspect-ratio: 2 / 3; overflow: hidden; border: 1px solid var(--island-border); background: var(--skeleton); box-shadow: 0 14px 34px -16px rgba(0,0,0,.45); transition: border-color 180ms ease, box-shadow 180ms ease; }
+.recent-image img { display: block; width: 100%; height: 100%; object-fit: cover; transition: opacity 420ms ease; }
+.recent-item:hover .recent-image { border-color: color-mix(in srgb, var(--accent) 55%, transparent); box-shadow: 0 18px 42px -14px rgba(0,0,0,.55); }
+.recent-item-blur { z-index: 1; }
+.recent-item-caption { position: absolute; inset: auto 0 0; z-index: 2; display: flex; flex-direction: column; gap: 3px; padding: 14px 14px 12px; color: #f4f7f5; pointer-events: none; text-shadow: 0 2px 10px rgba(0,0,0,.65); }
+.recent-item-caption strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-small); font-weight: 600; line-height: 1.35; }
+.recent-item-caption small { display: block; color: rgba(244,247,245,.74); font-size: var(--fs-caption); font-variant-numeric: tabular-nums; }
 .recent-heading a { color: var(--muted); text-decoration: none; }
 .recent-heading a:hover { color: var(--ink); text-decoration: underline; }

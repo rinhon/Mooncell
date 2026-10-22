@@ -2,13 +2,14 @@ FROM ghcr.io/astral-sh/uv:0.10-python3.12-alpine AS builder
 
 WORKDIR /app
 ENV UV_LINK_MODE=copy
+RUN apk add --no-cache gcc musl-dev linux-headers
 
 COPY pyproject.toml ./
 RUN uv sync --no-dev --no-install-project
 
 FROM python:3.12-alpine AS runtime
 
-RUN apk add --no-cache imagemagick && addgroup -S mooncell && adduser -S mooncell -G mooncell
+RUN apk add --no-cache imagemagick ffmpeg libstdc++ && addgroup -S mooncell && adduser -S mooncell -G mooncell
 WORKDIR /app
 
 COPY --from=builder /app/.venv /app/.venv

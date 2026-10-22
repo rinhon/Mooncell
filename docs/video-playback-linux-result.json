@@ -1,0 +1,114 @@
+{
+  "platform": "linux",
+  "checks": [
+    {
+      "name": "owned_process_suspend_resume_close",
+      "passed": true,
+      "seconds": 1.906,
+      "evidence": {
+        "pid": 8,
+        "suspended_out_time": 0.583333,
+        "resumed_out_time": 0.958333,
+        "normal_exit_code": 0,
+        "closed_while_suspended": true
+      }
+    },
+    {
+      "name": "owned_process_parent_death",
+      "passed": true,
+      "seconds": 1.019,
+      "evidence": {
+        "parent_exit_code": 23,
+        "ffmpeg_pid": 33,
+        "ffmpeg_reaped": true,
+        "mechanism": "PR_SET_PDEATHSIG / SIGKILL"
+      }
+    },
+    {
+      "name": "synthetic_samples",
+      "passed": true,
+      "seconds": 5.478,
+      "evidence": {
+        "mp4": "/validation/library/Synthetic/Season 01/Synthetic S01E01.mp4",
+        "mkv": "/validation/library/Synthetic/Season 01/Synthetic S01E02.mkv",
+        "window_seek": "/validation/library/Synthetic/Season 01/Synthetic S01E03.mp4",
+        "files_are_synthetic": true
+      }
+    },
+    {
+      "name": "cookie_authenticated_hls_seek_silent_probe_api",
+      "passed": true,
+      "seconds": 27.373,
+      "evidence": {
+        "mp4_h264_aac": {
+          "duration": 24.0,
+          "video_codec": "h264",
+          "audio_tracks": 1,
+          "first_segment_bytes": 154912,
+          "first_source_pts": 0,
+          "seek_source_pts": 0,
+          "generations": [
+            1,
+            1
+          ],
+          "old_generation_http_status": 200,
+          "seek_target": 7.3,
+          "cached_seek": true,
+          "unauthenticated_hls_http_status": 401,
+          "endlist_verified": true,
+          "initial_fragments": 8,
+          "seek_fragments": 8
+        },
+        "silent_mkv_hevc": {
+          "duration": 18.0,
+          "video_codec": "hevc",
+          "audio_tracks": 0,
+          "first_segment_bytes": 109228,
+          "first_source_pts": 0,
+          "seek_source_pts": 0,
+          "generations": [
+            1,
+            1
+          ],
+          "old_generation_http_status": 200,
+          "seek_target": 7.3,
+          "cached_seek": true,
+          "unauthenticated_hls_http_status": 401,
+          "endlist_verified": true,
+          "initial_fragments": 6,
+          "seek_fragments": 6
+        },
+        "window_seek_silent_mp4": {
+          "duration": 180.0,
+          "video_codec": "h264",
+          "audio_tracks": 0,
+          "first_segment_bytes": 104152,
+          "first_source_pts": 0,
+          "seek_source_pts": 160.333333,
+          "generations": [
+            1,
+            2
+          ],
+          "old_generation_http_status": 409,
+          "seek_target": 160.3,
+          "cached_seek": false,
+          "unauthenticated_hls_http_status": 401,
+          "endlist_verified": true,
+          "initial_fragments": null,
+          "seek_fragments": 7
+        },
+        "capabilities": {
+          "available": true,
+          "ffmpeg": true,
+          "ffprobe": true,
+          "encoder": "libx264",
+          "hardware_encoders": [],
+          "reason": null
+        },
+        "cookie_login": true,
+        "hls_segments_decoded_by_ffmpeg": true,
+        "subtitle_webvtt": true
+      }
+    }
+  ]
+}

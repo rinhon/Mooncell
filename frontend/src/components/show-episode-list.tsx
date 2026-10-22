@@ -1,11 +1,15 @@
 import { useEffect, useRef, useState } from "react"
-import { FileVideo2 } from "lucide-react"
+import { FileVideo2, Pencil, Play } from "lucide-react"
+import { Link } from "react-router-dom"
 import type { Show, ShowEpisode } from "@/lib/api"
 import { artworkUrl, posterUrl } from "@/lib/show-artwork"
 import { BlurFade } from "@/components/ui/blur-fade"
 import { Button } from "@/components/ui/button"
+import { RenameEpisodeDialog } from "@/components/rename-episode-dialog"
+import { formatTime } from "@/lib/player/types"
 
 const BATCH_SIZE = 12
+const NEW_EPISODE_WINDOW = 7 * 24 * 60 * 60 * 1000
 
 function fileSize(size: number) {
   if (size >= 1024 ** 3) return `${(size / 1024 ** 3).toFixed(2)} GB`
@@ -18,13 +22,21 @@ function EpisodeThumbnail({ show, item }: { show: Show; item: ShowEpisode }) {
   const fallback = show.fanart_ready ? artworkUrl(show, "fanart") : posterUrl(show)
   const [failed, setFailed] = useState<string[]>([])
   const src = [item.thumbnail_url, fallback].find(url => url && !failed.includes(url))
-  return <span className="release-thumbnail">{src ? <img src={src} alt="" loading="lazy" onError={() => setFailed(previous => [...previous, src])}/> : <FileVideo2 size={25} aria-hidden="true"/>}</span>
+  const image = src ? <img src={src} alt="" loading="lazy" onError={() => setFailed(previous => [...previous, src])}/> : <FileVideo2 size={25} aria-hidden="true"/>
+  const playLabel = item.progress?.completed ? "重新播放" : item.progress && item.progress.position > 0 ? "继续播放" : "播放"
+  if (!item.media_id || item.rename_pending) return <span className="release-thumbnail">{image}</span>
+  return <Link className="release-thumbnail episode-thumbnail-playable" to={`/watch/${item.media_id}`} aria-label={`${playLabel} ${item.filename}`} title={playLabel}>
+    {image}
+    <span className="episode-play-overlay" aria-hidden="true"><span className="episode-play-icon"><Play size={18} fill="currentColor"/></span></span>
+  </Link>
 }
 
 export function ShowEpisodeList({ show, items }: { show: Show; items: ShowEpisode[] }) {
   const [visibleCount, setVisibleCount] = useState(BATCH_SIZE)
+  const [renaming, setRenaming] = useState<ShowEpisode | null>(null)
   const sentinel = useRef<HTMLDivElement>(null)
   const hasMore = visibleCount < items.length
+  const now = Date.now()
   useEffect(() => {
     const element = sentinel.current
     if (!element || !hasMore || !("IntersectionObserver" in window)) return
@@ -40,20 +52,28 @@ export function ShowEpisodeList({ show, items }: { show: Show; items: ShowEpisod
 
   return <>
     <ul className="release-list episode-list" aria-label="本地视频文件">
-      {items.slice(0, visibleCount).map((item, index) => <li key={item.path}>
+      {items.slice(0, visibleCount).map((item, index) => {
+        const addedAt = item.added_at ? Date.parse(item.added_at) : NaN
+        const isNew = addedAt <= now && now - addedAt < NEW_EPISODE_WINDOW
+        return <li key={item.path}>
         <BlurFade className="release-row" delay={Math.min(index % BATCH_SIZE, 6) * .06} duration={.4} offset={8} inView inViewMargin="0px">
           <EpisodeThumbnail show={show} item={item}/>
           <div className="release-copy">
-            <h3>{show.media_type === "movie" || item.episode_start == null ? item.filename : `第 ${item.episode_start}${item.episode_end != null && item.episode_end !== item.episode_start ? `–${item.episode_end}` : ""} 集`}</h3>
+            <h3 className="episode-title"><span>{show.media_type === "movie" || item.episode_start == null ? item.filename : `第 ${item.episode_start}${item.episode_end != null && item.episode_end !== item.episode_start ? `–${item.episode_end}` : ""} 集`}</span>{isNew && <span className="episode-new-badge" aria-label="最近 7 天新增" title="最近 7 天新增">NEW</span>}</h3>
             {show.media_type !== "movie" && item.episode_start != null && <p className="episode-filename">{item.filename}</p>}
             <p className="release-fields"><span>{fileSize(item.size)}</span><span>{item.filename.split(".").pop()?.toUpperCase()}</span></p>
+            {item.progress && item.progress.position > 0 && <p className="episode-filename">{item.progress.completed ? "已看完" : `已观看 ${formatTime(item.progress.position)} / ${formatTime(item.progress.duration)}`}</p>}
           </div>
-          <span className="release-status episode-file-status">本地文件</span>
+          <div className="episode-actions">
+            {item.rename_pending ? <span className="release-status episode-file-status" role="status">改名中…</span> : !item.media_id && <span className="release-status episode-file-status">本地文件</span>}
+            <Button type="button" variant="ghost" size="sm" icon={Pencil} disabled={!item.media_id || item.rename_pending} aria-label={`改名 ${item.filename}`} onClick={() => setRenaming(item)}>改名</Button>
+          </div>
         </BlurFade>
-      </li>)}
+      </li>})}
     </ul>
     <div ref={sentinel} className="episode-load-status" aria-live="polite">
       {hasMore ? <Button variant="ghost" size="sm" onClick={() => setVisibleCount(count => count + BATCH_SIZE)}>加载更多</Button> : items.length > 0 && <span>共 {items.length} 个视频文件</span>}
     </div>
+    {renaming && <RenameEpisodeDialog sourceId={show.id} episode={renaming} onClose={() => setRenaming(null)}/>}
   </>
 }

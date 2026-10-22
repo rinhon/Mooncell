@@ -19,6 +19,7 @@ from .database import SessionFactory
 from .downloader_service import extract_info_hash
 from .library import get_library_root
 from .models import DownloaderConfig, DownloadJob, FeedItem, FeedSource
+from .notifications import notify_task
 from .qb_tags import show_tag, sync_show_tag
 from .release_parser import parse_release_title
 from .release_versions import release_identity, select_revisions
@@ -119,11 +120,13 @@ async def enqueue_source(session, source):
         if predecessors and not manual:
             # 沿用旧版实际媒体库名称，保留此前的人工修正。
             library_title = max(predecessors, key=lambda pair: pair[1])[0].title
-        await session.execute(insert(DownloadJob).values(
+        job_id = await session.scalar(insert(DownloadJob).values(
             item_id=item.id, info_hash=info_hash, downloader_id=config.id,
             target_root=root, title=library_title,
             season=season, state="queued",
-        ).on_conflict_do_nothing())
+        ).on_conflict_do_nothing().returning(DownloadJob.id))
+        if job_id is not None:
+            await notify_task(session, item, "download_added", source=source)
 
 
 def subtitle_language(path):
@@ -275,6 +278,11 @@ async def process_job(session, job, config, item):
             raise DownloadDeliveryError("qBittorrent 拒绝登录，请检查凭据")
         response = await request(client, "GET", "torrents/info", params={"hashes": job.info_hash})
         torrents = response.json()
+        if job.plan and "episode_rename" in json.loads(job.plan):
+            from .episode_rename import advance_rename
+
+            await advance_rename(session, client, job, item.source_id)
+            return
         if job.plan and "season_change" in json.loads(job.plan):
             from .season_change import advance_season_change
 
@@ -482,12 +490,20 @@ async def process_queue():
                 item = await session.get(FeedItem, job.item_id)
                 source = await session.get(FeedSource, item.source_id) if item else None
                 migrating = job.state == "season_changing"
+                renaming = bool(job.plan and json.loads(job.plan).get("episode_rename"))
                 if not config or not config.active or not source:
+                    if renaming and source:
+                        job.last_error = "请启用此任务的 qBittorrent 下载器，单集改名将在后台继续"
+                        await session.commit()
                     if migrating:
                         job.last_error = "请启用此任务对应的下载器，媒体库迁移将在后台继续"
                         await update_migration(session, job, "blocked", job.last_error,
                                                "downloader_disabled")
                         await commit_and_publish(session)
+                    continue
+                if renaming and config.kind != "qbittorrent":
+                    job.last_error = "单集改名需要此任务原有的 qBittorrent 下载器配置"
+                    await session.commit()
                     continue
                 if migrating and config.kind != "qbittorrent":
                     job.last_error = "媒体库迁移需要此任务原有的 qBittorrent 下载器配置"
@@ -495,7 +511,14 @@ async def process_queue():
                                            "downloader_changed")
                     await commit_and_publish(session)
                     continue
-                if not source.active and not migrating:
+                if not source.active and not migrating and not renaming:
+                    continue
+                if not renaming and await session.scalar(
+                    select(DownloadJob.id).join(FeedItem).where(
+                        FeedItem.source_id == source.id,
+                        DownloadJob.plan.contains('"episode_rename"'),
+                    ).limit(1),
+                ):
                     continue
                 if (migrating and not source.active
                         and json.loads(job.plan)["season_change"]["previous_state"] == "queued"):
@@ -540,6 +563,9 @@ async def process_queue():
                             "retry_seconds": delay,
                         })
                     job.last_error = error
+                if job.state == "needs_review":
+                    await notify_task(session, item, "review_required", source=source,
+                                      reason=job.last_error)
                 await commit_and_publish(session)
 
 

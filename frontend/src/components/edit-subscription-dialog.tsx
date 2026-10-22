@@ -89,7 +89,7 @@ export function EditSubscriptionDialog({ feed, onClose }: { feed: Feed; onClose:
           <input type="checkbox" checked={active} onChange={(event) => setActive(event.target.checked)} disabled={save.isPending} className="size-4 accent-[var(--accent)]"/>
           {collection ? "启用合集下载与整理" : "启用订阅（自动刷新和下载）"}
         </label>
-        {save.error && <p role="alert" className="rounded-[2px] bg-[var(--danger-soft)] px-3 py-2 text-sm text-[var(--danger)]">{save.error.message}</p>}
+        {save.error && <p role="alert" className="rounded-[var(--radius-control)] bg-[var(--danger-soft)] px-3 py-2 text-sm text-[var(--danger)]">{save.error.message}</p>}
         <DialogFooter>
           <Button type="button" variant="secondary" disabled={save.isPending} onClick={onClose}>取消</Button>
           <Button disabled={save.isPending || !name.trim() || !url.trim()}>{save.isPending ? "保存中…" : "保存修改"}</Button>

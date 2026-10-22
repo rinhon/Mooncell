@@ -12,7 +12,7 @@ from test_feed_creation import feed_app as feed_app
 
 from app import collections, download_queue, subscription_settings
 from app.collection_plan import build_collection_plan, collection_title
-from app.models import DownloaderConfig, DownloadJob, FeedItem, FeedSource
+from app.models import BackgroundOperation, DownloaderConfig, DownloadJob, FeedItem, FeedSource
 from app.release_parser import parse_release_title
 
 HASH = "5ff6dd449f7f2a37bc763a2c995648c0dad623d8"
@@ -141,6 +141,11 @@ async def test_create_scrapes_and_enqueues_once_without_rss_refresh(collection_a
         assert job.info_hash == HASH and job.season == 2 and job.state == "queued"
         item = await session.get(FeedItem, job.item_id)
         assert "magnet_collection" in json.loads(item.parse_data)["evidence"]
+        notices = list(await session.scalars(select(BackgroundOperation).where(
+            BackgroundOperation.kind == "download_added",
+        )))
+        assert len(notices) == 1 and notices[0].source_id == source_id
+        assert notices[0].attention_revision > notices[0].read_revision
         source.active = True
         await session.commit()
     monkeypatch.setattr(subscription_settings, "SessionFactory", sessions)

@@ -4,7 +4,7 @@
   --st-fuse: #29f524;
   --st-fuse-h: 2px;
   --st-w: 356px;
-  --st-radius: 2px;
+  --st-radius: var(--radius-card);
   --st-slide: 400ms;
   --st-gap: 10px;
   --st-offset: 32px;
@@ -184,7 +184,7 @@
 .swipe-toast__action {
   height: 24px;
   padding: 0 8px;
-  border-radius: 5px;
+  border-radius: var(--radius-control);
   background: var(--st-ink);
   color: var(--st-bg);
   font-size: 12px;
@@ -197,7 +197,7 @@
   place-items: center;
   width: 24px;
   height: 24px;
-  border-radius: 5px;
+  border-radius: var(--radius-inset);
   background: transparent;
   color: inherit;
 }

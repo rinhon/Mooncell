@@ -1,0 +1,223 @@
+{
+  "date_beijing": "2026-10-20",
+  "passed": true,
+  "scope": "Isolated production frontend + Linux libx264 HLS container resources",
+  "frontend_build": {
+    "captured_utc": "2026-10-20T06:16:42.031499+00:00",
+    "index_mtime_utc": "2026-10-20T05:38:50.933923+00:00",
+    "index_sha256": "1a3ef81bcaf7f3cd5b68601cd3a5ccc1597b24d12dfa6efb573b93426777ae35",
+    "assets": [
+      "/assets/index-CrvD4bNo.js",
+      "/assets/framework-C1SxMa8d.js",
+      "/assets/motion-CbK1R617.js",
+      "/assets/visual-effects-DQAAMbCu.js",
+      "/assets/index-DUwYTdKY.css"
+    ]
+  },
+  "subsequent_frontend_fix": "Same-media re-entry progress query lifecycle; verified separately after this long run, not a second long run",
+  "subsequent_frontend_validation": {
+    "build_utc": "2026-10-20T06:17:15.352+00:00",
+    "index_sha256": "58bbeb6d857be9793a607d973a9bd1435d215178d2a82aa51e2d84f763f8a2ec",
+    "same_media_reentry_source_seconds": 1800,
+    "initial_slider_after_reentry_seconds": 1800,
+    "playing_after_reentry": true,
+    "source": "Root browser verification after the long run"
+  },
+  "started_utc": "2026-10-20T05:42:46.326543+00:00",
+  "finished_utc": "2026-10-20T06:12:46.820263+00:00",
+  "started_beijing": "2026-10-20T13:42:46.326543+08:00",
+  "finished_beijing": "2026-10-20T14:12:46.820263+08:00",
+  "duration_seconds": 1800.0,
+  "sample_interval_seconds": 15,
+  "samples": 121,
+  "attempts": 121,
+  "sampling_errors": [],
+  "source": {
+    "duration_seconds": 2000.020996,
+    "width": 1280,
+    "height": 720,
+    "video_codec": "h264",
+    "audio_codec": "aac",
+    "synthetic": true
+  },
+  "encoder": "libx264",
+  "backend_container_pid": 7,
+  "ffmpeg_container_pids": [
+    385
+  ],
+  "ffmpeg_max_count": 1,
+  "ffmpeg_count_within_one_at_all_samples": true,
+  "warmup_seconds": 120,
+  "backend_rss_first_10min_after_warmup": {
+    "samples": 41,
+    "start_elapsed_seconds": 120.0,
+    "end_elapsed_seconds": 720.0,
+    "mean_bytes": 110263321,
+    "median_bytes": 110362624,
+    "min_bytes": 109187072,
+    "max_bytes": 110895104,
+    "first_bytes": 109260800,
+    "last_bytes": 110284800,
+    "slope_bytes_per_minute": 68299
+  },
+  "backend_rss_last_10min": {
+    "samples": 41,
+    "start_elapsed_seconds": 1200.0,
+    "end_elapsed_seconds": 1800.0,
+    "mean_bytes": 110419568,
+    "median_bytes": 110407680,
+    "min_bytes": 109891584,
+    "max_bytes": 110907392,
+    "first_bytes": 110739456,
+    "last_bytes": 110518272,
+    "slope_bytes_per_minute": -3613
+  },
+  "backend_mean_rss_change_bytes": 156247,
+  "ffmpeg_rss_first_10min_after_warmup": {
+    "samples": 41,
+    "start_elapsed_seconds": 120.0,
+    "end_elapsed_seconds": 720.0,
+    "mean_bytes": 132074321,
+    "median_bytes": 131964928,
+    "min_bytes": 131473408,
+    "max_bytes": 132829184,
+    "first_bytes": 131907584,
+    "last_bytes": 132661248,
+    "slope_bytes_per_minute": 31486
+  },
+  "ffmpeg_rss_last_10min": {
+    "samples": 41,
+    "start_elapsed_seconds": 1200.0,
+    "end_elapsed_seconds": 1800.0,
+    "mean_bytes": 131992002,
+    "median_bytes": 132046848,
+    "min_bytes": 130912256,
+    "max_bytes": 132980736,
+    "first_bytes": 131579904,
+    "last_bytes": 132980736,
+    "slope_bytes_per_minute": 78988
+  },
+  "cache_peak_logical_bytes": 85590563,
+  "cache_peak_linux_allocated_bytes": 85762048,
+  "cache_last_logical_bytes": 39394340,
+  "cache_peak_segments": 89,
+  "cache_last_segments": 40,
+  "final_session": {
+    "id": "0c657775888f4675b4fa92070157ccd9",
+    "generation": 3,
+    "status": "ready",
+    "error": null,
+    "process_state": "running",
+    "cached_ranges": [
+      [
+        1785.0,
+        1926.0
+      ]
+    ]
+  },
+  "post_player_unmount": {
+    "utc": "2026-10-20T06:13:56.566676+00:00",
+    "ffmpeg_count": 0,
+    "ffprobe_count": 0,
+    "processes": [
+      {
+        "container_pid": 7,
+        "container_ppid": 1,
+        "name": "uvicorn",
+        "status": "sleeping",
+        "rss": 110526464,
+        "vms": 169873408,
+        "threads": 15,
+        "cpu_user_seconds": 44.85,
+        "cpu_system_seconds": 77.61,
+        "open_files": 7
+      }
+    ],
+    "cache": {
+      "bytes": 58651571,
+      "allocated_bytes": 58765312,
+      "segments": 60,
+      "temporary_files": 0,
+      "session_directories": 1,
+      "raced_files": 0,
+      "disk_playlists": [
+        {
+          "relative_path": "session-0c657775888f4675b4fa92070157ccd9/generation-3/index.m3u8",
+          "published_entries": 60,
+          "endlist": true
+        }
+      ],
+      "note": "bytes covers all on-disk files including temporary/retired generations; disk playlist entries are not the API in-memory segment registry"
+    },
+    "cgroup_memory_breakdown": {
+      "anon": 92655616,
+      "file": 77807616,
+      "kernel": 39366656,
+      "slab": 38582272,
+      "file_mapped": 28786688,
+      "file_dirty": 0,
+      "file_writeback": 0
+    }
+  },
+  "cleanup": {
+    "finished_utc": "2026-10-20T06:22:03.962877+00:00",
+    "passed": true,
+    "final_player_close_ffmpeg_zero": true,
+    "normal_backend_stop_exit_code": 143,
+    "application_shutdown_complete": true,
+    "shutdown_complete_log_occurrences": 2,
+    "old_session_directories": 7,
+    "startup_cleanup_passed": true,
+    "restart_cache_entries": [
+      ".worker.lock"
+    ],
+    "restart_cache_bytes": 1,
+    "final_backend_stop_exit_code": 143,
+    "final_nginx_stop_exit_code": 0,
+    "containers_and_networks_removed": true,
+    "port_33100_closed": true,
+    "validation_data_and_images_preserved": true
+  },
+  "provenance": [
+    {
+      "path": ".cache\\playback-browser-stability\\observation-20261020-054246.jsonl",
+      "sha256": "4383c32f0ab020e04b723760a399b0391a91b6dbf744e8d65be4b059c475c140"
+    },
+    {
+      "path": ".cache\\playback-browser-stability\\observation-20261020-054246.summary.json",
+      "sha256": "6d7e3b61ca195a2b7ef2bae74d58165205d49996f9240f15bbb9b1e19e063e9c"
+    },
+    {
+      "path": ".cache\\playback-browser-stability\\post-close-resource.json",
+      "sha256": "52dd1632376d24aa1c2743719bb784d241eb1b05eed0ec5ed2d9d322d0816096"
+    },
+    {
+      "path": ".cache\\playback-browser-stability\\session-snapshot-20261020-061313.json",
+      "sha256": "c3b69233c18958dcdaa522753048963f8d62affdda7e54489ff97ed37ab8071f"
+    },
+    {
+      "path": ".cache\\playback-browser-stability\\frontend-build-observed-after-long-run.json",
+      "sha256": "3a18c80f036b3a4a6319983a3a7a0566b0a34cb6377382d456b0393d904e1870"
+    },
+    {
+      "path": ".cache\\playback-browser-stability\\container-cleanup-result.json",
+      "sha256": "a7c7f357f135aeba9c80c3ec7e822f1883aa9673a9b2a99a65aeb58d94dfe4f5"
+    },
+    {
+      "path": ".cache\\playback-browser-stability\\mooncell-playback-stability-backend-final.log",
+      "sha256": "518aa5e4431bd551bb703bf52825b616062e752cbb15b3b42c468fadf01ceb28"
+    },
+    {
+      "path": ".cache\\playback-browser-stability\\mooncell-playback-stability-nginx-final.log",
+      "sha256": "570ddd8e3525e6438e1799056015abec28059ce0d76e0a20909394bfcd98dac7"
+    }
+  ],
+  "measurement_limits": [
+    "Process counts are sampled every 15 seconds.",
+    "RSS covers the Linux backend and child FFmpeg processes; Chrome RSS was not measured.",
+    "GPU telemetry is shared across host processes and cannot isolate the browser's GPU usage.",
+    "NVENC continuous encoding and 12-second independent HLS tests have separate evidence.",
+    "Cache bytes include temporary files, old generations, and closed-session grace caches.",
+    "Disk FFmpeg playlists are not the API in-memory segment registry."
+  ]
+}

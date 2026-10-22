@@ -1,6 +1,5 @@
 import type { ReactNode } from "react"
 import { Link } from "react-router-dom"
-import { useReducedMotion } from "motion/react"
 import { AddSubscriptionButton } from "@/components/add-subscription-button"
 import { PageHeading } from "@/components/page-heading"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -17,23 +16,19 @@ export function DashboardRecent({ children, loading = false }: { children: React
 }
 
 export function DashboardLoading() {
-  const reducedMotion = useReducedMotion()
-  return <>
+  return <div className="dashboard-loading">
     <DashboardHeading loading/>
     <div role="status" aria-label="正在加载首页" aria-busy="true">
       <span className="sr-only">正在读取首页番剧订阅…</span>
       <div aria-hidden="true">
-        <div className="dashboard-gallery-skeleton">{[0, 1, 2, 3].map(index => <div key={index} className="relative min-h-0 min-w-0 overflow-hidden rounded-[2px]">
+        <div className="dashboard-gallery-skeleton">{[0, 1, 2, 3].map(index => <div key={index} className="relative min-h-0 min-w-0 overflow-hidden rounded-[var(--radius-card)]">
           <Skeleton className="absolute inset-0 size-full"/>
           {index === 0 && <div className="absolute inset-x-6 bottom-7 grid gap-3"><Skeleton className="h-8 w-3/4"/><Skeleton className="h-4 w-2/3"/><Skeleton className="mt-1 h-10 w-28"/></div>}
         </div>)}</div>
-        {!reducedMotion && <div className="continue-controls dashboard-controls-skeleton"><Skeleton className="h-8 w-36"/></div>}
         <DashboardRecent loading>{[0, 1, 2, 3, 4].map(index => <div className="recent-item" key={index}>
           <span className="recent-image"><Skeleton className="size-full"/></span>
-          <Skeleton className="mx-auto mt-[7px] h-5 w-3/4"/>
-          <Skeleton className="mx-auto mt-0.5 h-[18px] w-1/2"/>
         </div>)}</DashboardRecent>
       </div>
     </div>
-  </>
+  </div>
 }

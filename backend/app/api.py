@@ -10,6 +10,7 @@ from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from pathlib import Path
 
+import httpx
 from fastapi import (
     APIRouter,
     BackgroundTasks,
@@ -38,6 +39,7 @@ from .database import SessionFactory, get_session
 from .dependencies import optional_user, require_user
 from .download_queue import queue_lock, remote_root
 from .downloader_service import extract_info_hash, get_qbittorrent_snapshot, test_downloader
+from .episode_rename import schedule_rename
 from .events import EventMessage, broker, commit_and_publish, event_log_fields, record_event
 from .library import get_library_root
 from .library_scan import local_image
@@ -49,6 +51,8 @@ from .models import (
     EpisodeThumbnail,
     FeedItem,
     FeedSource,
+    MediaFile,
+    PlaybackProgress,
     ShowArtwork,
     ShowMetadata,
     TmdbSettings,
@@ -60,8 +64,10 @@ from .notifications import (
     LABELS,
     cancel_source_operations,
     create_operation,
+    notify_task,
     transition,
 )
+from .playback.media import register_library_media
 from .providers.tmdb import scrape_tmdb, search_tmdb
 from .release_parser import parse_release_title
 from .rss_service import FeedRefreshService, describe_rss_exception, inspect_feed
@@ -77,6 +83,8 @@ from .schemas import (
     DownloaderTestResult,
     DownloaderUpdate,
     DownloadTaskRead,
+    EpisodeRenameRead,
+    EpisodeRenameRequest,
     FeedCreate,
     FeedInspectRequest,
     FeedInspectResult,
@@ -303,7 +311,7 @@ async def create_feed(
 async def _create_scrape_operation(session, user_id, source, kind):
     for previous in await session.scalars(select(BackgroundOperation).where(
         BackgroundOperation.source_id == source.id,
-        BackgroundOperation.kind != "library_migration",
+        BackgroundOperation.kind.in_(["feed_scrape", "metadata_refresh", "artwork_scrape"]),
         BackgroundOperation.status.in_(ACTIVE),
     )):
         transition(session, previous, "cancelled", "已被新的刮削请求取代")
@@ -604,6 +612,9 @@ async def delete_feed(
         )))
         await session.delete(source)
         await commit_and_publish(session)
+        from .playback.leases import finish_mutation
+
+        finish_mutation(source_id)
     return ApiMessage(message="来源已删除")
 
 
@@ -721,11 +732,32 @@ async def get_show_library(
             scan_show_library, directory, source.season,
             bool(source.show_metadata and source.show_metadata.media_type == "movie"),
         )
+        await register_library_media(session, source_id, library, directory)
+        progress = {}
+        if user_id := getattr(_user, "id", None):
+            progress = {item.media_id: item for item in await session.scalars(
+                select(PlaybackProgress).join(MediaFile).where(
+                    PlaybackProgress.user_id == user_id, MediaFile.source_id == source_id,
+                ),
+            )}
         thumbnails = {item.video_path: item for item in await session.scalars(
             select(EpisodeThumbnail).where(EpisodeThumbnail.source_id == source_id),
         )}
+        renaming = set()
+        for raw_plan in await session.scalars(select(DownloadJob.plan).join(FeedItem).where(
+            FeedItem.source_id == source_id, DownloadJob.plan.contains('"episode_rename"'),
+        )):
+            pending = json.loads(raw_plan).get("episode_rename", {})
+            renaming.update([pending.get("relative"), pending.get("target")])
         for group in library.seasons:
             for episode in group.items:
+                episode.rename_pending = episode.path in renaming
+                saved = progress.get(episode.media_id)
+                if saved:
+                    episode.progress = {
+                        "position": saved.position, "duration": saved.duration,
+                        "completed": saved.completed, "updated_at": saved.updated_at,
+                    }
                 thumbnail = thumbnails.get(episode.path)
                 if thumbnail:
                     episode.thumbnail_url = (
@@ -737,6 +769,32 @@ async def get_show_library(
         raise HTTPException(403, "没有权限读取作品文件夹") from exc
     except OSError as exc:
         raise HTTPException(503, "作品文件夹暂时无法读取，请确认媒体库可访问") from exc
+
+
+@router.post("/shows/{source_id}/episodes/rename", response_model=EpisodeRenameRead)
+async def rename_show_episode(
+    source_id: int, data: EpisodeRenameRequest, response: Response,
+    _user: User = Depends(require_user), session: AsyncSession = Depends(get_session),
+) -> EpisodeRenameRead:
+    from .playback.media import MediaError
+
+    async with queue_lock:
+        try:
+            job, pending = await schedule_rename(session, source_id, data.media_id, data.filename)
+        except MediaError as exc:
+            raise HTTPException(exc.status, exc.message) from exc
+        except httpx.HTTPError as exc:
+            raise HTTPException(502, "无法连接 qBittorrent，请检查下载器设置后重试") from exc
+        except ValueError as exc:
+            raise HTTPException(409, str(exc)) from exc
+        except OSError as exc:
+            raise HTTPException(503, "媒体库暂时无法访问，请稍后重试") from exc
+    waiting = job.state != "done"
+    response.status_code = 202 if waiting else 200
+    return EpisodeRenameRead(
+        message="已提交改名，完成后列表会自动更新" if waiting else "文件名已修改",
+        path=pending["target"], filename=data.filename, pending=waiting,
+    )
 
 
 @router.get("/shows/{source_id}/thumbnails/{thumbnail_id}", response_class=FileResponse)
@@ -1134,6 +1192,9 @@ async def retry_download(
                 ), season=season,
             )
             session.add(job)
+            await session.flush()
+            await notify_task(session, item, "download_added", source=source,
+                              user_id=getattr(_user, "id", None))
         job.state = "queued"
         job.plan = None
         job.last_error = None

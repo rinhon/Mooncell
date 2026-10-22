@@ -704,3 +704,35 @@ async def test_periodic_cleanup_removes_previously_completed_migration_directori
     assert await cleanup_stale_temporary_directories() > 0
     assert not temporary.exists()
     assert fake.path(HASH, fake.files[HASH][0]["name"]).read_text(encoding="utf-8") == "content-0"
+
+
+async def test_playing_source_defers_migration_and_releases_after_completion(season_app):
+    from app.playback.leases import (
+        acquire_source,
+        ensure_source_available,
+        finish_mutation,
+        release_source,
+    )
+    from app.playback.media import MediaError
+
+    api, sessions, fake, root = season_app
+    original, _plan = await seed(sessions, fake, root)
+    finish_mutation(1)
+    acquire_source(1)
+    try:
+        assert (await api.patch("/api/v1/feeds/1", json={"season": 2})).status_code == 200
+        await download_queue.process_queue()
+        assert not any(endpoint == "setLocation" for endpoint, _ in fake.calls)
+        assert (original / "番名 S01E05.5.mkv").exists()
+        async with sessions() as session:
+            job = await session.get(DownloadJob, 1)
+            assert "正在播放" in job.last_error and job.state == "season_changing"
+        with pytest.raises(MediaError) as error:
+            acquire_source(1)
+        assert error.value.code == "media_migrating"
+        release_source(1)
+        await finish(sessions)
+        ensure_source_available(1)
+    finally:
+        release_source(1)
+        finish_mutation(1)

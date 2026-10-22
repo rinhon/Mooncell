@@ -5,7 +5,7 @@ import { EditSubscriptionDialog } from "@/components/edit-subscription-dialog"
 import { FeedClearlogo } from "@/components/feed-clearlogo"
 import { FeedsHeading, FeedsLoading, FeedsSection } from "@/components/feeds-loading"
 import { NativeButton } from "@/components/ui/button"
-import { useState, type FormEvent, type ReactNode } from "react"
+import { useRef, useState, type FormEvent, type ReactNode } from "react"
 import { ContextMenu, Tabs } from "radix-ui"
 import { AnimatePresence, LayoutGroup, motion, useIsPresent, useReducedMotion } from "motion/react"
 import { useNavigate } from "react-router-dom"
@@ -14,6 +14,7 @@ import { Check, ImageOff, LoaderCircle, MoreHorizontal, Pencil, RefreshCw, Radio
 import { api, ApiError, type Show, type Feed, type FeedInspection, type TmdbCandidate, type TmdbMetadata } from "@/lib/api"
 import { Badge } from "@/components/ui/badge"
 import { BlurFade } from "@/components/ui/blur-fade"
+import { Confetti, type ConfettiRef } from "@/components/ui/confetti"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
 import { Field } from "@/components/field"
@@ -21,7 +22,18 @@ import { TagInput } from "@/components/ui/tag-input"
 import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { useToast } from "@/components/ui/toast"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
+
+function FeedConnectionStatus({ feed }: { feed: Feed }) {
+  const status = <Badge tone={feed.connection_status === "healthy" ? "success" : feed.connection_status === "error" ? "danger" : "neutral"}>{feed.connection_status === "healthy" ? "正常" : feed.connection_status === "error" ? "异常" : "未检查"}</Badge>
+  if (!feed.last_error) return status
+
+  return <Tooltip>
+    <TooltipTrigger asChild><NativeButton type="button" aria-label={`${feed.name}：连接状态，查看异常详情`} className="cursor-help rounded-[var(--radius-inset)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent)]">{status}</NativeButton></TooltipTrigger>
+    <TooltipContent side="top" align="start" className="max-w-[min(22rem,calc(100vw-2rem))] whitespace-pre-wrap break-words leading-5 [overflow-wrap:anywhere]">{feed.last_error}</TooltipContent>
+  </Tooltip>
+}
 
 function SubscriptionPanel({ value, children }: { value: string; children: ReactNode }) {
   const present = useIsPresent()
@@ -30,7 +42,7 @@ function SubscriptionPanel({ value, children }: { value: string; children: React
     inert={!present} aria-hidden={!present || undefined}
     initial={reducedMotion ? false : { opacity: 0, y: 5 }}
     animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: reducedMotion ? 0 : -3 }}
-    transition={{ duration: reducedMotion ? 0 : present ? .22 : .1, ease: [.22, 1, .36, 1] }}
+    transition={reducedMotion ? { duration: 0 } : { type: "spring", stiffness: 400, damping: 32, opacity: { duration: present ? .18 : .1 } }}
   >{children}</motion.div></Tabs.Content>
 }
 
@@ -41,6 +53,10 @@ export function FeedsPage() {
   const navigate = useNavigate()
   const reducedMotion = useReducedMotion()
   const [open, setOpen] = useState(false)
+  const confettiRef = useRef<ConfettiRef>(null)
+  function celebrateSubscription() {
+    void confettiRef.current?.fire({ particleCount: 100, spread: 70, origin: { x: .5, y: .7 } })
+  }
   const [subscriptionTab, setSubscriptionTab] = useState("rss")
   const [editing, setEditing] = useState<Feed | null>(null)
   const [deleting, setDeleting] = useState<Feed | null>(null)
@@ -75,6 +91,7 @@ export function FeedsPage() {
       void client.invalidateQueries({ queryKey: ["dashboard"] })
       void client.invalidateQueries({ queryKey: ["shows"] })
       setExcludedKeywords(["720"]); setOpen(false); setName(""); setUrl(""); setSeason(""); setCandidates([]); setSelected(null); setMetadata(null)
+      celebrateSubscription()
     },
     onError: (error) => { redirectToSettings(error) },
   })
@@ -138,6 +155,7 @@ export function FeedsPage() {
   if (feeds.isPending || (!feeds.isError && Boolean(feeds.data?.length) && shows.isPending)) return <FeedsLoading count={feeds.data?.length}/>
 
   return <>
+    <Confetti ref={confettiRef} manualstart className="fixed inset-0 z-[100] h-full w-full"/>
     <FeedsHeading action={
       <Dialog open={open} onOpenChange={next => { if (next) { if (!prerequisites.isPending) prerequisites.mutate() } else setOpen(false) }}>
         <DialogTrigger asChild><AddSubscriptionButton pending={prerequisites.isPending}/></DialogTrigger>
@@ -145,9 +163,9 @@ export function FeedsPage() {
           <DialogHeader><DialogTitle>添加订阅</DialogTitle><DialogDescription>选择 RSS 订阅或磁力合集，匹配 TMDB 后下载整理。</DialogDescription></DialogHeader>
           <Tabs.Root value={subscriptionTab} onValueChange={setSubscriptionTab}>
             <LayoutGroup id="add-subscription-tabs">
-              <Tabs.List aria-label="添加方式" className="mb-5 grid grid-cols-2 gap-1 rounded-[2px] bg-[var(--surface)] p-1">
-                {[{ value: "rss", label: "RSS 订阅" }, { value: "magnet", label: "磁力合集" }].map(tab => <Tabs.Trigger key={tab.value} value={tab.value} className="relative isolate rounded-[2px] px-3 py-2 text-sm text-[var(--muted)] outline-none transition-colors duration-150 motion-reduce:transition-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] data-[state=active]:text-[var(--accent)]">
-                  {subscriptionTab === tab.value && <motion.span aria-hidden="true" layoutId={reducedMotion ? undefined : "active-tab"} initial={false} transition={{ type: "spring", stiffness: 300, damping: 30, mass: .8 }} className="absolute inset-0 -z-10 rounded-[2px] bg-[var(--accent-soft)]"/>}
+              <Tabs.List aria-label="添加方式" className="mb-5 grid grid-cols-2 gap-1 rounded-[var(--radius-control)] bg-[var(--surface)] p-1">
+                {[{ value: "rss", label: "RSS 订阅" }, { value: "magnet", label: "磁力合集" }].map(tab => <Tabs.Trigger key={tab.value} value={tab.value} className="relative isolate rounded-[var(--radius-inset)] px-3 py-2 text-sm text-[var(--muted)] outline-none transition-colors duration-150 motion-reduce:transition-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] data-[state=active]:text-[var(--accent)]">
+                  {subscriptionTab === tab.value && <motion.span aria-hidden="true" layoutId={reducedMotion ? undefined : "active-tab"} initial={false} transition={{ type: "spring", stiffness: 300, damping: 30, mass: .8 }} className="absolute inset-0 -z-10 rounded-[var(--radius-inset)] bg-[var(--accent-soft)]"/>}
                   {tab.label}
                 </Tabs.Trigger>)}
               </Tabs.List>
@@ -158,26 +176,26 @@ export function FeedsPage() {
             <Field label={<span className="inline-flex items-center gap-2">RSS 地址<a href={MIKAN_BASE_URL} target="_blank" rel="noopener noreferrer" className="text-xs font-normal text-[var(--accent)] hover:underline" aria-label="打开蜜柑计划（新标签页）">蜜柑计划 ↗</a></span>} hint="后端会读取频道 <title>，并自动清理 Mikan Project 前缀。"><div className="flex flex-col gap-2 sm:flex-row"><Input type="url" value={url} onChange={(event) => { setUrl(event.target.value); setCandidates([]); setSelected(null); setMetadata(null); tmdbSearch.reset() }} placeholder={`${MIKAN_BASE_URL}/RSS/...`} required/><Button type="button" variant="secondary" onClick={() => inspect.mutate()} disabled={!url || inspect.isPending}><ScanSearch size={15} className={inspect.isPending ? "animate-pulse" : ""}/>{inspect.isPending ? "解析中…" : "解析 RSS"}</Button></div></Field>
             <Field label="番剧名称" hint="解析完成后会自动搜索 TMDB；修改名称后可再次搜索。"><div className="flex flex-col gap-2 sm:flex-row"><Input value={name} onChange={(event) => setName(event.target.value)} placeholder="留空时由后端自动解析"/><Button type="button" variant="secondary" onClick={() => tmdbSearch.mutate(name)} disabled={!name || tmdbSearch.isPending}><ScanSearch size={15}/>{tmdbSearch.isPending ? "搜索中…" : "搜索 TMDB"}</Button></div></Field>
             {(tmdbSearch.isPending || tmdbSearch.isSuccess || candidates.length > 0) && <Field label="匹配 TMDB 条目" hint="选择正确的作品，Mooncell 会保存 TMDB ID 并刮削媒体信息。">
-              <div className="max-h-80 space-y-2 overflow-y-auto rounded-[2px] border border-[var(--border)] bg-[var(--surface)] p-2">
+              <div className="max-h-80 space-y-2 overflow-y-auto rounded-[var(--radius-card)] border border-[var(--border)] bg-[var(--surface)] p-2">
                 {tmdbSearch.isPending ? <div className="flex min-h-28 items-center justify-center gap-2 text-sm text-[var(--muted)]"><LoaderCircle className="animate-spin" size={17}/>正在搜索 TMDB…</div> : !candidates.length ? <div className="grid min-h-28 place-items-center px-4 text-center text-sm text-[var(--muted)]">没有找到匹配条目，请调整番剧名称后重新搜索。</div> : candidates.map((candidate) => {
                   const active = selected?.tmdb_id === candidate.tmdb_id && selected.media_type === candidate.media_type
-                  return <NativeButton key={`${candidate.media_type}-${candidate.tmdb_id}`} type="button" onClick={() => chooseCandidate(candidate)} className={`flex w-full gap-3 rounded-[2px] border p-2.5 text-left transition ${active ? "border-[var(--accent)] bg-[var(--accent-soft)] ring-2 ring-[var(--accent)]/60" : "border-transparent hover:border-[var(--border)] "}`}>
-                    <div className="grid h-[84px] w-14 shrink-0 place-items-center overflow-hidden rounded-[2px] bg-[var(--surface-raised)] text-[var(--muted)]">{candidate.poster_url ? <img src={candidate.poster_url} alt="" className="h-full w-full object-cover"/> : <ImageOff size={18}/>}</div>
+                  return <NativeButton key={`${candidate.media_type}-${candidate.tmdb_id}`} type="button" onClick={() => chooseCandidate(candidate)} className={`flex w-full gap-3 rounded-[var(--radius-control)] border p-2.5 text-left transition ${active ? "border-[var(--accent)] bg-[var(--accent-soft)] ring-2 ring-[var(--accent)]/60" : "border-transparent hover:border-[var(--border)] "}`}>
+                    <div className="grid h-[84px] w-14 shrink-0 place-items-center overflow-hidden rounded-[var(--radius-inset)] bg-[var(--surface-raised)] text-[var(--muted)]">{candidate.poster_url ? <img src={candidate.poster_url} alt="" className="h-full w-full object-cover"/> : <ImageOff size={18}/>}</div>
                     <div className="min-w-0 flex-1"><div className="flex items-start justify-between gap-2"><div><p className="font-semibold text-[var(--ink)]">{candidate.title}</p>{candidate.original_title && <p className="truncate text-[13px] text-[var(--muted)]">{candidate.original_title}</p>}</div>{active && <span className="grid size-6 shrink-0 place-items-center rounded-full bg-[var(--accent)] text-[var(--on-accent)]"><Check size={14}/></span>}</div><p className="mt-1 text-xs text-[var(--muted)]">{candidate.media_type === "tv" ? "电视节目" : "电影"} · TMDB #{candidate.tmdb_id}{candidate.release_date ? ` · ${candidate.release_date}` : ""}</p>{candidate.overview && <p className="mt-1.5 line-clamp-2 text-[13px] leading-5 text-[var(--muted)]">{candidate.overview}</p>}</div>
                   </NativeButton>
                 })}
               </div>
             </Field>}
-            {selected && <div className="rounded-[2px] border border-[var(--accent)] bg-[var(--accent-soft)] px-3 py-2.5 text-sm text-[var(--ink)]">{tmdbDetail.isPending ? <span className="flex items-center gap-2"><LoaderCircle className="animate-spin" size={15}/>正在刮削 TMDB #{selected.tmdb_id}…</span> : metadata ? <span className="flex items-center gap-2"><Check className="text-[var(--accent)]" size={15}/>已刮削：{metadata.title}{metadata.episode_count ? ` · ${metadata.episode_count} 集` : ""}{metadata.rating ? ` · ${metadata.rating} 分` : ""}</span> : "等待刮削结果"}</div>}
+            {selected && <div className="rounded-[var(--radius-control)] border border-[var(--accent)] bg-[var(--accent-soft)] px-3 py-2.5 text-sm text-[var(--ink)]">{tmdbDetail.isPending ? <span className="flex items-center gap-2"><LoaderCircle className="animate-spin" size={15}/>正在刮削 TMDB #{selected.tmdb_id}…</span> : metadata ? <span className="flex items-center gap-2"><Check className="text-[var(--accent)]" size={15}/>已刮削：{metadata.title}{metadata.episode_count ? ` · ${metadata.episode_count} 集` : ""}{metadata.rating ? ` · ${metadata.rating} 分` : ""}</span> : "等待刮削结果"}</div>}
             <Field label="排除关键词" hint="标题包含任意关键词的发布将被跳过，不区分大小写。默认排除 720（如 720p）；清空则不过滤。"><TagInput value={excludedKeywords} onChange={setExcludedKeywords} label="排除关键词" disabled={create.isPending}/></Field>
             <Field label="季度" hint="留空自动识别；填写后优先使用此季度，0 表示特别篇。"><Input type="number" min={0} max={99} step={1} value={season} onChange={(event) => setSeason(event.target.value)} placeholder="例如：1"/></Field>
             <Field label="类型"><Select value={kind} onValueChange={(value) => setKind(value as typeof kind)}><SelectTrigger><SelectValue/></SelectTrigger><SelectContent><SelectItem value="mikan">Mikan Project</SelectItem><SelectItem value="standard">标准 RSS / Atom</SelectItem></SelectContent></Select></Field>
-            {tmdbSearch.error && <p className="rounded-[2px] bg-[var(--danger-soft)] px-3 py-2 text-sm text-[var(--danger)]">{tmdbSearch.error.message}</p>}
-            {tmdbDetail.error && <p className="rounded-[2px] bg-[var(--danger-soft)] px-3 py-2 text-sm text-[var(--danger)]">{tmdbDetail.error.message}</p>}
-            {create.error && <p className="rounded-[2px] bg-[var(--danger-soft)] px-3 py-2 text-sm text-[var(--danger)]">{create.error.message}</p>}
+            {tmdbSearch.error && <p className="rounded-[var(--radius-control)] bg-[var(--danger-soft)] px-3 py-2 text-sm text-[var(--danger)]">{tmdbSearch.error.message}</p>}
+            {tmdbDetail.error && <p className="rounded-[var(--radius-control)] bg-[var(--danger-soft)] px-3 py-2 text-sm text-[var(--danger)]">{tmdbDetail.error.message}</p>}
+            {create.error && <p className="rounded-[var(--radius-control)] bg-[var(--danger-soft)] px-3 py-2 text-sm text-[var(--danger)]">{create.error.message}</p>}
             <DialogFooter><Button type="button" variant="secondary" onClick={() => setOpen(false)}>取消</Button><Button disabled={create.isPending || !metadata}>{create.isPending ? "保存中…" : "保存订阅"}</Button></DialogFooter>
           </form>
-            </SubscriptionPanel> : <SubscriptionPanel key="magnet" value="magnet"><MagnetCollectionForm onClose={() => setOpen(false)}/></SubscriptionPanel>}
+            </SubscriptionPanel> : <SubscriptionPanel key="magnet" value="magnet"><MagnetCollectionForm onClose={() => setOpen(false)} onAdded={celebrateSubscription}/></SubscriptionPanel>}
             </AnimatePresence>
           </Tabs.Root>
         </DialogContent>
@@ -186,15 +204,14 @@ export function FeedsPage() {
     <FeedsSection count={feeds.data?.length ?? 0}>
         {feeds.isError ? <div role="alert" className="p-5 text-sm text-[var(--danger)]">订阅读取失败：{feeds.error.message}<Button variant="secondary" size="sm" className="ml-3" onClick={() => void feeds.refetch()}>重试</Button></div> : !feeds.data?.length ? <div className="grid min-h-64 place-items-center p-5"><div className="text-center"><RadioTower className="mx-auto text-[var(--muted)]" size={30}/><p className="mt-3 text-sm font-medium">还没有 RSS 订阅</p><p className="mt-1 text-[13px] text-[var(--muted)]">先从 Mikan 复制一个番剧 RSS 地址。</p></div></div> : <div className="feed-list">{feeds.data.map((feed, index) => <BlurFade key={feed.id} className="feed-card-reveal min-w-0" delay={Math.min(index, 6) * 0.06} duration={0.4} offset={8} inView inViewMargin="0px"><ContextMenu.Root>
           <ContextMenu.Trigger asChild>
-            <div tabIndex={0} aria-label={`${feed.name}，右键打开订阅菜单`} className="feed-card flex flex-col gap-4 p-5 transition-colors duration-200 hover:bg-white/[.03] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent)]">
+            <div tabIndex={0} aria-label={`${feed.name}，右键打开订阅菜单`} className="feed-card flex flex-col gap-4 p-5 transition-colors duration-200 hover:border-[var(--accent)]/35 hover:bg-[var(--hover-background)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent)]">
               <div className="min-w-0 flex-1">
                 <p className="break-words text-base font-semibold leading-6">{feed.name}</p>
-                {feed.last_error && <p className="mt-3 break-words text-xs leading-5 text-[var(--danger)]">{feed.last_error}</p>}
               </div>
               {clearlogos.has(feed.id) && <div className="feed-card-clearlogo" aria-hidden="true"><FeedClearlogo show={clearlogos.get(feed.id)!}/></div>}
               <div className="feed-card-status">
                 <div className="feed-card-labels">
-                  <Badge tone={feed.connection_status === "healthy" ? "success" : feed.connection_status === "error" ? "danger" : "neutral"}>{feed.connection_status === "healthy" ? "正常" : feed.connection_status === "error" ? "异常" : "未检查"}</Badge>
+                  <FeedConnectionStatus feed={feed}/>
                   <Badge>{feed.kind === "magnet" ? "磁力合集" : feed.kind}</Badge>
                   {!feed.active && <Badge>已停用</Badge>}
                 </div>
@@ -207,9 +224,9 @@ export function FeedsPage() {
             </div>
           </ContextMenu.Trigger>
           <ContextMenu.Portal>
-            <ContextMenu.Content className="z-[70] min-w-36 rounded border border-[var(--border)] bg-[var(--surface)] p-1 shadow-xl">
-              <ContextMenu.Item onSelect={() => setEditing(feed)} className="flex cursor-default select-none items-center gap-2 rounded-sm px-3 py-2 text-sm outline-none data-[highlighted]:bg-[var(--accent-soft)]"><Pencil size={15}/>编辑订阅</ContextMenu.Item>
-              <ContextMenu.Item disabled={remove.isPending} onSelect={() => setDeleting(feed)} className="flex cursor-default select-none items-center gap-2 rounded-sm px-3 py-2 text-sm text-[var(--danger)] outline-none data-[highlighted]:bg-[var(--danger-soft)] data-[disabled]:opacity-50"><Trash2 size={15}/>删除订阅</ContextMenu.Item>
+            <ContextMenu.Content className="z-[70] min-w-36 overflow-hidden rounded-[var(--radius-card)] border border-[var(--border)] bg-[var(--navigation-background)] p-1 shadow-xl backdrop-blur-md">
+              <ContextMenu.Item onSelect={() => setEditing(feed)} className="flex cursor-default select-none items-center gap-2 rounded-[var(--radius-inset)] px-3 py-2 text-sm text-[var(--ink)] outline-none transition-colors data-[highlighted]:bg-[var(--accent-soft)] data-[highlighted]:text-[var(--accent)]"><Pencil size={15}/>编辑订阅</ContextMenu.Item>
+              <ContextMenu.Item disabled={remove.isPending} onSelect={() => setDeleting(feed)} className="flex cursor-default select-none items-center gap-2 rounded-[var(--radius-inset)] px-3 py-2 text-sm text-[var(--danger)] outline-none transition-colors data-[highlighted]:bg-[var(--danger-soft)] data-[disabled]:opacity-50"><Trash2 size={15}/>删除订阅</ContextMenu.Item>
             </ContextMenu.Content>
           </ContextMenu.Portal>
         </ContextMenu.Root></BlurFade>)}</div>}

@@ -21,12 +21,13 @@ RSS 订阅 → 标题与集数解析 → 下载筛选 → qBittorrent 下载 →
 | 元数据与图片 | TMDB 搜索、元数据与图片刮削、图片上传 |
 | 追番日历 | 从 yuc.wiki 缓存季度新番，自动检查季度切换 |
 | 账户 | 首次启动创建唯一管理员账户 |
+| 在线播放 | 实时 HLS 转码、全片跳转、字幕、选集、续播及可选 WebGPU Anime4K 增强；见[播放说明](docs/PLAYBACK.md) |
 
 **当前限制：** aria2 仅支持连接配置与测试；自动整理使用 `downloader_managed` 策略，暂不执行硬链接或复制。详细规则见[使用指南](docs/USAGE.md)。
 
 ## 快速启动
 
-推荐使用 Docker Compose。以下命令均在项目根目录的 PowerShell 中执行。
+推荐使用 Docker Compose。前后端打包为一个 `mooncell:local` 镜像，由同一个容器提供 WebUI 和 API。以下命令均在项目根目录的 PowerShell 中执行。
 
 ### 1. 配置环境变量
 
@@ -48,9 +49,13 @@ MOONCELL_LIBRARY_PATH=D:/Media/Anime
 docker compose up -d --build
 ```
 
+只构建镜像时执行 `docker build -t mooncell:local .`；构建后可用 `docker compose up -d --wait` 启动并等待健康检查通过。
+
 ### 3. 打开 WebUI
 
-本机访问 <http://localhost:3000>；局域网设备访问 `http://本机局域网IP:3000`。首次进入时创建管理员账户，然后完成下方配置。
+本地开发 WebUI：本机访问 <http://localhost:5173>；局域网设备访问 `http://本机局域网IP:5173`。
+
+使用上述 Docker Compose 部署时，默认映射端口为 `3000`，访问 <http://localhost:3000> 或 `http://本机局域网IP:3000`。首次进入时创建管理员账户，然后完成下方配置。
 
 ### 数据与目录
 
@@ -60,7 +65,7 @@ docker compose up -d --build
 | `MOONCELL_DOWNLOADS_PATH` | `/downloads` | 下载目录挂载 |
 | `MOONCELL_LIBRARY_PATH` | `/library` | 媒体库目录挂载 |
 
-Docker 镜像已内置 ImageMagick，无需在宿主机另行安装。更多配置见 [.env.example](.env.example) 和 [docker-compose.yml](docker-compose.yml)。
+Docker 镜像已内置前端产物、Python 服务、ImageMagick、FFmpeg 与 FFprobe，无需在宿主机另行安装。容器统一监听 `8000`，Compose 映射到宿主机 `3000`。更多配置见 [.env.example](.env.example) 和 [docker-compose.yml](docker-compose.yml)。
 
 ## 首次配置
 
@@ -79,7 +84,13 @@ Docker 镜像已内置 ImageMagick，无需在宿主机另行安装。更多配�
 
 ## 本地开发
 
-Windows 开发环境使用 Python 3.12、Node.js 和 pnpm。先按[开发指南](docs/DEVELOPMENT.md)安装依赖，再从项目根目录启动前后端：
+Windows 开发环境可通过脚本自动安装 Python 3.12、Node.js、项目指定版本的 pnpm、FFmpeg（含 ffprobe）、ImageMagick 7，以及前后端依赖。在项目根目录执行：
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\setup.ps1
+```
+
+安装需要联网，缺失系统软件时使用 WinGet。支持重复运行及 `-CheckOnly` 仅检查模式，详见[开发指南](docs/DEVELOPMENT.md#自动安装推荐)。安装完成后重新打开 PowerShell，再从项目根目录启动前后端：
 
 ```powershell
 & ".\scripts\dev.ps1"
@@ -99,6 +110,7 @@ Windows 开发环境使用 Python 3.12、Node.js 和 pnpm。先按[开发指南]
 | --- | --- |
 | [使用指南](docs/USAGE.md) | 订阅、下载整理、版本选择、审核、TMDB 和日历 |
 | [开发指南](docs/DEVELOPMENT.md) | 环境准备、启动、演示数据与验证命令 |
+| [前端特效与交互约定](docs/FRONTEND_EFFECTS.md) | 全局和共享组件特效、生效范围、按钮规则与减少动态效果 |
 | [技术设计](TECHNICAL_DESIGN.md) | 架构与自动化流水线设计（讨论稿） |
 | [数据库表说明](docs/DATABASE_TABLES.md) | 数据表、字段约定与表关系 |
 

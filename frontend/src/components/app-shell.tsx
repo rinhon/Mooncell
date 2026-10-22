@@ -1,12 +1,11 @@
 import { NotificationCenter } from "@/components/notification-center"
 import { NativeButton } from "@/components/ui/button"
-import { useLayoutEffect, useRef, useState, type PointerEvent, type ReactNode, type RefObject } from "react"
+import { GradualBlur } from "@/components/ui/gradual-blur"
+import { useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from "react"
 import { motion, useReducedMotion } from "motion/react"
 import { NavLink, useLocation, useNavigate } from "react-router-dom"
-import { useQuery } from "@tanstack/react-query"
 import { CalendarDays, Download, FileCheck2, FolderCheck, LayoutDashboard, ListFilter, RadioTower, Settings2, Tv2 } from "lucide-react"
 import StrokeText from "@/components/stroke-text"
-import { api, type Show, type DownloadCenter } from "@/lib/api"
 import { cn } from "@/lib/utils"
 import { useOverflowMenu } from "@/hooks/use-overflow-menu"
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-menu"
@@ -27,17 +26,17 @@ const utilities = [
 ]
 
 /** 指示器使用导航自身的坐标，只动画横向位置，页面滚动不参与测量。 */
-function useNavigationBounds(container: RefObject<HTMLElement | null>, target: string | null, active = false, layoutVersion = 0) {
-  const [bounds, setBounds] = useState<{ x: number; y: number; width: number; height: number } | null>(null)
+function useNavigationBounds(container: RefObject<HTMLElement | null>, target: string | null, layoutVersion = 0) {
+  const [bounds, setBounds] = useState<{ x: number; width: number } | null>(null)
   const [visible, setVisible] = useState(false)
   useLayoutEffect(() => {
     const row = container.current
     if (!row) return
     const measure = () => {
-      const link = active ? row.querySelector<HTMLElement>(".top-link.active") : Array.from(row.querySelectorAll<HTMLElement>("a[href]")).find(link => link.getAttribute("href") === target)
+      const link = row.querySelector<HTMLElement>(".top-link.active")
       if (!target || !link) { setVisible(false); return }
-      const inset = active ? 13 : 0
-      setBounds({ x: link.offsetLeft + inset, y: link.offsetTop, width: Math.max(0, link.offsetWidth - inset * 2), height: link.offsetHeight })
+      const inset = 16
+      setBounds({ x: link.offsetLeft + inset, width: Math.max(0, link.offsetWidth - inset * 2) })
       setVisible(true)
     }
     measure()
@@ -45,17 +44,19 @@ function useNavigationBounds(container: RefObject<HTMLElement | null>, target: s
     observer.observe(row)
     for (const link of row.querySelectorAll("a[href]")) observer.observe(link)
     return () => observer.disconnect()
-  }, [container, target, active, layoutVersion])
+  }, [container, target, layoutVersion])
   return { bounds, visible }
 }
 
-function NavigationIndicator({ bounds, visible, active = false }: ReturnType<typeof useNavigationBounds> & { active?: boolean }) {
+const indicatorBaseWidth = 86
+
+function NavigationIndicator({ bounds, visible }: ReturnType<typeof useNavigationBounds>) {
   const reducedMotion = useReducedMotion()
   if (!bounds) return null
-  return <motion.span className={active ? "rail-slider" : "navigation-hover"} aria-hidden="true" data-visible={visible || undefined}
-    initial={false} style={{ left: 0, right: "auto", top: active ? undefined : bounds.y, height: active ? 2 : bounds.height }}
-    animate={{ x: bounds.x, width: bounds.width, opacity: visible ? 1 : 0 }}
-    transition={reducedMotion ? { duration: 0 } : { x: { type: "spring", stiffness: 400, damping: 32 }, width: { type: "spring", stiffness: 400, damping: 32 }, opacity: { duration: .12 } }}
+  return <motion.span className="rail-slider" aria-hidden="true" data-visible={visible || undefined}
+    initial={false} style={{ left: 0, right: "auto", width: indicatorBaseWidth, height: 3, transformOrigin: "left" }}
+    animate={{ x: bounds.x, scaleX: bounds.width / indicatorBaseWidth, opacity: visible ? 1 : 0 }}
+    transition={reducedMotion ? { duration: 0 } : { x: { type: "spring", stiffness: 400, damping: 32 }, scaleX: { type: "spring", stiffness: 400, damping: 32 }, opacity: { duration: .12 } }}
   />
 }
 
@@ -67,80 +68,30 @@ export function AppShell({ children }: { children: ReactNode }) {
   const navigate = useNavigate()
 
   const navigationRef = useRef<HTMLElement>(null)
-  const utilitiesRef = useRef<HTMLElement>(null)
   const { measureRef, visibleCount } = useOverflowMenu(navigationRef, navigation.length)
   const hiddenNavigation = navigation.slice(visibleCount)
   const hiddenCurrent = hiddenNavigation.find(item => (item.to === location.pathname || (item.to !== "/" && location.pathname.startsWith(`${item.to}/`))))
-  const [hoveredTo, setHoveredTo] = useState<string | null>(null)
-  const navigationHover = useNavigationBounds(navigationRef, hoveredTo, false, visibleCount)
-  const navigationActive = useNavigationBounds(navigationRef, location.pathname, true, visibleCount)
-  const utilitiesHover = useNavigationBounds(utilitiesRef, hoveredTo)
-
-  function moveNavigationGlow(event: PointerEvent<HTMLElement>) {
-    if (event.pointerType === "touch") return
-    const surface = event.currentTarget
-    const bounds = surface.getBoundingClientRect()
-    surface.style.setProperty("--pointer-x", `${event.clientX - bounds.left}px`)
-    surface.style.setProperty("--pointer-y", `${event.clientY - bounds.top}px`)
-    surface.dataset.pointer = "true"
-  }
-
-  function hideNavigationGlow(event: PointerEvent<HTMLElement>) {
-    delete event.currentTarget.dataset.pointer
-    setHoveredTo(null)
-  }
-
-
+  const navigationActive = useNavigationBounds(navigationRef, location.pathname, visibleCount)
 
   return <div className={cn("app-frame", detailRoute && "is-show-detail")}>
-    <header className="top-navigation" onPointerMove={moveNavigationGlow} onPointerLeave={hideNavigationGlow} onPointerCancel={hideNavigationGlow}>
-      <span className="navigation-glow" aria-hidden="true"/>
-      <NativeButton className="brand-mark" aria-label="MOONCELL · 返回首页" onPointerEnter={() => setHoveredTo(null)} onClick={() => navigate("/")}><StrokeText text="MOONCELL" trigger="hover" playOnMount strokeColor="var(--accent)" fillColor="var(--accent)" fontSize={28} fontWeight={800} letterSpacing={1.2} strokeWidth={0.7} drawDuration={0.9} fillDelay={0.1} stagger={0.045}/></NativeButton>
+    <header className="top-navigation">
+      <GradualBlur position="top" height="108px" strength={2.6} divCount={6} curve="bezier" tint="var(--shell-top-tint)" className="top-navigation-blur"/>
+      <NativeButton className="brand-mark" aria-label="MOONCELL · 返回首页" onClick={() => navigate("/")}><StrokeText text="MOONCELL" trigger="hover" playOnMount strokeColor="var(--accent)" fillColor="var(--accent)" fontSize={28} fontWeight={800} letterSpacing={1.2} strokeWidth={0.7} drawDuration={0.9} fillDelay={0.1} stagger={0.045}/></NativeButton>
       <nav ref={navigationRef} className="top-links" aria-label="主要导航">
         <div ref={measureRef} className="overflow-measure" aria-hidden="true" inert>{navigation.map(({ label, icon: Icon }) => <span className="top-link" key={label}><Icon size={18}/><span>{label}</span></span>)}</div>
-        <NavigationIndicator {...navigationHover}/>
-        <NavigationIndicator {...navigationActive} active/>
-        {navigation.slice(0, visibleCount).map(({ to, label, icon: Icon }) => <NavLink key={to} end={to === "/"} to={to} onPointerEnter={event => {
-          if (event.pointerType === "mouse") setHoveredTo(to)
-        }} className={({ isActive }) => cn("nav-link top-link", isActive && "active")}><Icon size={18} strokeWidth={1.45}/><span>{label}</span></NavLink>)}
-        {hiddenNavigation.length > 0 && <DropdownMenu><DropdownMenuTrigger asChild><button className={cn("top-link overflow-trigger", hiddenCurrent && "active")} onPointerEnter={() => setHoveredTo(null)} aria-label="更多导航">{hiddenCurrent ? hiddenCurrent.label : "更多"}<span aria-hidden="true">▾</span></button></DropdownMenuTrigger><DropdownMenuContent align="end">{hiddenNavigation.map(({ to, label, icon: Icon }) => <DropdownMenuItem key={to} asChild><NavLink to={to} end={to === "/"}><Icon size={16}/>{label}{(location.pathname === to || (to !== "/" && location.pathname.startsWith(`${to}/`))) && <span aria-hidden="true">✓</span>}</NavLink></DropdownMenuItem>)}</DropdownMenuContent></DropdownMenu>}
+        <NavigationIndicator {...navigationActive}/>
+        {navigation.slice(0, visibleCount).map(({ to, label, icon: Icon }) => <NavLink key={to} end={to === "/"} to={to} className={({ isActive }) => cn("nav-link top-link", isActive && "active")}><Icon size={18} strokeWidth={1.55}/><span>{label}</span></NavLink>)}
+        {hiddenNavigation.length > 0 && <DropdownMenu><DropdownMenuTrigger asChild><button className={cn("top-link overflow-trigger", hiddenCurrent && "active")} aria-label="更多导航">{hiddenCurrent ? hiddenCurrent.label : "更多"}<span aria-hidden="true">▾</span></button></DropdownMenuTrigger><DropdownMenuContent align="end">{hiddenNavigation.map(({ to, label, icon: Icon }) => <DropdownMenuItem key={to} asChild><NavLink to={to} end={to === "/"}><Icon size={16}/>{label}{(location.pathname === to || (to !== "/" && location.pathname.startsWith(`${to}/`))) && <span aria-hidden="true">✓</span>}</NavLink></DropdownMenuItem>)}</DropdownMenuContent></DropdownMenu>}
       </nav>
       <div className="top-actions">
         <NotificationCenter/>
-        <nav ref={utilitiesRef} className="utility-navigation" aria-label="管理工具"><NavigationIndicator {...utilitiesHover}/>{utilities.map(({ to, label, icon: Icon }) => <NavLink key={to} to={to} title={label} aria-label={label} onPointerEnter={event => {
-          if (event.pointerType === "mouse") setHoveredTo(to)
-        }} className={({ isActive }) => cn("utility-link", isActive && "active")}><Icon size={17} strokeWidth={1.5}/></NavLink>)}</nav>
+        <nav className="utility-navigation" aria-label="管理工具">{utilities.map(({ to, label, icon: Icon }) => <NavLink key={to} to={to} title={label} aria-label={label} className={({ isActive }) => cn("utility-link", isActive && "active")}><Icon size={17} strokeWidth={1.5}/></NavLink>)}</nav>
       </div>
     </header>
 
     <section className="app-workspace">
       <main className="content-stage"><motion.div key={location.pathname} className="page-content" initial={reducedMotion || detailRoute ? false : { opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ type: "spring", stiffness: 380, damping: 34 }}>{children}</motion.div></main>
     </section>
-
-    {!detailRoute && <SystemRail />}
+    <GradualBlur target="page" position="bottom" height="44px" strength={1.4} divCount={4} curve="bezier" tint="var(--shell-bottom-tint)" zIndex={25} className="viewport-bottom-blur"/>
   </div>
-}
-
-function SystemRail() {
-  const shows = useQuery({ queryKey: ["shows"], queryFn: () => api<Show[]>("/shows") })
-  const downloads = useQuery({ queryKey: ["downloads"], queryFn: () => api<DownloadCenter>("/downloads"), refetchInterval: 3000 })
-  const navigate = useNavigate()
-  const tasks = downloads.data?.tasks ?? []
-  const active = tasks.filter((task) => task.status === "downloading")
-  const unavailable = downloads.isError || Boolean(downloads.data?.error)
-  return <aside className="system-rail" aria-label="系统状态">
-    <section className="system-block library-status">
-      <p className="micro-label">媒体库状态</p>
-      <p className="library-count"><strong>{shows.data ? String(shows.data.length).padStart(2, "0") : "—"}</strong><span>部作品</span></p>
-      <p>{shows.isError ? "订阅读取失败" : shows.isPending ? "正在读取订阅" : "已保存的番剧订阅"}</p>
-    </section>
-    <section className="system-block active-summary">
-      <NativeButton onClick={() => navigate("/downloads")}><span>正在下载</span><strong>{downloads.isPending || unavailable ? "—" : String(active.length).padStart(2, "0")}</strong><span>›</span></NativeButton>
-    </section>
-    <section className="system-block queue-summary">
-      <p className="micro-label">下载任务</p>
-      {tasks.slice(0, 3).map((item) => <div className="queue-line" key={item.id}><span>{item.title}</span><strong>{item.progress.toFixed(0)}%</strong><i/></div>)}
-      {!tasks.length && <p className="empty-queue">{downloads.isPending ? "正在读取下载任务" : unavailable ? "下载任务读取失败" : "暂无下载任务"}</p>}
-    </section>
-  </aside>
 }

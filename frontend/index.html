@@ -4,6 +4,15 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#090b0a" />
+    <script>
+      try {
+        const theme = localStorage.getItem("mooncell-theme") === "ocean" ? "ocean" : "forest";
+        document.documentElement.dataset.theme = theme;
+        document.querySelector('meta[name="theme-color"]').content = theme === "ocean" ? "#F5EFEA" : "#090b0a";
+      } catch {
+        document.documentElement.dataset.theme = "forest";
+      }
+    </script>
     <title>Mooncell · 自动追番</title>
   </head>
   <body>

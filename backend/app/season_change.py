@@ -45,6 +45,8 @@ async def schedule_season_change(session, source, season, *, rename_to=None, cha
             job.title if job else parsed.get("title")
         )
         plan = json.loads(job.plan) if job and job.plan else {}
+        if plan.get("episode_rename"):
+            raise ValueError("此订阅有单集正在改名，请等待完成后再修改番名或季度")
         if job and job.state not in EXCLUDED_STATES:
             if "season_change" in plan:
                 pending = plan["season_change"]
@@ -233,7 +235,11 @@ async def save_phase(session, job, migration, phase):
 
 async def advance_season_change(session, client, job, config, item, torrent):
     from .download_queue import path_type, request, set_running
+    from .playback.leases import begin_mutation, finish_mutation
     from .revision_upgrade import destination, healthy, paused
+
+    if not begin_mutation(item.source_id):
+        raise MigrationWaiting("正在播放此作品，释放播放文件后自动继续迁移")
 
     migration = json.loads(job.plan)["season_change"]
     phase = migration["phase"]
@@ -377,6 +383,7 @@ async def advance_season_change(session, client, job, config, item, torrent):
         await cleanup_temporary_directories(client, job.target_root, config)
         job.plan = json.dumps(migration["target_plan"], ensure_ascii=False)
         job.state, job.last_error = "done", None
+        finish_mutation(item.source_id)
         operation_id = await update_migration(
             session, job, "completed", token=migration["token"],
         )

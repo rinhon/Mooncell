@@ -9,9 +9,11 @@ import { AnimatePresence, motion, useIsPresent, useReducedMotion } from "motion/
 import { Skeleton } from "@/components/ui/skeleton"
 import { CalendarHeader, CalendarLoading, CalendarSkeleton, calendarWeekdays as weekdays } from "@/components/calendar-loading"
 import { api } from "@/lib/api"
+import { useTheme } from "@/lib/theme"
 import { mikanSearchUrl } from "@/lib/mikan"
 import { useOverflowMenu } from "@/hooks/use-overflow-menu"
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-menu"
+import { GradualBlur } from "@/components/ui/gradual-blur"
 
 type CalendarItem = { liked: boolean; id: number; title: string; weekday: number | null; broadcast_time: string; cover_url: string | null }
 type SeasonCalendar = { season: string; current_season: string; source_url: string; fetched_at: string; items: CalendarItem[] }
@@ -86,6 +88,7 @@ function Cover({ item, onReady }: { item: CalendarItem; onReady: (url: string) =
   return <div className="calendar-cover" aria-busy={loading}>
     {loading && <Skeleton className="calendar-cover-skeleton"/>}
     {url && !failed ? <img key={url} ref={imageRef} src={url} alt={item.title} loading="eager" decoding="async" style={{ opacity: loading ? 0 : 1 }} onLoad={(event) => void reveal(event.currentTarget)} onError={() => setFailedUrl(url)} /> : <ImageOff size={24} strokeWidth={1} aria-label="暂无封面" />}
+    <GradualBlur position="bottom" height="18%" strength={1.2} divCount={2} exponential curve="bezier" tint="var(--poster-blur-tint)" className="z-[1]"/>
   </div>
 }
 // Each mounted day owns its loading state, including while it slides out.
@@ -122,6 +125,7 @@ const CalendarDayPanel = forwardRef<HTMLDivElement, { value: string; direction: 
 })
 
 export function CalendarPage() {
+  const { palette } = useTheme()
   const reducedMotion = useReducedMotion()
   const sparksRef = useRef<ClickSparkHandle>(null)
   const [now, setNow] = useState(() => new Date())
@@ -199,7 +203,7 @@ export function CalendarPage() {
   const season = selected ?? data?.season
   const current = data?.current_season ?? queryClient.getQueryData<SeasonCalendar>(["season-calendar", null])?.current_season
   if (query.isPending) return <CalendarLoading now={now} season={season} dayValue={dayValue}/>
-  return <ClickSpark ref={sparksRef} manual disabled={Boolean(reducedMotion)} sparkColor="#6be897" sparkCount={8} sparkSize={11} sparkRadius={30} sparkWidth={2} duration={500} glow={.2} style={{ height: "auto" }} className="calendar-sparks">
+  return <ClickSpark ref={sparksRef} manual disabled={Boolean(reducedMotion)} sparkColor={palette.accent} sparkCount={8} sparkSize={11} sparkRadius={30} sparkWidth={2} duration={500} glow={.2} style={{ height: "auto" }} className="calendar-sparks">
     <CalendarHeader now={now} season={season} showNotes={Boolean(data)} metadata={data ? <p>{data.items.length} 部 · 已保存至本地 · <a href={data.source_url} target="_blank" rel="noreferrer">来源 yuc.wiki</a></p> : null} navigation={<>
         <Button size="icon" variant="ghost" aria-label="上一季度" disabled={!season || season <= "200001"} onClick={() => season && setSelected(shiftSeason(season, -1))}><ChevronLeft size={18} /></Button>
         <Button variant="ghost" onClick={() => setSelected(null)} disabled={selected === null}>当季</Button>

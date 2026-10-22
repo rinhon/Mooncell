@@ -133,6 +133,8 @@ def event_log_fields(event_type: str, payload: dict) -> tuple[str, str, str]:
     elif event_type == "download.season.changed":
         message = (f"下载季度已同步：{payload.get('title', '')} · "
                    f"第 {payload.get('previous_season')} 季 → 第 {payload.get('season')} 季")
+    elif event_type == "download.episode.renamed":
+        message = f"单集已改名：{payload.get('old_name', '')} → {payload.get('filename', '')}"
     elif event_type == "download.library.changed":
         message = (f"媒体库名称和季度已同步：{payload.get('previous_title', '')} "
                    f"S{payload.get('previous_season', 0):02d} → "

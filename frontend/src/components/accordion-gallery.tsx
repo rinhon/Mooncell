@@ -5,6 +5,7 @@ import { Link } from "react-router-dom"
 import { gsap } from "gsap"
 import { useReducedMotion } from "motion/react"
 import { ShowCover } from "@/components/show-cover"
+import { FadeInImage } from "@/components/ui/fade-in-image"
 import "./accordion-gallery.css"
 
 export interface AccordionGalleryItem {
@@ -30,7 +31,7 @@ interface AccordionGalleryProps {
   tilt?: number
 }
 
-export function AccordionGallery({ items, activeIndex, onActiveChange, orientation = "horizontal", height = 460, expandRatio = .56, gap = 10, radius = 2, duration = .6, parallax = .5, tilt = 8 }: AccordionGalleryProps) {
+export function AccordionGallery({ items, activeIndex, onActiveChange, orientation = "horizontal", height = 460, expandRatio = .56, gap = 10, radius, duration = .6, parallax = .5, tilt = 8 }: AccordionGalleryProps) {
   const rootRef = useRef<HTMLDivElement>(null)
   const panelRefs = useRef<(HTMLDivElement | null)[]>([])
   const linkRefs = useRef<(HTMLAnchorElement | null)[]>([])
@@ -121,7 +122,7 @@ export function AccordionGallery({ items, activeIndex, onActiveChange, orientati
   }
 
   return <div ref={rootRef} className={`accordion-gallery${vertical ? " accordion-gallery--vertical" : ""}`} role="list" aria-label="随机番剧推荐" style={{
-    "--ag-gap": `${gap}px`, "--ag-radius": `${radius}px`,
+    "--ag-gap": `${gap}px`, "--ag-radius": radius === undefined ? "var(--radius-panel)" : `${radius}px`,
     height: `${height}px`,
   } as CSSProperties}>
     {items.map((item, index) => {
@@ -135,9 +136,12 @@ export function AccordionGallery({ items, activeIndex, onActiveChange, orientati
           onClick={event => { if (!selected) { event.preventDefault(); onActiveChange(index) } }}>
           <span className="ag-panel__frame">
             <span className="ag-panel__media" ref={node => { mediaRefs.current[index] = node }}>
-              {item.image ? <img src={item.image} alt="" draggable={false}/> : <ShowCover title={item.label}/>}
+              {item.image ? <>
+                <FadeInImage src={item.image} alt="" draggable={false}/>
+                <img src={item.image} alt="" aria-hidden="true" draggable={false} className="ag-panel__media-blur"/>
+              </> : <ShowCover title={item.label}/>}
             </span>
-            <span className="ag-panel__overlay" aria-hidden="true"/>
+            <span className="ag-panel__scrim" aria-hidden="true"/>
           </span>
           <span className="ag-panel__label" aria-hidden="true">
             <span className="ag-panel__bar" ref={node => { barRefs.current[index] = node }}/>

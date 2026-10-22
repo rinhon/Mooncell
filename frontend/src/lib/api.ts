@@ -6,7 +6,7 @@ export class ApiError extends Error {
 }
 
 export async function api<T>(path: string, init?: RequestInit): Promise<T> {
-  // 开发环境由 Vite 代理，生产环境由 Nginx 代理，因此前端始终使用同源相对地址。
+  // 开发环境由 Vite 代理，单镜像部署由后端统一提供服务，始终使用同源相对地址。
   const response = await fetch(`/api/v1${path}`, {
     ...init,
     credentials: "include",
@@ -56,9 +56,13 @@ export type ShowRelease = {
 }
 export type ShowReleasePage = { items: ShowRelease[]; total: number; page: number; page_size: number }
 export type ShowEpisode = {
+  rename_pending?: boolean
+  media_id?: string | null
+  progress?: { position: number; duration: number; completed: boolean } | null
   thumbnail_url?: string | null
   path: string; filename: string; season: number | null; episode_start: number | null
   episode_end: number | null; size: number; modified_at: string
+  added_at?: string | null
 }
 export type ShowSeason = { season: number | null; items: ShowEpisode[] }
 export type ShowLibrary = { available: boolean; partial: boolean; total: number; seasons: ShowSeason[] }
@@ -84,7 +88,7 @@ export type LogEntry = {
 }
 
 export type BackgroundOperation = {
-  id: string; kind: "feed_scrape" | "metadata_refresh" | "artwork_scrape" | "library_migration"
+  id: string; kind: "feed_scrape" | "metadata_refresh" | "artwork_scrape" | "library_migration" | "download_added" | "review_required"
   source_id: number | null; source_name: string
   status: "queued" | "running" | "blocked" | "completed" | "partial" | "failed" | "cancelled"
   total_count: number; completed_count: number; summary: string; error_summary: string | null

@@ -28,7 +28,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
         icon={notice.tone === "success" ? <CheckCircle2 size={18} strokeWidth={1.5}/> : notice.tone === "warning" ? <TriangleAlert size={18} strokeWidth={1.5}/> : <CircleAlert size={18} strokeWidth={1.5}/>}
         className={`toast-notice toast-notice--${notice.tone}`}
         background="var(--surface-raised)" color="var(--ink)"
-        radius={2} fuseColor="#29f524" width={380} duration={3600}
+        fuseColor="var(--accent)" width={380} duration={3600}
         inline closeButton onClose={() => close(notice.id)}/>)}
     </div>, document.body)}
   </ToastContext.Provider>

@@ -16,6 +16,7 @@ class Settings(BaseSettings):
 
     app_name: str = "Mooncell"
     environment: str = "development"
+    frontend_dist_path: str | None = None
     database_url: str = "sqlite+aiosqlite:///./data/mooncell.db"
     secret_key: str = "development-only-change-me"
     session_cookie_name: str = "mooncell_session"
@@ -30,7 +31,17 @@ class Settings(BaseSettings):
     tmdb_user_agent: str = "Mozilla/5.0 (compatible; Mooncell/0.1; +self-hosted)"
     media_library_root: str = "./data/library"
     calendar_cache_path: str = "./data/calendar"
-    library_scan_interval_seconds: int = 60
+    library_scan_interval_seconds: int = 0
+    playback_ffmpeg: str = "ffmpeg"
+    playback_ffprobe: str = "ffprobe"
+    playback_cache_path: str = "./data/playback"
+    playback_encoder: str = "libx264"
+    playback_threads: int = 2
+    playback_max_sessions: int = 1
+    playback_session_quota_mb: int = 512
+    playback_global_quota_mb: int = 4096
+    playback_min_free_mb: int = 512
+    playback_probe_timeout_seconds: float = 20.0
 
     @property
     def origin_list(self) -> list[str]:

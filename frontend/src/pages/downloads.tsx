@@ -96,7 +96,7 @@ export function DownloadsPage() {
       downloader: data?.downloader_online ? `${data.downloader_version ?? ""} · 在线` : data?.downloader_configured ? "离线" : "未配置",
     }}/>
     {center.isError && <p role="alert" className="mb-4 text-sm text-[var(--danger)]">下载数据读取失败：{center.error.message}</p>}
-    {data?.error && <p className="mb-4 rounded-[2px] border border-[var(--danger-line)] bg-[var(--danger-soft)] px-4 py-3 text-sm text-[var(--danger)]">qBittorrent 同步失败：{data.error}</p>}
+    {data?.error && <p className="mb-4 rounded-[var(--radius-control)] border border-[var(--danger-line)] bg-[var(--danger-soft)] px-4 py-3 text-sm text-[var(--danger)]">qBittorrent 同步失败：{data.error}</p>}
     <DownloadsRecords count={filteredTasks.length} search={
         <Input type="search" aria-label="搜索动画番剧" placeholder="搜索番剧名称…" value={searchInput}
           onCompositionStart={() => { isComposing.current = true }}

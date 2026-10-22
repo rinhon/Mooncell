@@ -11,7 +11,7 @@ import { useToast } from "@/components/ui/toast"
 type CollectionFile = { name: string; size: number; episode: number | null; kind: "video" | "extra" | "attachment" }
 type Preview = { status: "pending" | "ready"; info_hash: string; raw_title?: string; name?: string; season?: number; size?: number; files?: CollectionFile[] }
 
-export function MagnetCollectionForm({ onClose }: { onClose: () => void }) {
+export function MagnetCollectionForm({ onClose, onAdded }: { onClose: () => void; onAdded: () => void }) {
   const client = useQueryClient()
   const toast = useToast()
   const [magnet, setMagnet] = useState("")
@@ -59,6 +59,7 @@ export function MagnetCollectionForm({ onClose }: { onClose: () => void }) {
       for (const key of ["feeds", "shows", "downloads", "dashboard", "notifications"]) void client.invalidateQueries({ queryKey: [key] })
       toast("合集已添加", { description: "后台将刮削作品信息，并下载整理正片和匹配字幕。" })
       onClose()
+      onAdded()
     },
   })
   function submit(event: FormEvent) {
@@ -82,9 +83,9 @@ export function MagnetCollectionForm({ onClose }: { onClose: () => void }) {
       </Field>
       <div role="group" aria-label="匹配 TMDB 条目" className="grid gap-1.5 text-sm">
         <p className="font-medium">匹配 TMDB 条目</p>
-        <div className="max-h-64 space-y-2 overflow-y-auto rounded-[2px] border border-[var(--border)] p-2">
-          {candidates.isFetching ? <p role="status" className="p-3 text-sm text-[var(--muted)]">正在搜索 TMDB…</p> : candidates.isError ? <p role="alert" className="p-3 text-sm text-[var(--danger)]">{candidates.error.message}</p> : !candidates.data?.length ? <p className="p-3 text-sm text-[var(--muted)]">未找到匹配作品，请调整名称后搜索。</p> : candidates.data.map(candidate => <NativeButton key={candidate.tmdb_id} type="button" disabled={save.isPending} aria-pressed={selected?.tmdb_id === candidate.tmdb_id} onClick={() => { setSelected(candidate); setName(candidate.title) }} className={`flex w-full gap-3 rounded-[2px] border p-2.5 text-left ${selected?.tmdb_id === candidate.tmdb_id ? "border-[var(--accent)] bg-[var(--accent-soft)]" : "border-transparent hover:border-[var(--border)]"}`}>
-            <div className="grid h-20 w-14 shrink-0 place-items-center overflow-hidden bg-[var(--surface)]">{candidate.poster_url ? <img src={candidate.poster_url} alt="" className="h-full w-full object-cover"/> : <ImageOff size={18}/>}</div>
+        <div className="max-h-64 space-y-2 overflow-y-auto rounded-[var(--radius-card)] border border-[var(--border)] p-2">
+          {candidates.isFetching ? <p role="status" className="p-3 text-sm text-[var(--muted)]">正在搜索 TMDB…</p> : candidates.isError ? <p role="alert" className="p-3 text-sm text-[var(--danger)]">{candidates.error.message}</p> : !candidates.data?.length ? <p className="p-3 text-sm text-[var(--muted)]">未找到匹配作品，请调整名称后搜索。</p> : candidates.data.map(candidate => <NativeButton key={candidate.tmdb_id} type="button" disabled={save.isPending} aria-pressed={selected?.tmdb_id === candidate.tmdb_id} onClick={() => { setSelected(candidate); setName(candidate.title) }} className={`flex w-full gap-3 rounded-[var(--radius-control)] border p-2.5 text-left ${selected?.tmdb_id === candidate.tmdb_id ? "border-[var(--accent)] bg-[var(--accent-soft)]" : "border-transparent hover:border-[var(--border)]"}`}>
+            <div className="grid h-20 w-14 shrink-0 place-items-center overflow-hidden rounded-[var(--radius-inset)] bg-[var(--surface)]">{candidate.poster_url ? <img src={candidate.poster_url} alt="" className="h-full w-full object-cover"/> : <ImageOff size={18}/>}</div>
             <div className="min-w-0 flex-1"><p className="font-semibold">{candidate.title}</p><p className="text-xs text-[var(--muted)]">TMDB #{candidate.tmdb_id}{candidate.release_date ? ` · ${candidate.release_date}` : ""}</p>{candidate.overview && <p className="mt-1 line-clamp-2 text-xs leading-5 text-[var(--muted)]">{candidate.overview}</p>}</div>{selected?.tmdb_id === candidate.tmdb_id && <Check size={17} className="shrink-0 text-[var(--accent)]"/>}
           </NativeButton>)}
         </div>
@@ -93,7 +94,7 @@ export function MagnetCollectionForm({ onClose }: { onClose: () => void }) {
       {selected && <p role="status" className="text-sm text-[var(--muted)]">{detail.isFetching ? "正在刮削作品信息…" : detail.isError ? `刮削失败：${detail.error.message}` : detail.data ? `已刮削：${detail.data.title}${detail.data.episode_count ? ` · ${detail.data.episode_count} 集` : ""}` : "等待刮削结果"}</p>}
       <Field label="季度" hint="按 TMDB 的季度编号确认；名称末尾的数字仅作为初始建议。一个合集整理到同一季。"><Input type="number" min={0} max={99} step={1} required value={season} onChange={event => setSeason(event.target.value)} disabled={save.isPending}/></Field>
       <Field label={`原始文件清单 · ${files.length} 个文件 · ${((preview.data?.size ?? 0) / 1024 ** 3).toFixed(2)} GiB`} hint="按各文件集数整理正片；匹配外挂字幕随正片改名，片头片尾、菜单和特典跳过。无法识别的正片会提示确认。">
-        <div className="max-h-48 overflow-y-auto rounded-[2px] border border-[var(--border)] p-3 font-mono text-xs leading-5">{files.map(file => <div key={file.name} className="mb-1 break-all"><span className="mr-2 text-[var(--muted)]">{file.kind === "extra" ? "跳过" : file.kind === "video" ? file.episode === null ? "待确认" : `E${String(file.episode).padStart(2, "0")}` : "附件"}</span>{file.name}</div>)}</div>
+        <div className="max-h-48 overflow-y-auto rounded-[var(--radius-control)] border border-[var(--border)] p-3 font-mono text-xs leading-5">{files.map(file => <div key={file.name} className="mb-1 break-all"><span className="mr-2 text-[var(--muted)]">{file.kind === "extra" ? "跳过" : file.kind === "video" ? file.episode === null ? "待确认" : `E${String(file.episode).padStart(2, "0")}` : "附件"}</span>{file.name}</div>)}</div>
       </Field>
       {episodes.length > 0 && name.trim() && season !== "" && <p className="break-all text-xs leading-5 text-[var(--muted)]">整理示例：{name} \ Season {season.padStart(2, "0")} \ {name} S{season.padStart(2, "0")}E{String(episodes[0].episode).padStart(2, "0")}.mkv</p>}
     </>}

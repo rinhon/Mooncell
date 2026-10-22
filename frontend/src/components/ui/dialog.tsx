@@ -45,9 +45,9 @@ const DialogSurface = React.forwardRef<HTMLDivElement, Omit<HTMLMotionProps<"div
     if (typeof forwardedRef === "function") forwardedRef(node)
     else if (forwardedRef) forwardedRef.current = node
   }} initial={{ opacity: 0, scale: reducedMotion ? 1 : animateSize ? .985 : .98, y: reducedMotion || !animateSize ? 0 : 10 }} animate={{ opacity: 1, scale: 1, y: 0, ...(animateSize && height !== null ? { height } : {}) }} exit={{ opacity: 0, scale: reducedMotion ? 1 : .99, y: reducedMotion || !animateSize ? 0 : 6 }} transition={animateSize ? {
-    height: reducedMotion ? { duration: 0 } : { type: "spring", stiffness: 240, damping: 32, mass: .8 },
-    scale: { duration: reducedMotion ? 0 : .24, ease: [.22, 1, .36, 1] },
-    y: { duration: reducedMotion ? 0 : .24, ease: [.22, 1, .36, 1] },
+    height: reducedMotion ? { duration: 0 } : { type: "spring", stiffness: 280, damping: 32, mass: .8 },
+    scale: reducedMotion ? { duration: 0 } : dialogSpring,
+    y: reducedMotion ? { duration: 0 } : dialogSpring,
     opacity: { duration: reducedMotion ? 0 : .18 },
   } : dialogSpring}>
     {animateSize ? <div ref={bodyRef}>{children}</div> : children}
@@ -63,9 +63,9 @@ export function DialogContent({ className, children, animateSize = false, ...pro
         <motion.div className="radix-overlay fixed inset-0 z-50 bg-black/50 backdrop-blur-sm" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={reducedMotion ? { duration: 0 } : animateSize ? { duration: .22 } : dialogSpring}/>
       </DialogPrimitive.Overlay>}
       {open && <DialogPrimitive.Content {...props} forceMount asChild key="content">
-        <DialogSurface animateSize={animateSize} className={cn("radix-dialog-content fixed left-1/2 top-1/2 z-50 max-h-[90vh] w-[calc(100%-2rem)] max-w-3xl -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-[2px] border border-[var(--border)] bg-[var(--surface-raised)] p-6 shadow-2xl outline-none sm:p-7", className)}>
+        <DialogSurface animateSize={animateSize} className={cn("radix-dialog-content fixed left-1/2 top-1/2 z-50 max-h-[90vh] w-[calc(100%-2rem)] max-w-3xl -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-[var(--radius-panel)] border border-[var(--border)] bg-[var(--surface-raised)] p-6 shadow-2xl outline-none sm:p-7", className)}>
           {children}
-          <DialogPrimitive.Close className="absolute right-4 top-4 grid size-9 place-items-center rounded-[2px] text-[var(--muted)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]/40" aria-label="关闭">
+          <DialogPrimitive.Close className="absolute right-4 top-4 grid size-9 place-items-center rounded-[var(--radius-control)] text-[var(--muted)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]/40" aria-label="关闭">
             <X size={17}/>
           </DialogPrimitive.Close>
         </DialogSurface>

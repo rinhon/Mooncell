@@ -82,11 +82,13 @@ export function BlurFade({
         animate={reducedMotion || isInView ? "visible" : "hidden"}
         exit={reducedMotion ? undefined : "hidden"}
         variants={combinedVariants}
-        transition={{
-          delay: reducedMotion ? 0 : 0.04 + delay,
-          duration: reducedMotion ? 0 : duration,
-          ease: "easeOut",
-          ...(shouldTransitionFilter ? { filter: { duration: reducedMotion ? 0 : duration } } : {}),
+        transition={reducedMotion ? { duration: 0 } : {
+          delay: 0.04 + delay,
+          type: "spring",
+          stiffness: 380,
+          damping: 32,
+          opacity: { duration, delay: 0.04 + delay },
+          ...(shouldTransitionFilter ? { filter: { duration, delay: 0.04 + delay } } : {}),
         }}
         className={className}
         {...props}

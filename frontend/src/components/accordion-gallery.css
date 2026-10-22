@@ -20,13 +20,12 @@
   min-height: 0;
   overflow: hidden;
   border-radius: var(--ag-radius);
-  transform-style: preserve-3d;
   transform-origin: center;
-  background: #19221c;
+  background: var(--gallery-surface, #19221c);
   box-shadow: 0 10px 30px -18px #000c;
   will-change: flex-grow, transform;
 }
-.ag-panel__link { position: absolute; inset: 0; display: block; color: var(--ag-text); text-decoration: none; -webkit-tap-highlight-color: transparent; }
+.ag-panel__link { border-radius: inherit; position: absolute; inset: 0; display: block; color: var(--ag-text); text-decoration: none; -webkit-tap-highlight-color: transparent; }
 .ag-panel:has(:focus-visible) { outline: 2px solid var(--ag-accent); outline-offset: 3px; }
 .ag-panel__link:focus-visible { outline: none; }
 .ag-panel__frame { position: absolute; inset: 0; overflow: hidden; border-radius: inherit; }
@@ -40,19 +39,29 @@
 }
 .accordion-gallery--vertical .ag-panel__media { width: 100%; height: var(--ag-media-size); }
 .ag-panel__media img, .ag-panel__media .show-cover { display: block; width: 100%; height: 100%; object-fit: cover; user-select: none; }
-.ag-panel__overlay {
+.ag-panel__media-blur {
   position: absolute;
   inset: 0;
   pointer-events: none;
-  background: linear-gradient(180deg, transparent 30%, #0c1711e8 100%), #0c171138;
+  filter: blur(14px) saturate(1.12);
+  transform: scale(1.04);
+  mask-image: linear-gradient(180deg, transparent 72%, rgba(0, 0, 0, .18) 79%, rgba(0, 0, 0, .68) 89%, #000 98%);
+  -webkit-mask-image: linear-gradient(180deg, transparent 72%, rgba(0, 0, 0, .18) 79%, rgba(0, 0, 0, .68) 89%, #000 98%);
 }
-.ag-panel__label { position: absolute; left: 24px; bottom: 28px; right: 24px; display: flex; align-items: flex-start; gap: 14px; pointer-events: none; }
-.ag-panel__bar { flex: 0 0 auto; width: 3px; height: 28px; margin-top: 3px; border-radius: 2px; background: var(--ag-accent); opacity: 0; box-shadow: 0 0 12px color-mix(in srgb, var(--ag-accent) 60%, transparent); }
-.ag-panel__text { display: grid; min-width: 0; gap: 12px; color: var(--ag-text); opacity: 0; text-shadow: 0 2px 14px #0009; }
-.ag-panel__text strong { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; font-weight: 500; font-size: clamp(20px, 2.1vw, 30px); line-height: 1.3; letter-spacing: -.02em; }
+.ag-panel__scrim {
+  position: absolute;
+  inset: auto 0 0;
+  height: 30%;
+  pointer-events: none;
+  background: var(--gallery-blur-tint);
+}
+.ag-panel__label { position: absolute; z-index: 2; left: 26px; bottom: 22px; right: 26px; display: flex; align-items: flex-start; gap: 14px; pointer-events: none; }
+.ag-panel__bar { flex: 0 0 auto; width: 3px; height: 28px; margin-top: 3px; border-radius: 999px; background: var(--ag-accent); opacity: 0; box-shadow: 0 0 12px color-mix(in srgb, var(--ag-accent) 60%, transparent); }
+.ag-panel__text { display: grid; min-width: 0; gap: 7px; color: var(--ag-text); opacity: 0; }
+.ag-panel__text strong { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; font-weight: 600; font-size: clamp(20px, 2.1vw, 30px); line-height: 1.3; letter-spacing: -.02em; }
 .ag-panel__details { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 12px; color: #edf0eebf; font-variant-numeric: tabular-nums; }
-.ag-panel__action { display: inline-flex; align-items: center; justify-self: start; gap: 18px; margin-top: 6px; padding: 8px 12px; border: 1px solid #edf0ee66; border-radius: 2px; font-size: 13px; }
-.ag-panel__link:hover .ag-panel__action { border-color: var(--ag-accent); color: var(--ag-accent); }
+.ag-panel__action { display: inline-flex; align-items: center; justify-self: start; gap: 14px; margin-top: 4px; padding: 7px 14px; border: 1px solid #edf0ee48; border-radius: 999px; background: rgba(255,255,255,.08); backdrop-filter: blur(10px); font-size: 12px; font-weight: 500; transition: border-color 180ms ease, color 180ms ease, background-color 180ms ease; }
+.ag-panel__link:hover .ag-panel__action { border-color: var(--ag-accent); background: rgba(255,255,255,.14); color: var(--ag-accent); }
 .ag-panel:not(.ag-panel--active) .ag-panel__label { visibility: hidden; }
 @media (max-width: 720px) {
   .accordion-gallery { perspective: 1000px; }

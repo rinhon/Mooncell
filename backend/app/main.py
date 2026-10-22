@@ -18,6 +18,10 @@ from .library_scan import library_scan_loop
 from .library_scan import router as library_scan_router
 from .notification_api import router as notification_router
 from .notifications import recover_operations
+from .playback.probe import shutdown_probes
+from .playback.router import router as playback_media_router
+from .playback.session_router import router as playback_session_router
+from .playback.sessions import manager as playback_manager
 from .review import router as review_router
 from .subscription_settings import router as subscription_router
 from .subscription_settings import subscription_refresh_loop
@@ -28,6 +32,7 @@ from .tmdb_settings import router as tmdb_settings_router
 async def lifespan(_app: FastAPI):
     """在开始接收请求前准备数据库。"""
     await init_database()
+    await playback_manager.start()
     async with SessionFactory() as session:
         await recover_operations(session)
     refresh_task = asyncio.create_task(subscription_refresh_loop())
@@ -37,6 +42,8 @@ async def lifespan(_app: FastAPI):
     try:
         yield
     finally:
+        await playback_manager.shutdown()
+        await shutdown_probes()
         image_task.cancel()
         with suppress(asyncio.CancelledError):
             await image_task
@@ -73,8 +80,15 @@ app.include_router(library_scan_router)
 app.include_router(subscription_router)
 app.include_router(tmdb_settings_router)
 app.include_router(calendar_router)
+app.include_router(playback_media_router)
+app.include_router(playback_session_router, prefix="/api/v1")
 
 
-@app.get("/")
-async def root() -> dict[str, str]:
-    return {"name": "Mooncell", "docs": "/docs", "health": "/api/v1/health"}
+if settings.frontend_dist_path:
+    from .web import mount_frontend
+
+    mount_frontend(app, settings.frontend_dist_path)
+else:
+    @app.get("/")
+    async def root() -> dict[str, str]:
+        return {"name": "Mooncell", "docs": "/docs", "health": "/api/v1/health"}

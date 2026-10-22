@@ -1,4 +1,5 @@
 import { SubscriptionSettingsSection } from "@/components/subscription-settings"
+import { AppearanceSettingsSection } from "@/components/appearance-settings"
 import { TmdbSettingsSection } from "@/components/tmdb-settings"
 import { useEffect } from "react"
 import { useLocation } from "react-router-dom"
@@ -28,7 +29,7 @@ export function SettingsPage() {
   })
   const { hash } = useLocation()
   useEffect(() => {
-    if (["#tmdb", "#downloader"].includes(hash)) document.getElementById(hash.slice(1))?.scrollIntoView()
+    if (["#appearance", "#tmdb", "#downloader"].includes(hash)) document.getElementById(hash.slice(1))?.scrollIntoView()
   }, [hash])
   const library = useQuery({ queryKey: ["library-settings"], queryFn: () => api<LibraryPath>("/settings/library") })
   const root = library.data?.library_root ?? ""
@@ -38,11 +39,11 @@ export function SettingsPage() {
     enabled: Boolean(root),
   })
   return <>
-    <PageHeading eyebrow="Configuration" title="设置" description="集中管理下载器连接、订阅刷新、TMDB 和媒体库保存路径。"/>
+    <PageHeading eyebrow="Configuration" title="设置" description="管理主题外观、下载器连接、订阅刷新、TMDB 和媒体库保存路径。"/>
     <div className="grid gap-6 lg:grid-cols-2 [&>*]:min-w-0">
+      <AppearanceSettingsSection/>
       <DownloaderSettingsSection/>
       <SubscriptionSettingsSection/>
-      <TmdbSettingsSection/>
       <section aria-label="保存路径" className="grid">
         <Card>
           <CardHeader><div><CardTitle>保存路径</CardTitle><CardDescription>选择媒体库根目录，预览最终目录与文件名。</CardDescription></div><FolderTree size={20} className="text-[var(--muted)]"/></CardHeader>
@@ -57,7 +58,7 @@ export function SettingsPage() {
             </div>
             <div className="min-w-0">
               <p className="mb-2 text-sm font-medium text-[var(--ink)]">目录预览</p>
-              {preview.data ? <div className="rounded-[2px] bg-[var(--surface)]/20 p-3 font-mono text-xs leading-6 text-[var(--ink)] ring-1 ring-[var(--border)]">
+              {preview.data ? <div className="rounded-[var(--radius-inset)] bg-[var(--surface)]/20 p-3 font-mono text-xs leading-6 text-[var(--ink)] ring-1 ring-[var(--border)]">
                 <div className="whitespace-normal break-all">
                   <p>{preview.data.library_root}{preview.data.library_root.endsWith(preview.data.separator) ? "" : preview.data.separator}</p>
                   <p>└── <span className="text-[var(--accent)]">{preview.data.folder_name}</span>{preview.data.separator}</p>
@@ -65,17 +66,20 @@ export function SettingsPage() {
                   <p>　　　　└── <span className="text-[var(--ink)]">{preview.data.filename}</span></p>
                 </div>
                 <p className="mt-2 break-all border-t border-[var(--border)] pt-2 text-[var(--muted)]">{preview.data.full_path}</p>
-              </div> : <div className="rounded-[2px] border border-dashed border-[var(--border)] p-4 text-sm text-[var(--muted)]"><p>{preview.error ? "预览加载失败" : root ? "正在加载目录示例…" : "选择路径后显示目录结构"}</p>{preview.error && <p className="mt-2 break-words text-[13px]">{preview.error.message}</p>}</div>}
+              </div> : <div className="rounded-[var(--radius-inset)] border border-dashed border-[var(--border)] p-4 text-sm text-[var(--muted)]"><p>{preview.error ? "预览加载失败" : root ? "正在加载目录示例…" : "选择路径后显示目录结构"}</p>{preview.error && <p className="mt-2 break-words text-[13px]">{preview.error.message}</p>}</div>}
             </div>
           </CardContent>
         </Card>
       </section>
-      <Card className="lg:col-span-2">
-        <CardHeader className="flex-wrap items-center border-b-0">
-          <div><CardTitle>登录会话</CardTitle><CardDescription>退出当前账户，之后需要重新登录。</CardDescription></div>
-          <Button variant="secondary" icon={LogOut} pending={logout.isPending} pendingLabel="退出中…" onClick={() => logout.mutate()}>退出登录</Button>
-        </CardHeader>
-      </Card>
+      <div className="grid min-w-0 gap-6 lg:grid-rows-[1fr_auto]">
+        <TmdbSettingsSection/>
+        <Card>
+          <CardHeader className="flex-wrap items-center border-b-0">
+            <div><CardTitle>登录会话</CardTitle><CardDescription>退出当前账户，之后需要重新登录。</CardDescription></div>
+            <Button variant="danger" icon={LogOut} pending={logout.isPending} pendingLabel="退出中…" onClick={() => logout.mutate()}>退出登录</Button>
+          </CardHeader>
+        </Card>
+      </div>
     </div>
   </>
 }
