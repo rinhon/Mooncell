@@ -90,11 +90,14 @@ class OwnedProcess:
                 self.job.assign(self.process)
                 psutil.Process(self.process.pid).resume()
         except BaseException:
+            try:
+                if self.process is not None:
+                    self.process.kill()
+            finally:
+                if self.job:
+                    self.job.close()
             if self.process is not None:
-                self.process.kill()
                 self.process.wait(timeout=5)
-            if self.job:
-                self.job.close()
             raise
         self._readers = [threading.Thread(target=self._stdout, daemon=True),
                          threading.Thread(target=self._stderr, daemon=True)]
@@ -135,7 +138,7 @@ class OwnedProcess:
             self.suspended = False
             self.last_progress = time.monotonic()
 
-    async def stop(self) -> None:
+    async def stop(self, *, fast: bool = False) -> None:
         if self.process is None:
             return
         try:
@@ -147,21 +150,21 @@ class OwnedProcess:
                 except (OSError, ValueError):
                     pass
                 try:
-                    await asyncio.to_thread(self.process.wait, timeout=3)
+                    await asyncio.to_thread(self.process.wait, timeout=0.15 if fast else 3)
                 except subprocess.TimeoutExpired:
                     self.process.terminate()
                     try:
-                        await asyncio.to_thread(self.process.wait, timeout=2)
+                        await asyncio.to_thread(self.process.wait, timeout=0.5 if fast else 2)
                     except subprocess.TimeoutExpired:
                         self.process.kill()
-                        await asyncio.to_thread(self.process.wait, timeout=5)
+                        await asyncio.to_thread(self.process.wait, timeout=1 if fast else 5)
             else:
                 self.process.wait()
         finally:
             if self.job:
                 self.job.close()
             for reader in self._readers:
-                await asyncio.to_thread(reader.join, 1)
+                await asyncio.to_thread(reader.join, 0.25 if fast else 1)
             for stream in (self.process.stdin, self.process.stdout, self.process.stderr):
                 if stream:
                     stream.close()

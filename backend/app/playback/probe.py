@@ -18,14 +18,18 @@ from pathlib import Path
 import psutil
 
 from ..config import settings
+from . import leases
 from .media import MediaError, ResolvedMedia, ensure_current, safe_file
 from .processes import WindowsJob
 from .schemas import AudioTrack, PlaybackCapabilities, PlaybackInfo, SubtitleTrack
 
+PROBE_SCHEMA_VERSION = 2
 _slots = asyncio.Semaphore(2)
 _cache: OrderedDict[str, PlaybackInfo] = OrderedDict()
 _inflight: dict[str, asyncio.Task] = {}
 _capability_cache: tuple[float, PlaybackCapabilities] | None = None
+_subtitle_cache: OrderedDict[tuple[str, str, str], str] = OrderedDict()
+_subtitle_inflight: dict[tuple[str, str, str], asyncio.Task] = {}
 SUPPORTED_SUBTITLES = {"subrip", "srt", "webvtt", "vtt"}
 SUBTITLE_EXTENSIONS = {".srt", ".vtt", ".ass", ".ssa", ".sup", ".sub", ".idx"}
 
@@ -46,11 +50,12 @@ def _settle_probe(media_id: str, task: asyncio.Task) -> None:
 
 
 async def shutdown_probes() -> None:
-    tasks = list(_inflight.values())
+    tasks = list(_inflight.values()) + list(_subtitle_inflight.values())
     for task in tasks:
         task.cancel()
     await asyncio.gather(*tasks, return_exceptions=True)
     _inflight.clear()
+    _subtitle_inflight.clear()
 
 
 def _run_media_command_sync(
@@ -194,6 +199,8 @@ def parse_probe(media: ResolvedMedia, data: dict) -> PlaybackInfo:
                 id=stream["index"], codec=codec, language=tags.get("language"),
                 title=tags.get("title"), channels=stream.get("channels"),
                 default=bool(stream.get("disposition", {}).get("default")),
+                profile=stream.get("profile"),
+                sample_rate=int(_number(stream.get("sample_rate"))) or None,
             ))
         elif stream.get("codec_type") == "subtitle":
             supported = codec in SUPPORTED_SUBTITLES
@@ -202,10 +209,19 @@ def parse_probe(media: ResolvedMedia, data: dict) -> PlaybackInfo:
                 title=tags.get("title") or f"内嵌字幕 {len(subtitles) + 1}", supported=supported,
                 reason=None if supported else "首版暂不支持此字幕格式，请选择 SRT/WebVTT 字幕",
             ))
-    return PlaybackInfo(
+    info = PlaybackInfo(
         media_id=media.media_id, source_id=media.source_id, filename=media.path.name,
         version=media.version, duration=duration, video_width=width, video_height=height,
         video_codec=video.get("codec_name", "unknown"), video_track=int(video.get("index", 0)),
+        probe_schema_version=PROBE_SCHEMA_VERSION,
+        container=data.get("format", {}).get("format_name", ""),
+        container_brand=data.get("format", {}).get("tags", {}).get("major_brand"),
+        video_profile=video.get("profile"),
+        video_level=int(_number(video.get("level"))) or None,
+        pixel_format=video.get("pix_fmt"),
+        bit_rate=int(_number(data.get("format", {}).get("bit_rate"))) or None,
+        source_start=_number(data.get("format", {}).get("start_time")),
+        video_start=_number(video.get("start_time")),
         frame_rate=_rate(
             video.get("avg_frame_rate") or video.get("r_frame_rate"),
         ), hdr=hdr, supported=not hdr,
@@ -213,6 +229,10 @@ def parse_probe(media: ResolvedMedia, data: dict) -> PlaybackInfo:
         qualities=[720, 1080] if height > 720 else [720],
         audio_tracks=audio, subtitle_tracks=subtitles,
     )
+    from .planner import set_playback_mime_types
+
+    set_playback_mime_types(info)
+    return info
 
 
 def _external_subtitles(media: ResolvedMedia) -> list[tuple[SubtitleTrack, Path]]:
@@ -255,17 +275,21 @@ def _read_external(path: Path) -> bytes:
 
 async def _load_probe(media: ResolvedMedia) -> PlaybackInfo:
     async with _slots:
-        await asyncio.to_thread(ensure_current, media)
-        output = await run_media_command([
-            settings.playback_ffprobe, "-v", "error", "-protocol_whitelist", "file,pipe",
-            "-format_whitelist", "mov,matroska,webm,avi,mpegts,mpeg,flv,asf,ogg",
-            "-show_streams", "-show_format", "-of", "json", str(media.path),
-        ], settings.playback_probe_timeout_seconds)
-        await asyncio.to_thread(ensure_current, media)
+        leases.acquire_source(media.source_id)
         try:
-            return parse_probe(media, json.loads(output))
-        except (ValueError, KeyError, TypeError) as exc:
-            raise MediaError("probe_failed", "媒体探测结果无效", 422) from exc
+            await asyncio.to_thread(ensure_current, media)
+            output = await run_media_command([
+                settings.playback_ffprobe, "-v", "error", "-protocol_whitelist", "file,pipe",
+                "-format_whitelist", "mov,matroska,webm,avi,mpegts,mpeg,flv,asf,ogg",
+                "-show_streams", "-show_format", "-of", "json", str(media.path),
+            ], settings.playback_probe_timeout_seconds)
+            await asyncio.to_thread(ensure_current, media)
+            try:
+                return parse_probe(media, json.loads(output))
+            except (ValueError, KeyError, TypeError) as exc:
+                raise MediaError("probe_failed", "媒体探测结果无效", 422) from exc
+        finally:
+            leases.release_source(media.source_id)
 
 
 async def probe_media(media: ResolvedMedia) -> PlaybackInfo:
@@ -274,6 +298,8 @@ async def probe_media(media: ResolvedMedia) -> PlaybackInfo:
     if cached is None and media.probe_json:
         try:
             cached = PlaybackInfo.model_validate_json(media.probe_json)
+            if cached.probe_schema_version != PROBE_SCHEMA_VERSION:
+                cached = None
         except ValueError:
             pass
     if cached is None:
@@ -301,7 +327,7 @@ async def probe_media(media: ResolvedMedia) -> PlaybackInfo:
     return result
 
 
-async def subtitle_content(media: ResolvedMedia, track_id: str) -> str:
+async def _read_subtitle(media: ResolvedMedia, track_id: str) -> str:
     info = await probe_media(media)
     track = next((item for item in info.subtitle_tracks if item.id == track_id), None)
     if track is None:
@@ -331,6 +357,50 @@ async def subtitle_content(media: ResolvedMedia, track_id: str) -> str:
             "-i", str(media.path), "-map", f"0:{track.id[2:]}", "-f", "webvtt", "pipe:1",
         ], settings.playback_probe_timeout_seconds, 5 * 1024 * 1024)
         return output.decode("utf-8-sig")
+
+
+async def _subtitle_content(media: ResolvedMedia, track_id: str) -> str:
+    # 租约属于共享提取任务，单个等待者取消时不能提前允许迁移文件。
+    leases.acquire_source(media.source_id)
+    try:
+        return await _read_subtitle(media, track_id)
+    finally:
+        leases.release_source(media.source_id)
+
+
+async def subtitle_content(media: ResolvedMedia, track_id: str) -> str:
+    await asyncio.to_thread(ensure_current, media)
+    version = media.version
+    if track_id.startswith("e:"):
+        candidates = await asyncio.to_thread(_external_subtitles, media)
+        path = next((path for track, path in candidates if track.id == track_id), None)
+        if path is None:
+            raise MediaError("subtitle_not_found", "字幕文件已移动", 404)
+        stat = await asyncio.to_thread(path.stat)
+        version += f":{stat.st_size}:{stat.st_mtime_ns}"
+    key = media.media_id, track_id, version
+    if key in _subtitle_cache:
+        _subtitle_cache.move_to_end(key)
+        return _subtitle_cache[key]
+    task = _subtitle_inflight.get(key)
+    if task is None:
+        if len(_subtitle_inflight) >= 32:
+            raise MediaError("probe_busy", "等待字幕提取的任务过多，请稍后重试", 503)
+        task = asyncio.create_task(_subtitle_content(media, track_id))
+        _subtitle_inflight[key] = task
+
+        def settled(finished: asyncio.Task) -> None:
+            if _subtitle_inflight.get(key) is finished:
+                _subtitle_inflight.pop(key, None)
+            if finished.cancelled() or finished.exception() is not None:
+                return
+            _subtitle_cache[key] = finished.result()
+            while (len(_subtitle_cache) > 64 or sum(len(value.encode("utf-8"))
+                   for value in _subtitle_cache.values()) > 16 * 1024 * 1024):
+                _subtitle_cache.popitem(last=False)
+
+        task.add_done_callback(settled)
+    return await asyncio.shield(task)
 
 
 async def playback_capabilities() -> PlaybackCapabilities:

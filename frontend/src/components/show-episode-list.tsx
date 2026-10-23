@@ -37,6 +37,7 @@ function EpisodeThumbnail({ show, item }: { show: Show; item: ShowEpisode }) {
     <Link
       className="release-thumbnail episode-thumbnail-playable"
       to={`/watch/${item.media_id}`}
+      state={{ autoPlay: true, sourceId: show.id, showTitle: show.metadata_title ?? show.name }}
       aria-label={`${playLabel} ${item.filename}`}
       title={playLabel}
     >

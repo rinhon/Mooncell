@@ -6,6 +6,10 @@ const ts = require("typescript");
 const compiled = ts.transpileModule(fs.readFileSync(require.resolve("../src/lib/player/hls-engine.ts"), "utf8"), {
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true },
 }).outputText;
+const engineModule = { exports: {} };
+vm.runInNewContext(ts.transpileModule(fs.readFileSync(require.resolve("../src/lib/player/engine.ts"), "utf8"), {
+  compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+}).outputText, engineModule);
 
 function snapshot(extra = {}) { return { id: "a", generation: 1, duration: 1000, source_anchor: 100, playlist_url: "/stream", cached_ranges: [[100, 103]], segments: [{ sequence: 10, source_start: 100, duration: 3 }], ...extra }; }
 function setup(initial = snapshot()) {
@@ -24,11 +28,12 @@ function setup(initial = snapshot()) {
   const sandbox = { exports: {}, require(name) {
     if (name === "hls.js") return { __esModule: true, default: FakeHls, Events: { FRAG_BUFFERED: "buffered", ERROR: "error" }, ErrorTypes: { MEDIA_ERROR: "media" } };
     if (name === "./types") return { sourceTime(media, source, anchor, duration) { return Math.min(duration, Math.max(0, source + media - anchor)); } };
+    if (name === "./engine") return engineModule.exports;
     throw new Error(name);
   } };
   vm.runInNewContext(compiled, sandbox);
   const engine = new sandbox.exports.HlsEngine(video, initial, (...args) => errors.push(args), () => ready++);
-  return { engine, hls, video, errors, get ready() { return ready; }, frag(sequence, pts) { hls.emit("buffered", { frag: { sn: sequence, start: 999, elementaryStreams: { video: { startPTS: pts } } } }); } };
+  return { engine, hls, video, errors, get ready() { return ready; }, frag(sequence, pts) { hls.emit("buffered", { frag: { sn: sequence, start: 999, duration: 3, elementaryStreams: { video: { startPTS: pts } } } }); } };
 }
 
 test("disables the latency controller, catch-up rate and edge seeks explicitly", () => {
@@ -51,9 +56,9 @@ test("uses actual video PTS with matching source segment, retaining the anchor a
   env.frag(30, 65.25);
   assert.equal(env.ready, 1);
   assert.equal(env.engine.getSourceTime(), 102.75);
-  assert.equal(env.engine.seek(110), true);
+  assert.equal(env.engine.seek(110), "buffered");
   assert.equal(env.video.currentTime, 15.25);
-  assert.equal(env.engine.seek(300), false);
+  assert.equal(env.engine.seek(300), "miss");
   env.engine.destroy();
 });
 
@@ -99,7 +104,7 @@ test("server-cached but unbuffered seeks use the existing source-to-media anchor
   env.frag(10, 5.25);
   env.video.buffered = { length: 0, start() { throw new Error("empty buffer"); }, end() { throw new Error("empty buffer"); } };
   env.video.paused = true;
-  assert.equal(env.engine.seek(160), true);
+  assert.equal(env.engine.seek(160), "server-cache");
   assert.equal(env.video.currentTime, 65.25);
   assert.equal(env.engine.getSourceTime(), 160);
   assert.equal(env.video.paused, true);
@@ -110,18 +115,28 @@ test("server-cached but unbuffered seeks use the existing source-to-media anchor
 
 test("cache limits and missing anchors leave external seeks to generation recreation", () => {
   const env = setup(snapshot({ cached_ranges: [[100, 190]] }));
-  assert.equal(env.engine.seek(160), false);
+  assert.equal(env.engine.seek(160), "miss");
   env.frag(10, 5.25);
   const original = env.video.currentTime;
-  assert.equal(env.engine.seek(190), false);
-  assert.equal(env.engine.seek(300), false);
-  assert.equal(env.engine.seek(NaN), false);
-  assert.equal(env.engine.seek(Infinity), false);
+  assert.equal(env.engine.seek(190), "miss");
+  assert.equal(env.engine.seek(300), "miss");
+  assert.equal(env.engine.seek(NaN), "miss");
+  assert.equal(env.engine.seek(Infinity), "miss");
   assert.equal(env.video.currentTime, original);
   // Browser-buffered history remains usable even after leaving server cache.
   env.engine.update(snapshot({ cached_ranges: [[150, 190]] }));
-  assert.equal(env.engine.seek(110), true);
+  assert.equal(env.engine.seek(110), "buffered");
   assert.equal(env.video.currentTime, 15.25);
   env.engine.destroy();
-  assert.equal(env.engine.seek(160), false);
+  assert.equal(env.engine.seek(160), "miss");
+});
+
+test("frame timestamps share the source clock and buffered headroom uses the active range", () => {
+  const env = setup();
+  env.frag(10, 5.25);
+  assert.equal(env.engine.getSourceTime(15.25), 110);
+  assert.equal(env.engine.getBufferedAhead(), 27);
+  env.video.currentTime = 40;
+  assert.equal(env.engine.getBufferedAhead(), 0);
+  env.engine.destroy();
 });

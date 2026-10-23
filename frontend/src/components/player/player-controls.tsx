@@ -57,6 +57,7 @@ export function PlayerControls(props: PlayerControlsProps) {
   const closeSettingsButton = useRef<HTMLButtonElement>(null)
   const lastAudibleVolume = useRef(props.volume > 0 ? props.volume : 0.8)
   const maximum = Math.max(0, Number.isFinite(props.duration) ? props.duration : 0)
+  const qualities = [0, ...props.info.qualities.filter((quality) => quality !== 0)]
   const displayedPosition = clampTime(draftPosition ?? props.position, maximum)
 
   useEffect(() => {
@@ -312,15 +313,10 @@ export function PlayerControls(props: PlayerControlsProps) {
             </label>
             <label>
               清晰度
-              <select
-                value={props.quality}
-                onChange={(event) => props.onQuality(Number(event.currentTarget.value))}
-                disabled={!props.info.qualities.length}
-              >
-                {!props.info.qualities.length && <option value={props.quality}>暂不可用</option>}
-                {props.info.qualities.map((quality) => (
+              <select value={props.quality} onChange={(event) => props.onQuality(Number(event.currentTarget.value))}>
+                {qualities.map((quality) => (
                   <option key={quality} value={quality}>
-                    {quality}p
+                    {quality === 0 ? "自动（原画优先）" : `${quality}p`}
                   </option>
                 ))}
               </select>

@@ -98,7 +98,7 @@ def ensure_current(media: ResolvedMedia) -> None:
 async def register_library_media(
     session: AsyncSession, source_id: int, library: ShowLibraryRead, directory: Path,
 ) -> None:
-    """扫描只登记身份，不启动 FFprobe；不安全的文件保持无播放入口。"""
+    """扫描登记身份并异步排队预热；不等待 FFprobe，不安全文件无播放入口。"""
     root = Path(await get_library_root(session))
     values = []
     for group in library.seasons:
@@ -120,6 +120,9 @@ async def register_library_media(
                               .on_conflict_do_nothing(index_elements=["id"]))
     if values:
         await session.commit()
+        from .metadata import prewarmer
+
+        prewarmer.schedule([value["id"] for value in values])
 
 
 async def resolve_media(session: AsyncSession, media_id: str) -> ResolvedMedia:

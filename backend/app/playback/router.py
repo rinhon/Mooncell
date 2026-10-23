@@ -3,7 +3,7 @@
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Response
-from sqlalchemy import and_, or_, update
+from sqlalchemy import and_, or_
 from sqlalchemy.dialects.sqlite import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -11,6 +11,7 @@ from ..database import get_session
 from ..dependencies import require_user
 from ..models import MediaFile, PlaybackProgress, User
 from .media import MediaError, resolve_media
+from .metadata import persist_probe
 from .probe import playback_capabilities, probe_media, subtitle_content
 from .schemas import PlaybackCapabilities, PlaybackInfo, ProgressRead, ProgressUpdate
 
@@ -49,17 +50,7 @@ async def playback_info(
         saved = progress_read(await session.get(PlaybackProgress, (user_id, media_id)))
         await session.close()
         info = await probe_media(media)
-        # 探测只在首次发生，结果单独短事务保存；外置字幕每次从目录读取。
-        if media.probe_json is None:
-            persisted = info.model_copy(deep=True)
-            persisted.subtitle_tracks = [track for track in persisted.subtitle_tracks
-                                        if track.id.startswith("s:")]
-            persisted.progress = None
-            await session.execute(update(MediaFile).where(MediaFile.id == media_id).values(
-                probe_json=persisted.model_dump_json(),
-            ))
-            await session.commit()
-            await session.close()
+        await persist_probe(session, media, info)
         info.progress = saved
         return info
     except MediaError as error:
@@ -135,7 +126,8 @@ async def put_progress(
         if await session.get(MediaFile, media_id) is None:
             raise MediaError("media_not_found", "媒体不存在", 404)
         # 已建立会话持有权威时长；迁移等待或文件移动后仍允许保存该会话进度。
-        created_at = manager.validate_progress(user_id, media_id, data.session_id, data.generation)
+        created_at = manager.validate_progress(user_id, media_id, data.session_id, data.generation,
+                                              data.seek_revision)
         duration = manager.get(user_id, data.session_id).info.duration
         return await save_progress(session, user_id, media_id, data, created_at, duration)
     except MediaError as error:

@@ -28,6 +28,15 @@ def release_source(source_id: int | None) -> None:
         _readers.pop(source_id, None)
 
 
+def retain_source(source_id: int) -> None:
+    """已有播放会话派生响应租约；迁移等待期间仍可完成现有读取。"""
+    if not _readers[source_id]:
+        from .media import MediaError
+
+        raise MediaError("session_closed", "播放会话已释放媒体文件", 410)
+    _readers[source_id] += 1
+
+
 def begin_mutation(source_id: int | None) -> bool:
     """先阻止新播放，再判断已有会话是否已全部释放。"""
     if source_id is None:

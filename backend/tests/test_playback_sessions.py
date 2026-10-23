@@ -5,6 +5,7 @@ import json
 import shutil
 import subprocess
 import sys
+import threading
 import time
 import uuid
 from pathlib import Path
@@ -77,6 +78,9 @@ async def test_real_hls_seek_pts_ownership_idempotence_and_readers(session_manag
     status = await ready(manager, session_id)
     assert status["segments"][0]["source_start"] == pytest.approx(0, abs=0.05)
     assert status["segments"][0]["duration"] == pytest.approx(3, abs=0.05)
+    assert status["revision"] > first["revision"]
+    assert status["timings"]["spawn_ms"] >= 0
+    assert 0 <= status["timings"]["first_segment_ms"] <= status["timings"]["ready_ms"]
     playlist = await manager.playlist(1, session_id, 1)
     assert "#EXT-X-PLAYLIST-TYPE" not in playlist
     assert "segments/segment-0000000.ts" in playlist
@@ -129,12 +133,12 @@ async def test_long_pause_releases_and_resume_rebuilds(session_manager, sample):
         def resume(self):
             self.suspended = False
 
-        async def stop(self):
+        async def stop(self, *, fast=False):
             self.running = False
 
     process = RunningProcess()
+    await manager._stop_process(session)
     async with manager.lock:
-        await manager._stop_process(session)
         session.process, session.process_generation = process, session.generation
         leases.acquire_source(media.source_id)
         session.leased = True
@@ -144,6 +148,8 @@ async def test_long_pause_releases_and_resume_rebuilds(session_manager, sample):
     session.paused_since = time.monotonic() - 61
     async with manager.lock:
         await manager._refresh(session)
+    if session.stop_task:
+        await session.stop_task
     assert session.process is None and session.process_state == "released"
     assert not leases.source_in_use(media.source_id)
     resumed = await manager.heartbeat(1, session.id, 1, 1.0, False, 1)
@@ -247,9 +253,13 @@ async def test_endlist_waits_for_all_pending_probes_and_releases_source(
     async with asyncio.timeout(15):
         while True:
             session = session_manager.get(1, created["id"])
-            if session.ended and session.process is None:
+            if session.ended and session.stop_task is not None:
+                # 回收任务在锁内摘下进程，锁外等待管道/线程退出后才释放媒体租约。
+                # process=None 只说明控制路径已让出进程，不代表清理已完成。
+                await asyncio.shield(session.stop_task)
                 break
             await asyncio.sleep(0.05)
+    assert session.process is None and not session.leased
     assert len(session.segments) == 5
     assert "#EXT-X-ENDLIST" in await session_manager.playlist(1, created["id"], 1)
     assert not leases.source_in_use(media.source_id)
@@ -452,3 +462,288 @@ def test_nvenc_forces_idr_for_independent_three_second_hls_segments(sample):
     assert command[command.index("-hls_time") + 1] == "3"
     software = transcode.command(media, info, Path("out"), 0, 720, None, encoder="libx264")
     assert "-forced-idr" not in software
+
+
+@pytest.mark.asyncio
+async def test_revision_wait_wakes_for_seek_and_does_not_hold_control_lock(
+    session_manager, sample, monkeypatch,
+):
+    async def no_prepare(*args):
+        pass
+
+    monkeypatch.setattr(session_manager, "_prepare", no_prepare)
+    media, info = sample
+    created = await session_manager.create(1, media, info, 0, 720, None, str(uuid.uuid4()))
+    session = session_manager.get(1, created["id"])
+    session.status = "ready"
+    session.produced_ranges = [(0, 15)]
+    waiting = asyncio.create_task(session_manager.status(1, session.id, session.revision, 1500))
+    await asyncio.sleep(0)
+    request_id = str(uuid.uuid4())
+    ack = await asyncio.wait_for(session_manager.seek(
+        1, session.id, 1, 7.3, request_id, client_buffered=True,
+    ), timeout=0.3)
+    updated = await asyncio.wait_for(waiting, timeout=0.3)
+    assert updated["revision"] == ack["revision"] > created["revision"]
+    assert ack["generation"] == 1 and ack["seek_revision"] == 1
+    assert ack["seek_disposition"] == "buffered"
+    assert ack["needs_recovery"] and not ack["requires_reload"]
+    assert (await session_manager.seek(
+        1, session.id, 1, 7.3, request_id, client_buffered=True,
+    ))["revision"] == ack["revision"]
+    await session_manager.heartbeat(1, session.id, 1, 7.31, False, 1)
+    recovery = await session_manager.seek(1, session.id, 1, 7.4, str(uuid.uuid4()))
+    assert recovery["generation"] == 2 and recovery["requires_reload"]
+    assert recovery["seek_disposition"] == "restart" and not recovery["needs_recovery"]
+
+
+@pytest.mark.asyncio
+async def test_revision_wait_times_out_and_cancellation_keeps_session_usable(
+    session_manager, sample, monkeypatch,
+):
+    async def no_prepare(*args):
+        pass
+
+    monkeypatch.setattr(session_manager, "_prepare", no_prepare)
+    media, info = sample
+    created = await session_manager.create(1, media, info, 0, 720, None, str(uuid.uuid4()))
+    unchanged = await asyncio.wait_for(session_manager.status(
+        1, created["id"], created["revision"], 20,
+    ), timeout=0.3)
+    assert unchanged["revision"] == created["revision"]
+    waiting = asyncio.create_task(session_manager.status(
+        1, created["id"], unchanged["revision"], 1500,
+    ))
+    await asyncio.sleep(0)
+    waiting.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await waiting
+    await asyncio.wait_for(session_manager.close(1, created["id"]), timeout=0.3)
+    closed = await session_manager.status(1, created["id"], unchanged["revision"], 1500)
+    assert closed["status"] == "closed" and closed["revision"] > unchanged["revision"]
+
+
+@pytest.mark.asyncio
+async def test_slow_stop_does_not_block_controls_and_only_latest_seek_starts(
+    session_manager, sample, monkeypatch,
+):
+    from app.playback import sessions
+
+    entered, release = asyncio.Event(), asyncio.Event()
+    starts = []
+
+    class Process:
+        running = True
+        suspended = False
+        returncode = None
+        out_time = 0
+        last_progress = time.monotonic()
+
+        def start(self, arguments):
+            starts.append(arguments)
+
+        async def stop(self, *, fast=False):
+            self.running = False
+
+    class SlowOldProcess(Process):
+        async def stop(self, *, fast=False):
+            assert fast
+            entered.set()
+            await release.wait()
+            self.running = False
+
+    monkeypatch.setattr(sessions, "OwnedProcess", Process)
+    media, info = sample
+    created = await session_manager.create(1, media, info, 0, 720, None, str(uuid.uuid4()))
+    session = session_manager.get(1, created["id"])
+    await session.task
+    starts.clear()
+    session.status = "ready"
+    old = SlowOldProcess()
+    session.process = old
+    first = await session_manager.seek(1, session.id, 1, 7.3, str(uuid.uuid4()))
+    try:
+        await asyncio.wait_for(entered.wait(), timeout=0.5)
+        state = await asyncio.wait_for(session_manager.status(1, session.id), timeout=0.3)
+        assert state["generation"] == first["generation"] == 2
+        final = await asyncio.wait_for(session_manager.seek(
+            1, session.id, 1, 11.3, str(uuid.uuid4()),
+        ), timeout=0.3)
+        assert final["generation"] == 3 and not starts
+    finally:
+        release.set()
+    await asyncio.wait_for(session.task, timeout=1)
+    assert len(starts) == 1
+    assert starts[0][starts[0].index("-ss") + 1] == "11.300000"
+    assert session.process_generation == 3 and not old.running
+    assert leases.source_in_use(media.source_id)
+    await session_manager.close(1, session.id)
+    assert not leases.source_in_use(media.source_id)
+
+
+@pytest.mark.asyncio
+async def test_late_first_frame_retries_with_bounded_preroll_then_fails(
+    session_manager, sample, monkeypatch,
+):
+    async def no_prepare(*args):
+        pass
+
+    monkeypatch.setattr(session_manager, "_prepare", no_prepare)
+    media, info = sample
+    info = info.model_copy(update={"duration": 7200})
+    created = await session_manager.create(1, media, info, 5400, 720, None, str(uuid.uuid4()))
+    session = session_manager.get(1, created["id"])
+
+    class Process:
+        running = False
+        returncode = 0
+
+        async def stop(self, *, fast=False):
+            pass
+
+    for attempt in range(2):
+        session.process, session.process_generation = Process(), session.generation
+        timestamp = asyncio.create_task(asyncio.sleep(0, result=5402 + transcode.TIMESTAMP_OFFSET))
+        await timestamp
+        session.pending_probes[0] = (
+            session.generation, session.generation_directory / "segment-0000000.ts", 3, timestamp,
+        )
+        async with session_manager.lock:
+            await session_manager._refresh(session)
+        if attempt == 0:
+            assert session.generation == 2 and session.seek_preroll == 30
+            arguments = transcode.command(
+                media, info, session.generation_directory, 5400, 720, None,
+                seek_preroll=session.seek_preroll,
+            )
+            assert arguments[arguments.index("-ss") + 1] == "5370.000000"
+    assert session.generation == 2 and session.status == "failed"
+    assert session.error["code"] == "seek_index_unavailable"
+
+
+@pytest.mark.asyncio
+async def test_close_during_spawn_reaps_unpublished_process_and_releases_source(
+    session_manager, sample, monkeypatch,
+):
+    from app.playback import sessions
+
+    entered, release = threading.Event(), threading.Event()
+    spawned = []
+
+    class Process:
+        running = True
+
+        def start(self, arguments):
+            spawned.append(self)
+            entered.set()
+            assert release.wait(3)
+
+        async def stop(self, *, fast=False):
+            self.running = False
+
+    monkeypatch.setattr(sessions, "OwnedProcess", Process)
+    media, info = sample
+    created = await session_manager.create(1, media, info, 0, 720, None, str(uuid.uuid4()))
+    session = session_manager.get(1, created["id"])
+    try:
+        async with asyncio.timeout(1):
+            while not entered.is_set():
+                await asyncio.sleep(0.01)
+        await session_manager.seek(1, session.id, 1, 7.3, str(uuid.uuid4()))
+        closing = asyncio.create_task(session_manager.close(1, session.id))
+        await asyncio.sleep(0)
+        state = await asyncio.wait_for(session_manager.status(1, session.id), timeout=0.3)
+        assert state["status"] == "closed" and session.process is None
+    finally:
+        release.set()
+    await asyncio.wait_for(closing, timeout=1)
+    assert len(spawned) == 1 and not spawned[0].running
+    assert not leases.source_in_use(media.source_id)
+
+
+@pytest.mark.asyncio
+async def test_stop_timeout_retains_process_lease_and_slot_until_reaped(
+    session_manager, sample, monkeypatch,
+):
+    async def no_prepare(*args):
+        pass
+
+    monkeypatch.setattr(session_manager, "_prepare", no_prepare)
+    media, info = sample
+    created = await session_manager.create(1, media, info, 0, 720, None, str(uuid.uuid4()))
+    session = session_manager.get(1, created["id"])
+    real_prepare = SessionManager._prepare.__get__(session_manager)
+
+    class Process:
+        running = True
+        blocked = True
+
+        async def stop(self, *, fast=False):
+            if self.blocked:
+                raise subprocess.TimeoutExpired("ffmpeg", 1)
+            self.running = False
+
+    process = Process()
+    session.process, session.process_generation = process, 1
+    session.status = "ready"
+    monkeypatch.setattr(session_manager, "_prepare", real_prepare)
+    await session_manager.seek(1, session.id, 1, 7.3, str(uuid.uuid4()))
+    await session.task
+    if session.stop_task:
+        await session.stop_task
+    state = await session_manager.status(1, session.id)
+    assert state["status"] == "failed" and state["error"]["code"] == "process_stop_failed"
+    assert session.process is process and leases.source_in_use(media.source_id)
+    assert not session_manager._has_slot()
+    process.blocked = False
+    await session_manager.close(1, session.id)
+    assert not process.running and session.process is None
+    assert not leases.source_in_use(media.source_id)
+
+
+@pytest.mark.asyncio
+async def test_old_heartbeat_and_progress_revision_cannot_undo_same_generation_seek(
+    session_manager, sample, monkeypatch,
+):
+    async def no_prepare(*args):
+        pass
+
+    monkeypatch.setattr(session_manager, "_prepare", no_prepare)
+    media, info = sample
+    created = await session_manager.create(1, media, info, 0, 720, None, str(uuid.uuid4()))
+    session = session_manager.get(1, created["id"])
+    session.status = "ready"
+    session.produced_ranges = [(0, 15)]
+    acknowledgment = await session_manager.seek(
+        1, session.id, 1, 10, str(uuid.uuid4()), client_buffered=True,
+    )
+    with pytest.raises(MediaError) as stale:
+        await session_manager.heartbeat(1, session.id, 1, 1, True, 1, seek_revision=0)
+    assert stale.value.code == "stale_seek_revision"
+    assert session.position == 10 and not session.paused
+    with pytest.raises(MediaError) as old_progress:
+        session_manager.validate_progress(1, media.media_id, session.id, 1, seek_revision=0)
+    assert old_progress.value.code == "stale_seek_revision"
+    await session_manager.heartbeat(
+        1, session.id, 1, 10.01, False, 1, seek_revision=acknowledgment["seek_revision"],
+    )
+
+
+@pytest.mark.asyncio
+async def test_client_buffer_claim_cannot_expand_producer_budget_across_unpublished_gap(
+    session_manager, sample, monkeypatch,
+):
+    async def no_prepare(*args):
+        pass
+
+    monkeypatch.setattr(session_manager, "_prepare", no_prepare)
+    media, info = sample
+    created = await session_manager.create(1, media, info, 0, 720, None, str(uuid.uuid4()))
+    session = session_manager.get(1, created["id"])
+    session.status = "ready"
+    session.produced_ranges = [(0, 3), (6, 9)]
+    response = await session_manager.seek(
+        1, session.id, 1, 4, str(uuid.uuid4()), client_buffered=True,
+    )
+    assert response["generation"] == 2 and response["seek_disposition"] == "restart"
+    assert session.produced_ranges == []

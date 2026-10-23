@@ -114,7 +114,7 @@ def playlist_entries(path: Path) -> tuple[list[tuple[int, str, float]], bool]:
             except ValueError:
                 duration = None
         elif match := SEGMENT_NAME.fullmatch(line):
-            if duration is not None and math.isfinite(duration) and 0 < duration < 30:
+            if duration is not None and math.isfinite(duration) and 0 < duration <= 86400:
                 entries.append((int(match[1]), line, duration))
             duration = None
     return entries, "#EXT-X-ENDLIST" in lines
@@ -145,13 +145,19 @@ def playable_segments(segments: dict[int, Segment]) -> list[Segment]:
     return values[start:]
 
 
-def make_playlist(segments: dict[int, Segment], ended: bool) -> str:
+def make_playlist(segments: dict[int, Segment], ended: bool, *,
+                  target_duration: int | None = None, independent: bool = True) -> str:
     values = playable_segments(segments)
     if not values:
         raise MediaError("session_preparing", "播放分片仍在准备中", 425)
-    target = max(1, math.ceil(max(segment.duration for segment in values)))
+    actual_target = max(1, math.ceil(max(segment.duration for segment in values)))
+    if target_duration is not None and actual_target > target_duration:
+        raise MediaError("segment_duration_exceeded", "源视频关键帧间隔超出直接串流限制", 422)
+    target = target_duration or actual_target
     lines = ["#EXTM3U", "#EXT-X-VERSION:6", f"#EXT-X-TARGETDURATION:{target}",
-             f"#EXT-X-MEDIA-SEQUENCE:{values[0].sequence}", "#EXT-X-INDEPENDENT-SEGMENTS"]
+             f"#EXT-X-MEDIA-SEQUENCE:{values[0].sequence}"]
+    if independent:
+        lines.append("#EXT-X-INDEPENDENT-SEGMENTS")
     for segment in values:
         lines += [f"#EXTINF:{segment.duration:.6f},", f"segments/{segment.path.name}"]
     if ended:

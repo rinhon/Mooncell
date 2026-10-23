@@ -18,7 +18,7 @@ function setup(options = {}) {
   let timerId = 0, active, uuid = 0;
   class ApiError extends Error { constructor(status, message) { super(message); this.status = status; } }
   function api(path, init = {}) {
-    const request = { path, method: init.method ?? "GET", keepalive: Boolean(init.keepalive), body: init.body ? JSON.parse(init.body) : null, ...deferred() };
+    const request = { path, method: init.method ?? "GET", keepalive: Boolean(init.keepalive), signal: init.signal, body: init.body ? JSON.parse(init.body) : null, ...deferred() };
     requests.push(request);
     if (request.method === "PUT" || request.method === "DELETE") request.resolve({});
     return request.promise;
@@ -52,11 +52,13 @@ function setup(options = {}) {
   };
   const sandbox = {
     exports: {}, require(name) { if (name === "react") return react; if (name === "@/lib/api") return { api, ApiError }; throw new Error(name); },
-    window, Error, clearInterval: window.clearInterval, crypto: cryptoProvider,
+    window, Error, AbortController, clearInterval: window.clearInterval, crypto: cryptoProvider,
+    document: { createElement() { return { canPlayType(mime) { return options.nativeMime === mime ? "probably" : ""; } }; } },
+    MediaSource: { isTypeSupported(mime) { return options.hlsMime === mime; } },
   };
   vm.runInNewContext(compiled, sandbox, { filename: "use-playback-session.js" });
   class Runner {
-    constructor(mediaId) { this.slots = []; this.mediaId = mediaId; this.info = info(mediaId); this.effects = []; this.dirty = false; this.mounted = true; runners.push(this); this.render(); }
+    constructor(mediaId) { this.slots = []; this.mediaId = mediaId; this.info = { ...info(mediaId), ...options.info }; this.effects = []; this.dirty = false; this.mounted = true; runners.push(this); this.render(); }
     render() { if (!this.mounted) return; this.cursor = 0; this.effects = []; this.dirty = false; active = this; this.result = sandbox.exports.usePlaybackSession(this.mediaId, this.info); active = null; this.effects.forEach((effect) => effect()); }
     change(mediaId) { this.mediaId = mediaId; this.info = info(mediaId); this.render(); }
     strictReplay() { this.slots.filter((slot) => slot?.create).forEach((slot) => slot.cleanup?.()); this.slots.filter((slot) => slot?.create).forEach((slot) => { slot.cleanup = slot.create(); }); }
@@ -336,4 +338,81 @@ test("missing crypto reports a visible error without a dangling lifecycle reject
     runner.unmount(); await env.settle();
     process.removeListener("unhandledRejection", record);
   }
+});
+
+test("preparation immediately long-polls revisions and cancels the old wait for a newer seek", async () => {
+  const env = setup(), runner = new env.Runner("a"); await env.settle();
+  env.calls("POST", "/sessions")[0].resolve({ ...session("session-a", 1, "preparing"), revision: 1 });
+  await env.settle();
+  const initialPoll = env.calls("GET")[0];
+  assert.equal(initialPoll.path, "/playback/sessions/session-a?after_revision=1&wait_ms=1500");
+  runner.result.seek(300); await env.settle();
+  assert.equal(initialPoll.signal.aborted, true);
+  env.calls("POST", "/seek")[0].resolve({ ...session("session-a", 2, "preparing"), revision: 2 });
+  await env.settle();
+  const nextPoll = env.calls("GET").at(-1);
+  assert.equal(nextPoll.path, "/playback/sessions/session-a?after_revision=2&wait_ms=1500");
+  initialPoll.resolve({ ...session("session-a", 1), revision: 50 });
+  nextPoll.resolve({ ...session("session-a", 2), revision: 3 }); await env.settle();
+  assert.equal(runner.result.session.generation, 2);
+  assert.equal(runner.result.session.status, "ready");
+  assert.equal(runner.result.session.revision, 3);
+  assert.equal(env.calls("GET").length, 2, "Readiness must arrive without an interval tick");
+  runner.unmount(); await env.settle();
+});
+
+test("browser-buffered seeks acknowledge the clock without blocking the local picture", async () => {
+  const env = setup(), runner = new env.Runner("a"); await env.settle();
+  env.calls("POST", "/sessions")[0].resolve(session()); await env.settle();
+  runner.result.seek(50, { clientBuffered: true }); await env.settle();
+  assert.equal(runner.result.locating, false);
+  assert.equal(env.calls("POST", "/seek")[0].body.client_buffered, true);
+  const count = env.requests.length;
+  runner.result.heartbeat(); await env.settle();
+  assert.equal(env.requests.length, count, "Heartbeat waits for the position acknowledgement");
+  env.calls("POST", "/seek")[0].resolve({ ...session(), seek_disposition: "buffered", requires_reload: false, needs_recovery: true });
+  await env.settle();
+  assert.equal(runner.result.session.generation, 1);
+  assert.equal(runner.result.session.needs_recovery, true);
+  runner.unmount(); await env.settle();
+});
+
+test("server revisions reject a stale same-generation snapshot even when its request is newer", async () => {
+  const env = setup(), runner = new env.Runner("a"); await env.settle();
+  env.calls("POST", "/sessions")[0].resolve({ ...session(), revision: 4 }); await env.settle();
+  runner.result.heartbeat(); await env.settle();
+  env.calls("POST", "/heartbeat")[0].resolve({ ...session("session-a", 1, "paused"), revision: 3 });
+  await env.settle();
+  assert.equal(runner.result.session.status, "ready");
+  assert.equal(runner.result.session.revision, 4);
+  runner.unmount(); await env.settle();
+});
+
+test("creation negotiates the exact codec MIME types and defaults to original quality", async () => {
+  const nativeMime = 'video/mp4; codecs="avc1.640028,mp4a.40.2"';
+  const hlsMime = 'video/mp4; codecs="avc1.640028"';
+  const env = setup({ nativeMime, hlsMime, info: { native_mime_type: nativeMime, hls_mime_type: hlsMime } });
+  const runner = new env.Runner("a"); await env.settle();
+  const create = env.calls("POST", "/sessions")[0];
+  assert.equal(create.body.quality, 0);
+  assert.deepEqual(create.body.capabilities, { native_mime_types: [nativeMime], hls_mime_types: [hlsMime] });
+  create.resolve(session()); await env.settle();
+  runner.unmount(); await env.settle();
+});
+
+test("fallback carries source position and forces conversion without resetting quality or audio", async () => {
+  const env = setup(), runner = new env.Runner("a"); await env.settle();
+  env.calls("POST", "/sessions")[0].resolve({ ...session(), quality: 0, audio_track: 2, seek_revision: 7 }); await env.settle();
+  runner.result.clock.current.position = 95;
+  runner.result.fallback(); await env.settle();
+  const request = env.calls("PATCH", "/options")[0];
+  assert.equal(request.body.force_transcode, true);
+  assert.equal(request.body.position, 95);
+  assert.equal(request.body.quality, 0);
+  assert.equal(request.body.audio_track, 2);
+  request.resolve({ ...session("session-a", 2), seek_revision: 8 }); await env.settle();
+  runner.result.heartbeat(); runner.result.save(); await env.settle();
+  assert.equal(env.calls("POST", "/heartbeat")[0].body.seek_revision, 8);
+  assert.equal(env.calls("PUT", "/progress")[0].body.seek_revision, 8);
+  runner.unmount(); await env.settle();
 });

@@ -42,6 +42,17 @@ function playbackClientId(): string {
   return tabClientId
 }
 
+export function playbackCapabilities(info: PlaybackInfo) {
+  const video = typeof document === "undefined" ? null : document.createElement("video")
+  const nativeMime = info.native_mime_type
+  const hlsMime = info.hls_mime_type
+  return {
+    native_mime_types: nativeMime && video?.canPlayType(nativeMime) ? [nativeMime] : [],
+    hls_mime_types:
+      hlsMime && typeof MediaSource !== "undefined" && MediaSource.isTypeSupported(hlsMime) ? [hlsMime] : [],
+  }
+}
+
 export function usePlaybackSession(mediaId: string, info: PlaybackInfo | undefined) {
   const [session, setSession] = useState<PlaybackSession | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -63,6 +74,8 @@ export function usePlaybackSession(mediaId: string, info: PlaybackInfo | undefin
   const heartbeatQueued = useRef(false)
   const snapshotSequence = useRef(0)
   const acceptedSnapshot = useRef(0)
+  const pollNow = useRef<() => void>(() => {})
+  const cancelPoll = useRef<() => void>(() => {})
   const fail = useCallback((cause: unknown, token: number) => {
     if (!alive.current || token !== epoch.current) return
     if (cause instanceof ApiError && (cause.status === 401 || cause.status === 403)) unauthorized.current = true
@@ -70,12 +83,21 @@ export function usePlaybackSession(mediaId: string, info: PlaybackInfo | undefin
   }, [])
   const accept = useCallback((value: PlaybackSession, token: number, snapshot = ++snapshotSequence.current) => {
     if (!alive.current || unauthorized.current || token !== epoch.current || snapshot < acceptedSnapshot.current) return
-    if (current.current && (value.id !== current.current.id || value.generation < current.current.generation)) return
+    if (
+      current.current &&
+      (value.id !== current.current.id ||
+        value.generation < current.current.generation ||
+        (value.revision !== undefined &&
+          current.current.revision !== undefined &&
+          value.revision < current.current.revision))
+    )
+      return
     acceptedSnapshot.current = snapshot
     current.current = value
     setSession(value)
     if (value.status === "failed") setError(value.error?.message ?? "转码失败")
     if (value.status === "ready" || value.status === "paused") setLocating(false)
+    if (value.status === "preparing") pollNow.current()
   }, [])
 
   useEffect(() => {
@@ -115,8 +137,9 @@ export function usePlaybackSession(mediaId: string, info: PlaybackInfo | undefin
               media_id: mediaId,
               client_id: playbackClientId(),
               start_time: clock.current.position,
-              quality: info.qualities.at(-1) ?? 720,
+              quality: 0,
               audio_track: info.audio_tracks.find((track) => track.default)?.id ?? info.audio_tracks[0]?.id ?? null,
+              capabilities: playbackCapabilities(info),
               request_id: playbackUuid(),
             }),
           })
@@ -129,8 +152,8 @@ export function usePlaybackSession(mediaId: string, info: PlaybackInfo | undefin
           if (!stopped) fail(cause, token)
         }
       })
-    let polling = false
-    const poll = window.setInterval(() => {
+    let polling: AbortController | null = null
+    const poll = () => {
       const value = current.current
       if (
         stopped ||
@@ -145,29 +168,46 @@ export function usePlaybackSession(mediaId: string, info: PlaybackInfo | undefin
         return
       const revision = control.current
       const snapshot = ++snapshotSequence.current
-      polling = true
-      void api<PlaybackSession>(`/playback/sessions/${value.id}`)
+      const controller = new AbortController()
+      let received = false
+      polling = controller
+      const query = value.status === "preparing" ? `?after_revision=${value.revision ?? 0}&wait_ms=1500` : ""
+      void api<PlaybackSession>(`/playback/sessions/${value.id}${query}`, { signal: controller.signal })
         .then((next) => {
-          if (!stopped && !changing.current && revision === control.current) accept(next, token, snapshot)
+          received = true
+          if (!stopped && !controller.signal.aborted && !changing.current && revision === control.current)
+            accept(next, token, snapshot)
         })
         .catch((cause) => {
-          if (!stopped) fail(cause, token)
+          if (!stopped && !controller.signal.aborted) fail(cause, token)
         })
         .finally(() => {
-          polling = false
+          if (polling !== controller) return
+          polling = null
+          // Preparation waits on server revisions, not the next interval tick.
+          if (received && !stopped && !controller.signal.aborted && current.current?.status === "preparing") poll()
         })
-    }, 1500)
+    }
+    pollNow.current = poll
+    cancelPoll.current = () => {
+      polling?.abort()
+      polling = null
+    }
+    const timer = window.setInterval(poll, 1500)
     return () => {
       stopped = true
       alive.current = false
       ++epoch.current
       ++control.current
-      window.clearInterval(poll)
+      window.clearInterval(timer)
+      cancelPoll.current()
+      pollNow.current = () => {}
       const value = current.current
       if (!pageHidden.current && !unauthorized.current && !changing.current && value && value.id === ownedId) {
         const update = {
           session_id: value.id,
           generation: value.generation,
+          seek_revision: value.seek_revision,
           sequence: ++sequence.current,
           position: clock.current.position,
           completed: clock.current.completed ?? false,
@@ -206,6 +246,7 @@ export function usePlaybackSession(mediaId: string, info: PlaybackInfo | undefin
         body: JSON.stringify({
           session_id: value.id,
           generation: value.generation,
+          seek_revision: value.seek_revision,
           sequence: ++sequence.current,
           position: clock.current.position,
           completed: clock.current.completed ?? false,
@@ -242,6 +283,7 @@ export function usePlaybackSession(mediaId: string, info: PlaybackInfo | undefin
         method: "POST",
         body: JSON.stringify({
           generation: value.generation,
+          seek_revision: value.seek_revision,
           position: clock.current.position,
           paused: clock.current.paused,
           playback_rate: clock.current.playbackRate,
@@ -277,6 +319,7 @@ export function usePlaybackSession(mediaId: string, info: PlaybackInfo | undefin
       pageHidden.current = true
       alive.current = false
       ++control.current
+      cancelPoll.current()
       const value = current.current
       if (value && closedOnHide.current !== value.id) {
         closedOnHide.current = value.id
@@ -301,13 +344,14 @@ export function usePlaybackSession(mediaId: string, info: PlaybackInfo | undefin
   }, [heartbeat, save])
 
   const change = useCallback(
-    (kind: "seek" | "options", body: object) => {
-      if (!alive.current || unauthorized.current) return
+    (kind: "seek" | "options", body: object, blocking = true) => {
+      if (!alive.current || unauthorized.current) return Promise.resolve(undefined)
       const revision = ++control.current
       const token = epoch.current
       const lifecycleReady = lifecycleQueue
       changing.current = true
-      setLocating(true)
+      cancelPoll.current()
+      setLocating(blocking)
       setError(null)
       // 串行执行已发出的控制请求，忽略连续拖动中的中间请求。
       pending.current = pending.current
@@ -325,8 +369,10 @@ export function usePlaybackSession(mediaId: string, info: PlaybackInfo | undefin
             method: kind === "seek" ? "POST" : "PATCH",
             body: JSON.stringify({ ...body, generation: value.generation, request_id: playbackUuid() }),
           })
-          if (revision === control.current && token === epoch.current) accept(next, token)
-          else if (
+          if (revision === control.current && token === epoch.current) {
+            accept(next, token)
+            return next
+          } else if (
             token === epoch.current &&
             current.current?.id === next.id &&
             next.generation >= current.current.generation
@@ -341,8 +387,12 @@ export function usePlaybackSession(mediaId: string, info: PlaybackInfo | undefin
           }
         })
         .finally(() => {
-          if (revision === control.current && token === epoch.current) changing.current = false
+          if (revision === control.current && token === epoch.current) {
+            changing.current = false
+            if (current.current?.status === "preparing") pollNow.current()
+          }
         })
+      return pending.current as Promise<PlaybackSession | undefined>
     },
     [accept, fail],
   )
@@ -359,11 +409,18 @@ export function usePlaybackSession(mediaId: string, info: PlaybackInfo | undefin
       restartPosition.current = position ?? clock.current.position
       setAttempt((value) => value + 1)
     },
-    seek: (position: number) => {
+    seek: (position: number, options: { clientBuffered?: boolean } = {}) => {
       clock.current.position = position
-      change("seek", { position })
+      return change("seek", { position, client_buffered: options.clientBuffered ?? false }, !options.clientBuffered)
     },
     options: (quality: number, audio_track: number | null) =>
       change("options", { quality, audio_track, position: clock.current.position }),
+    fallback: () =>
+      change("options", {
+        quality: current.current?.quality ?? 0,
+        audio_track: current.current?.audio_track ?? null,
+        position: clock.current.position,
+        force_transcode: true,
+      }),
   }
 }

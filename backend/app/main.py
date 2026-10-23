@@ -18,6 +18,7 @@ from .library_scan import library_scan_loop
 from .library_scan import router as library_scan_router
 from .notification_api import router as notification_router
 from .notifications import recover_operations
+from .playback.metadata import prewarmer
 from .playback.probe import shutdown_probes
 from .playback.router import router as playback_media_router
 from .playback.session_router import router as playback_session_router
@@ -33,6 +34,7 @@ async def lifespan(_app: FastAPI):
     """在开始接收请求前准备数据库。"""
     await init_database()
     await playback_manager.start()
+    prewarmer.start()
     async with SessionFactory() as session:
         await recover_operations(session)
     refresh_task = asyncio.create_task(subscription_refresh_loop())
@@ -43,6 +45,7 @@ async def lifespan(_app: FastAPI):
         yield
     finally:
         await playback_manager.shutdown()
+        await prewarmer.shutdown()
         await shutdown_probes()
         image_task.cancel()
         with suppress(asyncio.CancelledError):

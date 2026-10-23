@@ -13,6 +13,7 @@ import { ShowDetailLoading } from "@/components/show-detail-loading"
 import { ShowsLoading } from "@/components/shows-loading"
 import { DashboardLoading } from "@/components/dashboard-loading"
 import { DownloadsLoading } from "@/components/downloads-loading"
+import { PlaybackLoading } from "@/components/player/playback-loading"
 
 const DashboardPage = lazy(() => import("@/pages/dashboard").then((module) => ({ default: module.DashboardPage })))
 const AuthScreen = lazy(() => import("@/components/auth-screen").then((module) => ({ default: module.AuthScreen })))
@@ -92,7 +93,14 @@ export default function App() {
       <ApplicationFrame>
         <Suspense fallback={<PageSkeleton />}>
           <Routes>
-            <Route path="/watch/:mediaId" element={<WatchPage />} />
+            <Route
+              path="/watch/:mediaId"
+              element={
+                <Suspense fallback={<PlaybackLoading />}>
+                  <WatchPage />
+                </Suspense>
+              }
+            />
             <Route
               path="/"
               element={

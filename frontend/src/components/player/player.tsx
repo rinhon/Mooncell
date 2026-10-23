@@ -3,9 +3,20 @@ import { Link } from "react-router-dom"
 import { ArrowLeft, LoaderCircle, Play, TriangleAlert } from "lucide-react"
 import type { ShowLibrary } from "@/lib/api"
 import { usePlaybackSession } from "@/hooks/use-playback-session"
-import type { PlaybackInfo } from "@/lib/player/types"
+import type { PlaybackInfo, SeekPath } from "@/lib/player/types"
 import { clampTime } from "@/lib/player/types"
 import { HlsEngine } from "@/lib/player/hls-engine"
+import { NativeEngine } from "@/lib/player/native-engine"
+import type { PlaybackEngine } from "@/lib/player/engine"
+import {
+  beginSeekMetric,
+  bindPlaybackMetrics,
+  cancelSeekMetric,
+  finishSeekMetric,
+  recordSeekResponse,
+  recordSeekSegment,
+  setSeekPath,
+} from "@/lib/player/playback-metrics"
 import { createAnime4kRenderer, type Anime4kMode, type Anime4kRenderer } from "@/lib/player/anime4k-renderer"
 import { PlayerControls } from "./player-controls"
 import { PlayerEpisodes } from "./player-episodes"
@@ -37,6 +48,7 @@ interface PlayerProps {
   autoPlay: boolean
   savedPreferences: { volume: number; rate: number }
   onPreferencesChange: (value: { volume: number; rate: number }) => void
+  onStartupStepChange: (step: number | null) => void
 }
 
 export function Player({
@@ -55,16 +67,22 @@ export function Player({
   autoPlay,
   savedPreferences,
   onPreferencesChange,
+  onStartupStepChange,
 }: PlayerProps) {
   const root = useRef<HTMLDivElement>(null)
   const video = useRef<HTMLVideoElement>(null)
   const canvas = useRef<HTMLCanvasElement>(null)
-  const engine = useRef<HlsEngine | null>(null)
+  const engine = useRef<PlaybackEngine | null>(null)
   const renderer = useRef<Anime4kRenderer | null>(null)
+  useEffect(() => {
+    if (root.current) return bindPlaybackMetrics(root.current, mediaId)
+  }, [mediaId])
   const playback = usePlaybackSession(mediaId, info)
   const [position, setPosition] = useState(info.progress?.completed ? 0 : (info.progress?.position ?? 0))
   const [paused, setPaused] = useState(true)
   const [buffering, setBuffering] = useState(true)
+  const [startupComplete, setStartupComplete] = useState(false)
+  const streamReady = useRef(false)
   const [volume, setVolume] = useState(savedPreferences.volume)
   const [rate, setRate] = useState(savedPreferences.rate)
   const preferences = useRef({ volume, rate })
@@ -85,13 +103,200 @@ export function Player({
   const callbacks = useRef(playback)
   callbacks.current = playback
   const pendingLocalSeek = useRef<{ id: string; generation: number; position: number } | null>(null)
+  const activeSeek = useRef<{
+    seekId: number
+    target: number
+    path: SeekPath
+    sessionId: string | null
+    generation: number | null
+    awaitingRestart: boolean
+    appliedAt: number | null
+  } | null>(null)
+  const frameCallback = useRef<number | null>(null)
+  const targetFrameEvidence = useRef<{
+    seekId: number
+    sessionId: string
+    generation: number
+    instance: PlaybackEngine
+    source: number
+    observedAt: number
+  } | null>(null)
+  const recoveryInFlight = useRef<number | null>(null)
+  const recoverSeek = useRef<((target: number) => void) | null>(null)
+  const fallbackUsed = useRef(false)
+  const fallbackInFlight = useRef(false)
   const [panel, setPanel] = useState<"episodes" | "settings" | null>(null)
   const [controlsVisible, setControlsVisible] = useState(true)
   const [isFullscreen, setIsFullscreen] = useState(Boolean(document.fullscreenElement))
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const pointerHeld = useRef(false)
   const panelTrigger = useRef<HTMLElement | null>(null)
-  const problem = playback.error ?? (session?.status === "failed" ? session.error?.message : null)
+  const problem =
+    playback.error ??
+    (session?.status === "failed"
+      ? (session.error?.message ?? "视频准备失败，请重试。")
+      : session?.status === "closed"
+        ? "播放连接已关闭，请重试。"
+        : null)
+  const startupStep = problem || startupComplete ? null : !session ? 1 : session.status === "preparing" ? 2 : 3
+  useEffect(() => {
+    onStartupStepChange(startupStep)
+  }, [startupStep, onStartupStepChange])
+  const completeStartup = useCallback(() => {
+    if (streamReady.current && (video.current?.readyState ?? 0) >= 2) setStartupComplete(true)
+  }, [])
+  const cancelTargetFrame = useCallback(() => {
+    if (frameCallback.current !== null) video.current?.cancelVideoFrameCallback?.(frameCallback.current)
+    frameCallback.current = null
+  }, [])
+  const targetSourceTime = useCallback(
+    (mediaTime: number, observedAt: number) => {
+      const pending = activeSeek.current
+      const element = video.current
+      if (!pending || !element || !engine.current) return null
+      const source = engine.current.getSourceTime(mediaTime)
+      const tolerance = Math.max(0.012, Math.min(0.1, 1.5 / (info.frame_rate || 24)))
+      const elapsed =
+        pending.appliedAt !== null && !element.paused
+          ? (Math.max(0, observedAt - pending.appliedAt) / 1000) * element.playbackRate
+          : 0
+      return Number.isFinite(source) &&
+        source >= pending.target - tolerance &&
+        source <= pending.target + tolerance + elapsed &&
+        Math.abs(source - engine.current.getSourceTime()) <= Math.max(0.1, tolerance * 2)
+        ? source
+        : null
+    },
+    [info.frame_rate],
+  )
+  const confirmTargetFrame = useCallback(
+    (source: number, evidence: "video-frame" | "seeked-fallback", observedAt = performance.now()) => {
+      const pending = activeSeek.current
+      const value = sessionRef.current
+      const element = video.current
+      if (
+        !pending ||
+        pending.awaitingRestart ||
+        !streamReady.current ||
+        !element ||
+        element.seeking ||
+        !engine.current ||
+        value?.id !== pending.sessionId ||
+        value.generation !== pending.generation
+      )
+        return false
+      finishSeekMetric(pending.seekId, source, evidence, observedAt)
+      cancelTargetFrame()
+      targetFrameEvidence.current = null
+      activeSeek.current = null
+      pendingLocalSeek.current = null
+      setPosition(source)
+      callbacks.current.clock.current = {
+        position: source,
+        paused: element.paused,
+        playbackRate: element.playbackRate,
+        completed: source >= info.duration - 2,
+      }
+      setBuffering(false)
+      return true
+    },
+    [info.duration, cancelTargetFrame],
+  )
+  const confirmObservedFrame = useCallback(() => {
+    const proof = targetFrameEvidence.current
+    const pending = activeSeek.current
+    const element = video.current
+    if (
+      !proof ||
+      !pending ||
+      !element ||
+      proof.seekId !== pending.seekId ||
+      proof.instance !== engine.current ||
+      proof.sessionId !== pending.sessionId ||
+      proof.generation !== pending.generation ||
+      targetSourceTime(element.currentTime, performance.now()) === null
+    )
+      return false
+    return confirmTargetFrame(proof.source, "video-frame", proof.observedAt)
+  }, [confirmTargetFrame, targetSourceTime])
+  const watchTargetFrame = useCallback(
+    function watch() {
+      const element = video.current
+      const pending = activeSeek.current
+      if (!pending || !streamReady.current || !element?.requestVideoFrameCallback || frameCallback.current !== null)
+        return
+      const seekId = pending.seekId
+      const instance = engine.current
+      if (!instance) return
+      frameCallback.current = element.requestVideoFrameCallback((_now, metadata) => {
+        frameCallback.current = null
+        if (activeSeek.current?.seekId !== seekId) return
+        if (instance === engine.current) {
+          const observedAt = performance.now()
+          const source = targetSourceTime(metadata.mediaTime, observedAt)
+          const value = sessionRef.current
+          if (source !== null && value)
+            targetFrameEvidence.current = {
+              seekId,
+              sessionId: value.id,
+              generation: value.generation,
+              instance,
+              source,
+              observedAt,
+            }
+        }
+        if (!confirmObservedFrame()) watch()
+      })
+    },
+    [confirmObservedFrame, targetSourceTime],
+  )
+  useEffect(
+    () => () => {
+      cancelTargetFrame()
+      if (activeSeek.current) cancelSeekMetric(activeSeek.current.seekId)
+    },
+    [cancelTargetFrame],
+  )
+  useEffect(() => {
+    if (!problem) return
+    cancelTargetFrame()
+    targetFrameEvidence.current = null
+    if (activeSeek.current) cancelSeekMetric(activeSeek.current.seekId, "failed")
+    activeSeek.current = null
+    pendingLocalSeek.current = null
+    recoveryInFlight.current = null
+  }, [problem, cancelTargetFrame])
+  const tryTranscodeFallback = useCallback(
+    (message: string) => {
+      if (fallbackInFlight.current) return true
+      const value = sessionRef.current
+      if (fallbackUsed.current || (value?.playback_mode !== "direct" && value?.playback_mode !== "remux")) return false
+      fallbackUsed.current = true
+      fallbackInFlight.current = true
+      suppressPause.current = true
+      cancelTargetFrame()
+      targetFrameEvidence.current = null
+      if (activeSeek.current) activeSeek.current.awaitingRestart = true
+      setBuffering(true)
+      setNotice("正在切换为兼容播放…")
+      void callbacks.current.fallback().then((next) => {
+        if (!next) {
+          fallbackInFlight.current = false
+          callbacks.current.setError(message)
+          return
+        }
+        const pending = activeSeek.current
+        if (pending) {
+          pending.sessionId = next.id
+          pending.generation = next.generation
+          pending.awaitingRestart = false
+          recordSeekResponse(pending.seekId, next)
+        }
+      })
+      return true
+    },
+    [cancelTargetFrame],
+  )
   const playableEpisodes =
     library?.seasons.flatMap((season) => season.items).filter((item) => item.media_id && !item.rename_pending) ?? []
   const currentIndex = playableEpisodes.findIndex((item) => item.media_id === mediaId)
@@ -171,39 +376,78 @@ export function Player({
   useEffect(() => {
     const element = video.current
     const value = sessionRef.current
-    if (!element || !value?.playlist_url || (value.status !== "ready" && value.status !== "paused")) return
+    if (
+      !element ||
+      !(value?.stream_url ?? value?.playlist_url) ||
+      (value.status !== "ready" && value.status !== "paused")
+    )
+      return
     const generation = value.generation
+    const sessionId = value.id
+    streamReady.current = false
     suppressPause.current = true
     setBuffering(true)
-    let instance: HlsEngine | null = null
+    fallbackInFlight.current = false
+    let instance: PlaybackEngine | null = null
     try {
-      instance = new HlsEngine(
+      const Engine = value.playback_mode === "direct" ? NativeEngine : HlsEngine
+      instance = new Engine(
         element,
         value,
         (message) => {
+          if (sessionRef.current?.id !== sessionId || sessionRef.current?.generation !== generation) return
+          if (tryTranscodeFallback(message)) return
           callbacks.current.setError(message)
           setBuffering(false)
         },
         () => {
-          if (sessionRef.current?.generation !== generation) return
+          if (sessionRef.current?.id !== sessionId || sessionRef.current?.generation !== generation) return
+          streamReady.current = true
+          if (value.playback_mode !== "direct")
+            instance?.alignToSource(activeSeek.current?.target ?? value.position ?? value.source_anchor)
+          if (activeSeek.current) activeSeek.current.appliedAt = performance.now()
+          completeStartup()
           element.volume = preferences.current.volume
           element.playbackRate = preferences.current.rate
           suppressPause.current = false
           renderer.current?.renderCurrentFrame()
-          setBuffering(false)
+          if (!activeSeek.current) setBuffering(false)
+          watchTargetFrame()
+          const seekId = activeSeek.current?.seekId
           if (desiredPlaying.current)
             void element.play().catch(() => {
+              if (
+                sessionRef.current?.id !== sessionId ||
+                sessionRef.current?.generation !== generation ||
+                activeSeek.current?.seekId !== seekId
+              )
+                return
               desiredPlaying.current = false
               setPaused(true)
               setNotice("视频已就绪，点击播放开始。")
             })
         },
+        (start, end) => {
+          const pending = activeSeek.current
+          if (
+            pending &&
+            pending.sessionId === sessionId &&
+            pending.generation === generation &&
+            pending.target >= start - 0.1 &&
+            pending.target < end
+          )
+            recordSeekSegment(pending.seekId, sessionRef.current ?? undefined)
+        },
       )
       engine.current = instance
     } catch (cause) {
-      callbacks.current.setError(cause instanceof Error ? cause.message : "无法初始化播放器")
+      const message = cause instanceof Error ? cause.message : "无法初始化播放器"
+      if (!tryTranscodeFallback(message)) callbacks.current.setError(message)
     }
     return () => {
+      streamReady.current = false
+      cancelTargetFrame()
+      targetFrameEvidence.current = null
       suppressPause.current = true
       if (engine.current === instance) engine.current = null
       instance?.destroy()
@@ -211,7 +455,13 @@ export function Player({
   }, [
     session?.id,
     session?.generation,
-    Boolean(session?.playlist_url && (session.status === "ready" || session.status === "paused")),
+    Boolean(
+      (session?.stream_url ?? session?.playlist_url) && (session?.status === "ready" || session?.status === "paused"),
+    ),
+    completeStartup,
+    watchTargetFrame,
+    cancelTargetFrame,
+    tryTranscodeFallback,
   ])
   useEffect(() => {
     if (!session) return
@@ -220,15 +470,18 @@ export function Player({
     if (!pending) return
     if (pending.id !== session.id || pending.generation !== session.generation) {
       pendingLocalSeek.current = null
-    } else if (engine.current?.seek(pending.position)) {
+    } else if (engine.current && engine.current.seek(pending.position) !== "miss") {
       pendingLocalSeek.current = null
       renderer.current?.renderCurrentFrame()
+      watchTargetFrame()
     }
-  }, [session])
+  }, [session, watchTargetFrame])
 
   const sync = useCallback(() => {
     const element = video.current
     if (!element || !engine.current) return
+    // Keep the requested source time stable until its own frame is presented.
+    if (activeSeek.current) return
     const value = engine.current?.getSourceTime() ?? callbacks.current.clock.current.position
     setPosition(value)
     callbacks.current.clock.current = {
@@ -236,6 +489,14 @@ export function Player({
       paused: element.paused,
       playbackRate: element.playbackRate,
       completed: element.ended || value >= info.duration - 2,
+    }
+    if (
+      sessionRef.current?.needs_recovery &&
+      !element.paused &&
+      recoveryInFlight.current === null &&
+      engine.current.getBufferedAhead() <= 6
+    ) {
+      recoverSeek.current?.(value)
     }
   }, [info.duration])
   const toggle = useCallback(() => {
@@ -255,21 +516,67 @@ export function Player({
     } else element.pause()
   }, [])
   const seek = useCallback(
-    (target: number) => {
+    (target: number, forceRemote = false) => {
       const next = clampTime(target, info.duration - 0.05)
+      cancelTargetFrame()
+      targetFrameEvidence.current = null
+      if (activeSeek.current) cancelSeekMetric(activeSeek.current.seekId)
+      const current = sessionRef.current
+      const seekId = beginSeekMetric(mediaId, current, next)
+      if (forceRemote) recoveryInFlight.current = seekId
+      const pending = {
+        seekId,
+        target: next,
+        path: "miss" as SeekPath,
+        sessionId: current?.id ?? null,
+        generation: current?.generation ?? null,
+        awaitingRestart: forceRemote,
+        appliedAt: null as number | null,
+      }
+      activeSeek.current = pending
       setPosition(next)
       playback.clock.current.position = next
+      playback.clock.current.completed = next >= info.duration - 2
       pendingLocalSeek.current = null
-      if (engine.current?.seek(next)) renderer.current?.renderCurrentFrame()
-      else {
-        const current = sessionRef.current
+      desiredPlaying.current = !video.current?.paused || desiredPlaying.current
+      const path = forceRemote ? "miss" : (engine.current?.seek(next) ?? "miss")
+      pending.path = path
+      pending.awaitingRestart = path === "miss"
+      if (engine.current && Math.abs(engine.current.getSourceTime() - next) <= 0.1)
+        pending.appliedAt = performance.now()
+      setSeekPath(seekId, path)
+      setBuffering(path !== "buffered")
+      if (path !== "miss") {
+        renderer.current?.renderCurrentFrame()
+        if (path === "buffered") recordSeekSegment(seekId)
+      } else {
         if (current) pendingLocalSeek.current = { id: current.id, generation: current.generation, position: next }
-        desiredPlaying.current = !video.current?.paused || desiredPlaying.current
       }
-      playback.seek(next)
+      // A paused native Range seek may present its only frame before the API acknowledgement.
+      watchTargetFrame()
+      void playback.seek(next, { clientBuffered: path === "buffered" }).then((value) => {
+        if (value) recordSeekResponse(seekId, value)
+        if (recoveryInFlight.current === seekId) recoveryInFlight.current = null
+        if (activeSeek.current?.seekId !== seekId) return
+        if (!value) {
+          if (fallbackInFlight.current) return
+          cancelSeekMetric(seekId, "failed")
+          activeSeek.current = null
+          return
+        }
+        pending.sessionId = value.id
+        pending.generation = value.generation
+        pending.awaitingRestart = false
+        if (value.status === "ready" || value.status === "paused") {
+          if (path === "miss" && value.requires_reload === false && value.playback_mode !== "direct")
+            engine.current?.seek(next)
+          if (!confirmObservedFrame()) watchTargetFrame()
+        }
+      })
     },
-    [info.duration, playback.seek],
+    [info.duration, mediaId, playback.seek, cancelTargetFrame, watchTargetFrame, confirmObservedFrame],
   )
+  recoverSeek.current = (target) => seek(target, true)
   const fullscreen = useCallback(() => {
     if (document.fullscreenElement) void document.exitFullscreen().catch(() => {})
     else {
@@ -293,6 +600,9 @@ export function Player({
     <div
       ref={root}
       className="mooncell-player"
+      data-playback-mode={session?.playback_mode ?? "transcode"}
+      data-session-id={session?.id}
+      data-generation={session?.generation}
       data-controls-visible={controlsVisible || paused || Boolean(panel) || Boolean(problem)}
       tabIndex={0}
       aria-label={`${showTitle} · ${episodeTitle}`}
@@ -349,19 +659,27 @@ export function Player({
           }}
           onTimeUpdate={sync}
           onSeeked={() => {
+            if (!video.current?.requestVideoFrameCallback && (video.current?.readyState ?? 0) >= 2) {
+              const source = targetSourceTime(video.current!.currentTime, performance.now())
+              if (source !== null) confirmTargetFrame(source, "seeked-fallback")
+            } else if (!confirmObservedFrame()) watchTargetFrame()
             sync()
             renderer.current?.renderCurrentFrame()
           }}
           onWaiting={() => setBuffering(true)}
+          onLoadedData={completeStartup}
+          onCanPlay={completeStartup}
           onPlaying={() => {
-            setBuffering(false)
+            if (!streamReady.current || suppressPause.current) return
+            completeStartup()
+            if (!activeSeek.current) setBuffering(false)
             setPaused(false)
             desiredPlaying.current = true
             sync()
             playback.heartbeat()
           }}
           onPause={() => {
-            if (suppressPause.current) return
+            if (suppressPause.current || video.current?.error) return
             desiredPlaying.current = false
             setPaused(true)
             sync()
@@ -382,7 +700,7 @@ export function Player({
           onClick={toggle}
         />
         <SubtitleOverlay url={subtitle?.url ?? null} position={position} generation={session?.generation ?? 0} />
-        {!problem && (playback.locating || session?.status === "preparing" || buffering) && (
+        {!problem && startupComplete && (playback.locating || session?.status === "preparing" || buffering) && (
           <div className="player-status" role="status">
             <LoaderCircle className="player-spinner" size={34} />
             <span>{playback.locating ? "正在定位…" : "正在缓冲…"}</span>
@@ -401,6 +719,8 @@ export function Player({
               className="player-action-button"
               onClick={() => {
                 playback.setError(null)
+                setStartupComplete(false)
+                streamReady.current = false
                 desiredPlaying.current = true
                 playback.restart(position)
               }}
@@ -429,7 +749,12 @@ export function Player({
           <p title={info.filename}>{episodeTitle}</p>
         </div>
         <span className="player-quality-badge">
-          {session?.quality ?? info.qualities.at(-1) ?? 720}P{enhanced && <span>Anime4K</span>}
+          {(session?.quality ?? 0) === 0
+            ? session?.playback_mode === "transcode"
+              ? "自动"
+              : "原画"
+            : `${session?.quality}P`}
+          {enhanced && <span>Anime4K</span>}
         </span>
       </header>
       {panel && <div className="player-panel-scrim" aria-hidden="true" onClick={() => changePanel(null)} />}
@@ -441,7 +766,7 @@ export function Player({
           buffering={buffering}
           volume={volume}
           rate={rate}
-          quality={session?.quality ?? info.qualities.at(-1) ?? 720}
+          quality={session?.quality ?? 0}
           audioTrack={
             session?.audio_track ??
             info.audio_tracks.find((track) => track.default)?.id ??
@@ -464,7 +789,7 @@ export function Player({
             if (video.current) video.current.playbackRate = next
           }}
           onQuality={(quality) => playback.options(quality, session?.audio_track ?? null)}
-          onAudioTrack={(track) => playback.options(session?.quality ?? 720, track)}
+          onAudioTrack={(track) => playback.options(session?.quality ?? 0, track)}
           onSubtitleTrack={setSubtitleTrack}
           onEnhancement={(next) => {
             setMode(next)

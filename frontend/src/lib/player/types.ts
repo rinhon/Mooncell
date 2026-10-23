@@ -22,6 +22,9 @@ export type PlaybackInfo = {
     url: string | null
   }[]
   progress: { position: number; duration: number; completed: boolean } | null
+  native_mime_type?: string | null
+  hls_mime_type?: string | null
+  frame_rate?: number
 }
 
 export type PlaybackSession = {
@@ -39,7 +42,26 @@ export type PlaybackSession = {
   segments: { sequence: number; source_start: number; duration: number }[]
   error: { code: string; message: string } | null
   process_state: string
+  position?: number
+  playback_mode?: "direct" | "remux" | "transcode"
+  stream_url?: string
+  mode_reason?: string
+  mime_type?: string
+  timeline_mode?: "source" | "anchored"
+  revision?: number
+  seek_revision?: number
+  seek_disposition?: "buffered" | "server-cache" | "restart" | null
+  requires_reload?: boolean
+  needs_recovery?: boolean
+  timings?: {
+    stop_ms: number | null
+    spawn_ms: number | null
+    first_segment_ms: number | null
+    ready_ms: number | null
+  }
 }
+
+export type SeekPath = "buffered" | "server-cache" | "miss"
 
 export function clampTime(value: number, duration: number) {
   return Number.isFinite(value) ? Math.min(Math.max(0, value), Math.max(0, duration)) : 0

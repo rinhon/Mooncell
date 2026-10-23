@@ -34,7 +34,7 @@ export function DetailActions({ show, items, pending, pendingAction, onAction, o
         <Button asChild icon={Play}>
           <Link
             to={`/watch/${target.item.media_id}`}
-            state={{ autoPlay: true }}
+            state={{ autoPlay: true, sourceId: show.id, showTitle: show.metadata_title ?? show.name }}
             aria-label={`${target.label}：${target.item.filename}`}
           >
             {target.label}

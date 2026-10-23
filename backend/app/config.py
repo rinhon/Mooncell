@@ -38,6 +38,7 @@ class Settings(BaseSettings):
     playback_encoder: str = "libx264"
     playback_threads: int = 2
     playback_max_sessions: int = 1
+    playback_max_remux_sessions: int = 2
     playback_session_quota_mb: int = 512
     playback_global_quota_mb: int = 4096
     playback_min_free_mb: int = 512
