@@ -14,7 +14,9 @@
   z-index: -1;
   pointer-events: none;
   background: var(--accent);
+  transform: scaleX(0);
   transform-origin: left;
+  transition: transform 180ms cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 .add-subscription-icon {
   display: inline-grid;
@@ -31,11 +33,38 @@
   justify-content: center;
   padding-inline: 0.875rem;
 }
-.add-subscription-button:focus-visible {
+.add-subscription-plus {
+  display: grid;
+  transition: transform 180ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.add-subscription-button:not(:disabled):focus-visible {
   color: var(--on-accent);
+}
+.add-subscription-button:not(:disabled):focus-visible .add-subscription-fill {
+  transform: scaleX(1);
+}
+.add-subscription-button:not(:disabled):focus-visible .add-subscription-plus {
+  transform: rotate(90deg);
 }
 @media (hover: hover) and (pointer: fine) {
   .add-subscription-button:not(:disabled):hover {
     color: var(--on-accent);
+  }
+  .add-subscription-button:not(:disabled):hover .add-subscription-fill {
+    transform: scaleX(1);
+  }
+  .add-subscription-button:not(:disabled):hover .add-subscription-plus {
+    transform: rotate(90deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .add-subscription-button,
+  .add-subscription-fill,
+  .add-subscription-plus {
+    transition: none;
+  }
+  .add-subscription-button:not(:disabled):focus-visible .add-subscription-plus,
+  .add-subscription-button:not(:disabled):hover .add-subscription-plus {
+    transform: none;
   }
 }

@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react"
-import { api, ApiError } from "@/lib/api"
+import { useQueryClient } from "@tanstack/react-query"
+import { api, ApiError, type PlaybackProgress } from "@/lib/api"
+import { syncPlaybackProgress } from "@/lib/player/progress-cache"
 import type { PlaybackInfo, PlaybackSession } from "@/lib/player/types"
 
 type Clock = { position: number; paused: boolean; playbackRate: number; completed?: boolean }
@@ -54,6 +56,7 @@ export function playbackCapabilities(info: PlaybackInfo) {
 }
 
 export function usePlaybackSession(mediaId: string, info: PlaybackInfo | undefined) {
+  const queryClient = useQueryClient()
   const [session, setSession] = useState<PlaybackSession | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [locating, setLocating] = useState(false)
@@ -76,6 +79,13 @@ export function usePlaybackSession(mediaId: string, info: PlaybackInfo | undefin
   const acceptedSnapshot = useRef(0)
   const pollNow = useRef<() => void>(() => {})
   const cancelPoll = useRef<() => void>(() => {})
+  const onProgressSaved = useCallback(
+    (progress: PlaybackProgress) => {
+      if (info?.source_id != null)
+        void syncPlaybackProgress(queryClient, info.source_id, mediaId, progress).catch(() => {})
+    },
+    [queryClient, info?.source_id, mediaId],
+  )
   const fail = useCallback((cause: unknown, token: number) => {
     if (!alive.current || token !== epoch.current) return
     if (cause instanceof ApiError && (cause.status === 401 || cause.status === 403)) unauthorized.current = true
@@ -212,9 +222,13 @@ export function usePlaybackSession(mediaId: string, info: PlaybackInfo | undefin
           position: clock.current.position,
           completed: clock.current.completed ?? false,
         }
-        void api(`/media/${mediaId}/progress`, { method: "PUT", body: JSON.stringify(update), keepalive: true }).catch(
-          () => {},
-        )
+        void api<PlaybackProgress>(`/media/${mediaId}/progress`, {
+          method: "PUT",
+          body: JSON.stringify(update),
+          keepalive: true,
+        })
+          .then(onProgressSaved)
+          .catch(() => {})
       }
       const controlFinished = pending.current
       if (ownedId && closedOnHide.current !== ownedId)
@@ -226,7 +240,7 @@ export function usePlaybackSession(mediaId: string, info: PlaybackInfo | undefin
           })
       current.current = null
     }
-  }, [mediaId, info?.version, accept, fail, attempt])
+  }, [mediaId, info?.version, accept, fail, attempt, onProgressSaved])
 
   const save = useCallback(
     (keepalive = false) => {
@@ -241,7 +255,7 @@ export function usePlaybackSession(mediaId: string, info: PlaybackInfo | undefin
       )
         return
       const token = epoch.current
-      void api(`/media/${mediaId}/progress`, {
+      void api<PlaybackProgress>(`/media/${mediaId}/progress`, {
         method: "PUT",
         body: JSON.stringify({
           session_id: value.id,
@@ -252,11 +266,13 @@ export function usePlaybackSession(mediaId: string, info: PlaybackInfo | undefin
           completed: clock.current.completed ?? false,
         }),
         keepalive,
-      }).catch((cause) => {
-        if (cause instanceof ApiError && (cause.status === 401 || cause.status === 403)) fail(cause, token)
       })
+        .then(onProgressSaved)
+        .catch((cause) => {
+          if (cause instanceof ApiError && (cause.status === 401 || cause.status === 403)) fail(cause, token)
+        })
     },
-    [mediaId, fail],
+    [mediaId, fail, onProgressSaved],
   )
 
   const heartbeat = useCallback(

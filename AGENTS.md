@@ -2,6 +2,7 @@
 
 - 使用 Windows PowerShell 命令和反斜杠路径；用简体中文回复用户。
 - 图片操作优先使用 ImageMagick（`magick`），视频操作使用 FFmpeg。
+- 本项目禁止使用 DevSpace 插件及其全部工具；文件操作和命令执行使用本地工具。
 
 ## 启动开发服务
 

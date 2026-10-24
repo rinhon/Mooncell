@@ -40,13 +40,8 @@ export function ShowDetailPanels({ activeKey, children }: { activeKey: string; c
       if (!tabs) return
       const tabsRect = tabs.getBoundingClientRect()
       const outerRect = outer.getBoundingClientRect()
-      const stickyTop = parseFloat(window.getComputedStyle(tabs).top) || 0
-      // .detail-tabs 自身与 ::before 在纯 CSS 下常驻不透明底色，由 GPU 合成器线程零延迟遮挡底边；
-      // 裁剪线落在不透明 Tab 内部中线，配合 data-stuck 向上封顶至视口顶端。
-      // 仅在实际吸顶时扩展遮罩；相邻元素的亚像素边界误差不代表已吸顶。
-      tabs.toggleAttribute("data-stuck", tabsRect.top <= stickyTop + 1)
-      const clipLine = tabsRect.top + tabsRect.height * 0.45
-      const clipTop = Math.max(0, clipLine - outerRect.top)
+      // 透明页签下沿作为裁剪边界，吸顶时不让集数内容透到页签文字后方。
+      const clipTop = Math.max(0, tabsRect.bottom - outerRect.top)
       outer.style.setProperty("--detail-panels-clip-top", `${clipTop}px`)
     }
     const scheduleClip = () => {
@@ -71,7 +66,6 @@ export function ShowDetailPanels({ activeKey, children }: { activeKey: string; c
       window.removeEventListener("scroll", updateClip)
       window.removeEventListener("resize", updateClip)
       if (frame !== null) window.cancelAnimationFrame(frame)
-      resolveTabs()?.removeAttribute("data-stuck")
       outer.style.removeProperty("--detail-panels-clip-top")
     }
   }, [activeKey])

@@ -13,6 +13,8 @@ function session(id = "session-a", generation = 1, status = "ready") { return { 
 
 function setup(options = {}) {
   const requests = [];
+  const synchronized = [];
+  const queryClient = {};
   const timers = new Map();
   const runners = [];
   let timerId = 0, active, uuid = 0;
@@ -20,7 +22,7 @@ function setup(options = {}) {
   function api(path, init = {}) {
     const request = { path, method: init.method ?? "GET", keepalive: Boolean(init.keepalive), signal: init.signal, body: init.body ? JSON.parse(init.body) : null, ...deferred() };
     requests.push(request);
-    if (request.method === "PUT" || request.method === "DELETE") request.resolve({});
+    if ((request.method === "PUT" && !options.deferProgress) || request.method === "DELETE") request.resolve({});
     return request.promise;
   }
   function depsEqual(left, right) { return left && right && left.length === right.length && left.every((value, index) => Object.is(value, right[index])); }
@@ -51,7 +53,18 @@ function setup(options = {}) {
     getRandomValues(array) { const seed = ++uuid * 37; for (let index = 0; index < array.length; index++) array[index] = (seed + index * 11) & 255; return array; },
   };
   const sandbox = {
-    exports: {}, require(name) { if (name === "react") return react; if (name === "@/lib/api") return { api, ApiError }; throw new Error(name); },
+    exports: {}, require(name) {
+      if (name === "react") return react;
+      if (name === "@/lib/api") return { api, ApiError };
+      if (name === "@tanstack/react-query") return { useQueryClient: () => queryClient };
+      if (name === "@/lib/player/progress-cache") return {
+        syncPlaybackProgress(client, sourceId, mediaId, progress) {
+          synchronized.push({ client, sourceId, mediaId, progress });
+          return Promise.resolve();
+        },
+      };
+      throw new Error(name);
+    },
     window, Error, AbortController, clearInterval: window.clearInterval, crypto: cryptoProvider,
     document: { createElement() { return { canPlayType(mime) { return options.nativeMime === mime ? "probably" : ""; } }; } },
     MediaSource: { isTypeSupported(mime) { return options.hlsMime === mime; } },
@@ -65,13 +78,47 @@ function setup(options = {}) {
     unmount() { if (!this.mounted) return; this.mounted = false; this.slots.filter((slot) => slot?.create).forEach((slot) => slot.cleanup?.()); }
   }
   return {
-    requests, timers, Runner, ApiError, storage,
+    requests, timers, Runner, ApiError, storage, synchronized, queryClient,
     transition(type, persisted = false) { const event = new Event(type); Object.defineProperty(event, "persisted", { value: persisted }); window.dispatchEvent(event); },
     async settle() { for (let i = 0; i < 35; i++) { await Promise.resolve(); runners.forEach((runner) => { if (runner.dirty) runner.render(); }); } },
     tick(duration) { [...timers.values()].filter((timer) => timer.duration === duration).forEach((timer) => timer.callback()); },
     calls(method, ending) { return requests.filter((request) => request.method === method && (!ending || request.path.endsWith(ending))); },
   };
 }
+
+test("saved progress synchronizes the shared show library with the server timestamp", async () => {
+  const env = setup({ info: { source_id: 7 }, deferProgress: true }), runner = new env.Runner("episode-10");
+  await env.settle();
+  env.calls("POST", "/sessions")[0].resolve(session()); await env.settle();
+  runner.result.clock.current.position = 330;
+  runner.result.save(); await env.settle();
+  assert.equal(env.synchronized.length, 0, "saving must succeed before the library is updated");
+  const progress = { position: 330, duration: 1440, completed: false, updated_at: "2026-10-24T12:00:00Z" };
+  env.calls("PUT", "/progress")[0].resolve(progress); await env.settle();
+  assert.equal(env.synchronized.length, 1);
+  assert.equal(env.synchronized[0].client, env.queryClient);
+  assert.equal(env.synchronized[0].sourceId, 7);
+  assert.equal(env.synchronized[0].mediaId, "episode-10");
+  assert.equal(env.synchronized[0].progress, progress);
+  runner.unmount(); await env.settle();
+});
+
+test("the final progress response still synchronizes the library after leaving the player", async () => {
+  const env = setup({ info: { source_id: 7 }, deferProgress: true }), runner = new env.Runner("episode-10");
+  await env.settle();
+  env.calls("POST", "/sessions")[0].resolve(session()); await env.settle();
+  runner.result.clock.current.position = 615;
+  runner.unmount(); await env.settle();
+  const request = env.calls("PUT", "/progress")[0];
+  assert.equal(request.keepalive, true);
+  assert.equal(request.body.position, 615);
+  assert.equal(env.synchronized.length, 0);
+  const progress = { position: 615, duration: 1440, completed: false, updated_at: "2026-10-24T12:01:00Z" };
+  request.resolve(progress); await env.settle();
+  assert.equal(env.synchronized.length, 1);
+  assert.equal(env.synchronized[0].mediaId, "episode-10");
+  assert.equal(env.synchronized[0].progress, progress);
+});
 
 test("StrictMode replay cancels the first effect before a create request is sent", async () => {
   const env = setup(), runner = new env.Runner("a");

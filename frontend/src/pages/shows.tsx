@@ -230,7 +230,7 @@ export function ShowsPage() {
             <div>
               <ImageOff className="mx-auto mb-3 text-muted" />
               <p className="font-medium">还没有匹配的番剧订阅</p>
-              <p className="mt-1 text-sm text-muted">请先在 RSS 订阅页添加并关联 TMDB 条目。</p>
+              <p className="mt-1 text-sm text-muted">点击“添加订阅”并关联 TMDB 条目。</p>
             </div>
           </CardContent>
         </Card>

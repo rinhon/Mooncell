@@ -1,6 +1,7 @@
 import { GalleryVerticalEnd, Grid2X2, List, Search } from "lucide-react"
 import { useSearchParams } from "react-router-dom"
 import { AddSubscriptionButton } from "@/components/add-subscription-button"
+import { AddSubscriptionDialog } from "@/components/feeds/add-subscription-dialog"
 import { PageHeading } from "@/components/page-heading"
 import RubberSegment, { type RubberSegmentItem } from "@/components/rubber-segment"
 import { Button } from "@/components/ui/button"
@@ -43,7 +44,7 @@ export function ShowsHeader({
         eyebrow="Subscriptions"
         title="番剧订阅"
         description="订阅数据来自数据库；海报、背景图和透明 Logo 保存在对应番剧目录。"
-        action={loading ? <AddSubscriptionButton disabled /> : <AddSubscriptionButton to="/feeds" />}
+        action={loading ? <AddSubscriptionButton disabled /> : <AddSubscriptionDialog />}
       />
       <div
         className={[

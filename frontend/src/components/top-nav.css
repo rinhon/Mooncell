@@ -11,6 +11,8 @@
   min-width: 0;
 }
 .top-nav-list {
+  position: relative;
+  isolation: isolate;
   display: flex;
   align-items: center;
   gap: 4px;
@@ -18,7 +20,6 @@
 }
 .top-nav-link {
   position: relative;
-  isolation: isolate;
   display: inline-flex;
   flex: none;
   align-items: center;
@@ -41,7 +42,7 @@
 }
 .top-nav-hover {
   position: absolute;
-  inset: 4px 0;
+  inset: 4px auto 4px 0;
   z-index: -1;
   border-radius: var(--radius-control);
   background: var(--surface-raised);
@@ -49,7 +50,7 @@
 }
 .top-nav-indicator {
   position: absolute;
-  inset: auto 15px 2px;
+  inset: auto auto 2px 0;
   height: 2px;
   border-radius: 999px;
   background: var(--accent);

@@ -107,10 +107,16 @@ export type ShowRelease = {
   parsed: ParsedRelease | null
 }
 export type ShowReleasePage = { items: ShowRelease[]; total: number; page: number; page_size: number }
+export type PlaybackProgress = {
+  position: number
+  duration: number
+  completed: boolean
+  updated_at?: string | null
+}
 export type ShowEpisode = {
   rename_pending?: boolean
   media_id?: string | null
-  progress?: { position: number; duration: number; completed: boolean } | null
+  progress?: PlaybackProgress | null
   thumbnail_url?: string | null
   path: string
   filename: string

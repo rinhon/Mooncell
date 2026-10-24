@@ -246,6 +246,80 @@ check('navigation-desktop-detail-highlight', async ({ page }) => {
   return { detailsHighlight: '/shows', activeIndicators: 1 };
 });
 
+for (const reducedMotion of ['no-preference', 'reduce']) {
+  check(`navigation-scrolled-indicator-${reducedMotion}`, async ({ page }) => {
+    await page.goto(`${baseUrl}/shows`);
+    await page.locator('.show-card-grid').waitFor();
+    await page.waitForTimeout(700);
+    const source = await page.evaluate(async () => {
+      window.scrollTo({ top: document.documentElement.scrollHeight, behavior: 'instant' });
+      // Let scrolling and the sticky header settle before recording either route.
+      await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      window.__navigationTrack = { stopped: false, frames: [] };
+      const sample = () => {
+        const header = document.querySelector('.top-navigation').getBoundingClientRect();
+        for (const node of document.querySelectorAll('.top-nav-indicator')) {
+          const box = node.getBoundingClientRect();
+          if (!box.width || !box.height) continue;
+          window.__navigationTrack.frames.push({
+            pathname: location.pathname, scrollY,
+            x: box.left - header.left, y: box.top - header.top,
+          });
+        }
+      };
+      const tick = () => {
+        if (window.__navigationTrack.stopped) return;
+        sample();
+        requestAnimationFrame(tick);
+      };
+      sample();
+      requestAnimationFrame(tick);
+      return { scrollY, height: document.documentElement.scrollHeight };
+    });
+    assert(source.scrollY > 500, '源页面必须真实滚动，才能覆盖吸顶导航的坐标边界');
+    await page.locator('.top-nav-list a[href="/downloads"]').click();
+    await page.waitForURL(url => url.pathname === '/downloads');
+    await page.getByRole('heading', { name: '下载中心', exact: true }).waitFor();
+    await page.getByRole('status', { name: '正在加载下载中心', exact: true }).waitFor({ state: 'hidden' });
+    await page.waitForTimeout(800);
+    const result = await page.evaluate(() => {
+      window.__navigationTrack.stopped = true;
+      const header = document.querySelector('.top-navigation').getBoundingClientRect();
+      const label = document.querySelector('.top-nav-list a[aria-current="page"] .top-nav-label').getBoundingClientRect();
+      return {
+        frames: window.__navigationTrack.frames,
+        scrollY, height: document.documentElement.scrollHeight,
+        targetX: label.left - header.left,
+      };
+    });
+    const first = result.frames.find(frame => frame.pathname === '/shows');
+    const targetFrames = result.frames.filter(frame => frame.pathname === '/downloads');
+    assert(first && targetFrames.length >= 2, '逐帧采样必须覆盖点击前后两个真实路由');
+    assert(result.height < source.height - 100 && result.scrollY < source.scrollY - 100,
+      '目标页面必须更短，并真实触发页面滚动位置收缩');
+    const last = targetFrames.at(-1);
+    const horizontalDistance = Math.abs(last.x - first.x);
+    assert(horizontalDistance > 30, '指示条必须真实横向移动到另一项菜单');
+    assert(Math.abs(last.x - result.targetX) <= 1, '动画结束后指示条应落在当前菜单下方');
+    if (reducedMotion === 'no-preference') {
+      const minX = Math.min(first.x, last.x), maxX = Math.max(first.x, last.x);
+      assert(targetFrames.some(frame => frame.x > minX + 1 && frame.x < maxX - 1),
+        '普通模式必须采到横向动画中间帧，防止静态截图掩盖轨迹问题');
+    } else {
+      assert(targetFrames.every(frame => Math.abs(frame.x - first.x) <= 1 || Math.abs(frame.x - last.x) <= 1),
+        '减少动态效果时应直接到达终点，不应出现横向动画中间帧');
+    }
+    const ys = result.frames.map(frame => frame.y);
+    const verticalRange = Math.max(...ys) - Math.min(...ys);
+    assert(verticalRange <= 1, `指示条相对顶栏的纵向波幅不得超过 1px，实际为 ${verticalRange}px`);
+    return {
+      reducedMotion, samples: result.frames.length, horizontalDistance, verticalRange,
+      sourceScrollY: source.scrollY, targetScrollY: result.scrollY,
+      sourceHeight: source.height, targetHeight: result.height,
+    };
+  }, { reducedMotion });
+}
+
 check('dashboard-keyboard-and-notifications', async ({ page }) => {
   await page.goto(baseUrl);
   await dashboardReady(page);
@@ -431,7 +505,9 @@ check('error-toast-persists-and-closes', async ({ page }) => {
 check('reduced-motion-navigation', async ({ page }) => {
   await page.goto(`${baseUrl}/shows`);
   await page.locator('.show-card-grid').waitFor();
-  await recordMotion(page, '/feeds', '.page-content, .feed-card-reveal, .top-nav-indicator, .top-nav-hover');
+  // Navigation uses a static translate for placement; its motion is checked by
+  // navigation-scrolled-indicator-reduce using actual positions across frames.
+  await recordMotion(page, '/feeds', '.page-content, .feed-card-reveal');
   await page.locator('.top-nav-list a[href="/feeds"]').click();
   await page.locator('.feed-card').first().waitFor();
   return assertMotionSkipped(page);

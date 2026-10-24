@@ -10,6 +10,7 @@ export function DropdownMenu({
   open: controlledOpen,
   defaultOpen = false,
   onOpenChange,
+  modal = false,
   children,
   ...props
 }: React.ComponentProps<typeof DropdownMenuPrimitive.Root>) {
@@ -19,6 +20,7 @@ export function DropdownMenu({
     <DropdownMenuOpenContext.Provider value={open}>
       <DropdownMenuPrimitive.Root
         {...props}
+        modal={modal}
         open={open}
         onOpenChange={(next) => {
           if (controlledOpen === undefined) setUncontrolledOpen(next)

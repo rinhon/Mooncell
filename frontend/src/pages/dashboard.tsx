@@ -2,7 +2,7 @@ import { useEffect, useState } from "react"
 import { useQuery } from "@tanstack/react-query"
 import { api, type DownloadCenter, type Show } from "@/lib/api"
 import { useNotifications } from "@/hooks/use-notifications"
-import { AddSubscriptionButton } from "@/components/add-subscription-button"
+import { AddSubscriptionDialog } from "@/components/feeds/add-subscription-dialog"
 import { DashboardHeading } from "@/components/dashboard-loading"
 import { StatStrip } from "@/components/dashboard/stat-strip"
 import { TodaySchedule } from "@/components/dashboard/today-schedule"
@@ -61,7 +61,7 @@ export function DashboardPage() {
             <h2 id="dashboard-start-title">从第一部番剧开始</h2>
             <p>添加 RSS 订阅后，这里会显示你的番剧与发布信息。</p>
           </div>
-          <AddSubscriptionButton to="/feeds" />
+          <AddSubscriptionDialog />
         </section>
       )}
       <div className="dashboard-main-grid">

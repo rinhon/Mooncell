@@ -51,15 +51,11 @@ interface Drag {
 interface Latest {
   onClose?: (reason: SwipeToastCloseReason) => void
   onAction?: () => void
-  slideMs: number
-  inline: boolean
 }
 
 const FLICK = 0.11
 const DEAD_ZONE = 3
 const RESIST_PX = 24
-const COLLAPSE_MS = 200
-const EXIT = 0.7
 const BURN = [{ transform: "scaleX(1)" }, { transform: "scaleX(0)" }]
 const HAS_STARTING_STYLE = typeof window !== "undefined" && "CSSStartingStyleRule" in window
 
@@ -106,12 +102,12 @@ const SwipeToast: React.FC<SwipeToastProps> = ({
   const flags = useRef({ hover: false, interacting: false, focus: false, hidden: false })
   const lastInput = useRef<"pointer" | "keyboard">("pointer")
   const pendingClose = useRef<SwipeToastCloseReason | null>(null)
-  const closeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  const closeReason = useRef<SwipeToastCloseReason | null>(null)
   const leaving = useRef(false)
   const phaseRef = useRef(phase)
   phaseRef.current = phase
   const latest = useRef<Latest>({} as Latest)
-  latest.current = { onClose, onAction, slideMs, inline }
+  latest.current = { onClose, onAction }
 
   const y = useMotionValue(0)
   const fade = useMotionValue(1)
@@ -124,28 +120,33 @@ const SwipeToast: React.FC<SwipeToastProps> = ({
     if (f.hover || f.interacting || f.focus || f.hidden) a.pause()
     else if (a.playState === "paused") a.play()
   }
-  const finish = (why: SwipeToastCloseReason) => {
+  const finish = () => {
+    const why = closeReason.current
+    if (!why) return
+    closeReason.current = null
     setPhase("gone")
     leaving.current = false
-    if (latest.current.inline) closeTimer.current = setTimeout(() => latest.current.onClose?.(why), COLLAPSE_MS)
-    else latest.current.onClose?.(why)
+    latest.current.onClose?.(why)
   }
   const close = (why: SwipeToastCloseReason) => {
-    if (phaseRef.current !== "open" || leaving.current) return
+    if (phaseRef.current !== "open" || closeReason.current || leaving.current) return
     if (drag.current) {
       pendingClose.current = why
       return
     }
     anim.current?.pause()
+    closeReason.current = why
     const now = why === "escape" || ((why === "action" || why === "close") && lastInput.current === "keyboard")
     setInstant(now)
     setPhase("closing")
-    clearTimeout(closeTimer.current)
-    closeTimer.current = setTimeout(() => finish(why), now ? 0 : latest.current.slideMs * EXIT + 60)
   }
   const rescue = () => {
-    clearTimeout(closeTimer.current)
+    closeReason.current = null
+    leaving.current = false
+    pendingClose.current = null
     setInstant(false)
+    y.stop()
+    fade.stop()
     y.set(0)
     fade.set(1)
     setPhase("open")
@@ -190,20 +191,19 @@ const SwipeToast: React.FC<SwipeToastProps> = ({
     onVisibility()
     return () => {
       document.removeEventListener("visibilitychange", onVisibility)
-      clearTimeout(closeTimer.current)
       anim.current?.cancel()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   const swipeOut = (dy: number, v: number) => {
-    anim.current?.pause()
+    close("swipe")
     leaving.current = true
     pendingClose.current = null
     if (!reduce && cardRef.current) {
       animate(y, dy + cardRef.current.offsetHeight, { ...spring.snappy, velocity: v * 1000 })
     }
-    animate(fade, 0, reduce ? { duration: 0 } : spring.gentle).then(() => finish("swipe"))
+    animate(fade, 0, reduce ? { duration: 0 } : spring.layout)
   }
   const onPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     lastInput.current = "pointer"
@@ -276,8 +276,13 @@ const SwipeToast: React.FC<SwipeToastProps> = ({
 
   return (
     <motion.div
-      animate={{ gridTemplateRows: phase === "open" ? "1fr" : "0fr" }}
+      initial={reduce || !inline ? false : "collapsed"}
+      animate={!inline || phase === "open" ? "expanded" : "collapsed"}
+      variants={{ expanded: { gridTemplateRows: "1fr" }, collapsed: { gridTemplateRows: "0fr" } }}
       transition={reduce || instant ? { duration: 0 } : spring.layout}
+      onAnimationComplete={(target) => {
+        if (inline && target === "collapsed" && phaseRef.current === "closing") finish()
+      }}
       className={`swipe-toast${className ? ` ${className}` : ""}`}
       data-phase={phase}
       data-inline={inline ? "true" : "false"}
@@ -300,9 +305,13 @@ const SwipeToast: React.FC<SwipeToastProps> = ({
       <div className="swipe-toast__gate">
         <motion.div
           className="swipe-toast__lift"
-          initial={reduce ? false : { y: "100%", opacity: 0 }}
-          animate={{ y: phase === "open" ? "0%" : "100%", opacity: phase === "open" ? 1 : 0 }}
-          transition={reduce || instant ? { duration: 0 } : spring.gentle}
+          initial={reduce ? false : "hidden"}
+          animate={phase === "open" ? "visible" : "hidden"}
+          variants={{ visible: { y: 0, opacity: 1 }, hidden: { y: inline ? 16 : "100%", opacity: 0 } }}
+          transition={reduce || instant ? { duration: 0 } : spring.layout}
+          onAnimationComplete={(target) => {
+            if (!inline && target === "hidden" && phaseRef.current === "closing") finish()
+          }}
         >
           <motion.div
             ref={cardRef}

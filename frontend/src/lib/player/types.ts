@@ -1,3 +1,5 @@
+import type { PlaybackProgress } from "@/lib/api"
+
 export type PlaybackInfo = {
   media_id: string
   source_id: number
@@ -21,7 +23,7 @@ export type PlaybackInfo = {
     reason: string | null
     url: string | null
   }[]
-  progress: { position: number; duration: number; completed: boolean } | null
+  progress: PlaybackProgress | null
   native_mime_type?: string | null
   hls_mime_type?: string | null
   frame_rate?: number

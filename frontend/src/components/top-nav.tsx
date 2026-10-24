@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react"
 import { useQuery } from "@tanstack/react-query"
-import { LayoutGroup, motion, useReducedMotion } from "motion/react"
+import { motion, useReducedMotion } from "motion/react"
 import { MoreHorizontal } from "lucide-react"
 import { NavLink, useLocation } from "react-router-dom"
 import { NotificationCenter } from "@/components/notification-center"
@@ -13,6 +13,41 @@ import { navigation, utilityNavigation } from "@/lib/navigation"
 import { cn } from "@/lib/utils"
 import "./top-nav.css"
 
+const highlightWidth = 100
+
+/** 只使用导航内部横坐标，避免吸顶导航在切页时混入页面滚动位移。 */
+function useNavigationBounds(
+  container: RefObject<HTMLDivElement | null>,
+  selector: string | null,
+  layoutVersion: string,
+  labelOnly = false,
+) {
+  const [bounds, setBounds] = useState<{ x: number; width: number } | null>(null)
+  const [visible, setVisible] = useState(false)
+
+  useLayoutEffect(() => {
+    const row = container.current
+    if (!row) return
+    const measure = () => {
+      const link = selector ? row.querySelector<HTMLAnchorElement>(selector) : null
+      if (!link || !link.offsetWidth) {
+        setVisible(false)
+        return
+      }
+      const label = labelOnly ? link.querySelector<HTMLElement>(".top-nav-label") : null
+      setBounds({ x: link.offsetLeft + (label?.offsetLeft ?? 0), width: label?.offsetWidth ?? link.offsetWidth })
+      setVisible(true)
+    }
+    measure()
+    const observer = new ResizeObserver(measure)
+    observer.observe(row)
+    for (const link of row.querySelectorAll("a")) observer.observe(link)
+    return () => observer.disconnect()
+  }, [container, selector, layoutVersion, labelOnly])
+
+  return { bounds, visible }
+}
+
 export function TopNav() {
   const location = useLocation()
   const reducedMotion = useReducedMotion()
@@ -20,6 +55,9 @@ export function TopNav() {
   const [moreOpen, setMoreOpen] = useState(false)
   const listRef = useRef<HTMLDivElement>(null)
   const { measureRef, visibleCount } = useOverflowMenu(listRef, navigation.length)
+  const layoutVersion = `${location.pathname}:${visibleCount}`
+  const indicator = useNavigationBounds(listRef, 'a[aria-current="page"]', layoutVersion, true)
+  const hover = useNavigationBounds(listRef, hovered ? `a[href="${hovered}"]` : null, layoutVersion)
   const dashboard = useQuery({
     queryKey: ["dashboard"],
     queryFn: () => api<Dashboard>("/dashboard"),
@@ -50,51 +88,57 @@ export function TopNav() {
   return (
     <div className="top-navigation-content">
       <nav className="top-nav" aria-label="主要导航">
-        <LayoutGroup id="desktop-navigation">
-          <div
-            ref={listRef}
-            className="top-nav-list"
-            onPointerLeave={() => setHovered(null)}
-            onBlur={(event) => {
-              if (!event.currentTarget.contains(event.relatedTarget)) setHovered(null)
-            }}
-          >
-            {visible.map(({ to, label }) => (
-              <NavLink
-                key={to}
-                to={to}
-                end={to === "/"}
-                className={({ isActive }) => cn("top-nav-link", isActive && "active")}
-                onPointerEnter={(event) => {
-                  if (event.pointerType === "mouse") setHovered(to)
-                }}
-                onFocus={() => setHovered(to)}
-              >
-                {({ isActive }) => (
-                  <>
-                    {hovered === to && (
-                      <motion.span
-                        layoutId="top-nav-hover"
-                        className="top-nav-hover"
-                        aria-hidden="true"
-                        transition={reducedMotion ? { duration: 0 } : spring.snappy}
-                      />
-                    )}
-                    <span className="top-nav-label">{label}</span>
-                    {isActive && (
-                      <motion.span
-                        layoutId="top-nav-indicator"
-                        className="top-nav-indicator"
-                        aria-hidden="true"
-                        transition={reducedMotion ? { duration: 0 } : spring.snappy}
-                      />
-                    )}
-                  </>
-                )}
-              </NavLink>
-            ))}
-          </div>
-        </LayoutGroup>
+        <div
+          ref={listRef}
+          className="top-nav-list"
+          onPointerLeave={() => setHovered(null)}
+          onBlur={(event) => {
+            if (!event.currentTarget.contains(event.relatedTarget)) setHovered(null)
+          }}
+        >
+          {hover.bounds && (
+            <motion.span
+              className="top-nav-hover"
+              aria-hidden="true"
+              initial={false}
+              style={{ width: highlightWidth, transformOrigin: "left" }}
+              animate={{
+                x: hover.bounds.x,
+                scaleX: hover.bounds.width / highlightWidth,
+                opacity: hover.visible ? 1 : 0,
+              }}
+              transition={reducedMotion ? { duration: 0 } : spring.snappy}
+            />
+          )}
+          {indicator.bounds && (
+            <motion.span
+              className="top-nav-indicator"
+              aria-hidden="true"
+              initial={false}
+              style={{
+                width: highlightWidth,
+                transformOrigin: "left",
+                visibility: indicator.visible ? "visible" : "hidden",
+              }}
+              animate={{ x: indicator.bounds.x, scaleX: indicator.bounds.width / highlightWidth }}
+              transition={reducedMotion ? { duration: 0 } : spring.snappy}
+            />
+          )}
+          {visible.map(({ to, label }) => (
+            <NavLink
+              key={to}
+              to={to}
+              end={to === "/"}
+              className={({ isActive }) => cn("top-nav-link", isActive && "active")}
+              onPointerEnter={(event) => {
+                if (event.pointerType === "mouse") setHovered(to)
+              }}
+              onFocus={() => setHovered(to)}
+            >
+              <span className="top-nav-label">{label}</span>
+            </NavLink>
+          ))}
+        </div>
         <div ref={measureRef} className="top-nav-measure" aria-hidden="true" inert>
           {navigation.map((item) => (
             <span className="top-nav-link" key={item.to}>

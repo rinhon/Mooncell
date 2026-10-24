@@ -1,11 +1,13 @@
 import { ContextMenu } from "radix-ui"
+import { useMutation, useQueryClient } from "@tanstack/react-query"
 import { MoreHorizontal, Pencil, RefreshCw, Trash2 } from "lucide-react"
-import type { Feed, Show } from "@/lib/api"
+import { api, type Feed, type Show } from "@/lib/api"
 import { FeedClearlogo } from "@/components/feed-clearlogo"
 import { Badge } from "@/components/ui/badge"
 import { Button, NativeButton } from "@/components/ui/button"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
+import { useToast } from "@/components/ui/toast"
 
 function FeedConnectionStatus({ feed }: { feed: Feed }) {
   const status = (
@@ -44,24 +46,24 @@ function FeedConnectionStatus({ feed }: { feed: Feed }) {
 type Props = {
   feed: Feed
   clearlogo?: Show
-  refreshing: boolean
-  refreshPending: boolean
   deleting: boolean
   onEdit: (feed: Feed) => void
   onDelete: (feed: Feed) => void
-  onRefresh: (id: number) => void
 }
 
-export function FeedCard({
-  feed,
-  clearlogo,
-  refreshing,
-  refreshPending,
-  deleting,
-  onEdit,
-  onDelete,
-  onRefresh,
-}: Props) {
+export function FeedCard({ feed, clearlogo, deleting, onEdit, onDelete }: Props) {
+  const client = useQueryClient()
+  const toast = useToast()
+  const refresh = useMutation({
+    mutationFn: () => api<{ created: number; duplicates: number }>(`/feeds/${feed.id}/refresh`, { method: "POST" }),
+    onSuccess: (result) => {
+      void client.invalidateQueries({ queryKey: ["feeds"] })
+      void client.invalidateQueries({ queryKey: ["dashboard"] })
+      void client.invalidateQueries({ queryKey: ["shows"] })
+      toast("RSS 刷新完成", { description: `新增 ${result.created} 条，忽略 ${result.duplicates} 条重复发布。` })
+    },
+    onError: (error) => toast("RSS 刷新失败", { description: error.message, tone: "error", duration: 5000 }),
+  })
   return (
     <ContextMenu.Root>
       <ContextMenu.Trigger asChild>
@@ -103,10 +105,9 @@ export function FeedCard({
                   variant="secondary"
                   icon={RefreshCw}
                   iconMotion="refresh"
-                  pending={refreshing}
+                  pending={refresh.isPending}
                   pendingLabel="刷新中"
-                  onClick={() => onRefresh(feed.id)}
-                  disabled={refreshPending}
+                  onClick={() => refresh.mutate()}
                   aria-label={`${feed.name}：刷新订阅`}
                 >
                   刷新

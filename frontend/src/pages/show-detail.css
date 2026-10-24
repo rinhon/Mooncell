@@ -7,6 +7,7 @@
 .show-detail {
   --detail-header-height: 78px;
   --detail-tabs-top: var(--detail-header-height);
+  --detail-backdrop-height: max(820px, 100dvh);
   position: relative;
   isolation: isolate;
   margin-top: calc(-1 * var(--detail-header-height));
@@ -17,32 +18,33 @@
   color: var(--ink);
 }
 .detail-backdrop-stage {
-  position: absolute;
+  position: fixed;
   z-index: -2;
   top: 0;
   right: 0;
-  width: 86%;
-  height: calc(430px + var(--detail-header-height));
+  width: 100%;
+  height: var(--detail-backdrop-height);
   pointer-events: none;
-  mask-image: linear-gradient(to right, transparent, black 36%);
+  mask-image: linear-gradient(to right, transparent, black 28%);
 }
 .detail-backdrop {
   width: 100%;
   height: 100%;
   object-fit: cover;
   object-position: center top;
-  opacity: 0.32;
+  opacity: 0.4;
 }
 .show-detail::before {
   content: "";
-  position: absolute;
+  position: fixed;
   z-index: -1;
   inset: 0;
   pointer-events: none;
   background: linear-gradient(
     to bottom,
-    var(--detail-scrim),
-    var(--detail-background) calc(430px + var(--detail-header-height))
+    var(--detail-scrim) 0,
+    var(--detail-scrim) calc(var(--detail-backdrop-height) * 0.32),
+    var(--detail-background) var(--detail-backdrop-height)
   );
 }
 .detail-back {
@@ -223,22 +225,7 @@
   z-index: 20;
   border-bottom: 1px solid var(--border-soft);
   margin-top: 36px;
-  background: var(--detail-background);
-}
-.detail-tabs::before {
-  content: "";
-  position: absolute;
-  z-index: -1;
-  left: 0;
-  right: 0;
-  top: -36px;
-  bottom: 0;
-  pointer-events: none;
-  background: linear-gradient(180deg, transparent 0%, var(--detail-background) 24px, var(--detail-background) 100%);
-}
-.detail-tabs[data-stuck]::before {
-  top: calc(-1 * var(--detail-tabs-top) - 24px);
-  background: linear-gradient(180deg, transparent 0%, var(--detail-background) 24px, var(--detail-background) 100%);
+  background: transparent;
 }
 .detail-tabs-track {
   position: relative;
@@ -275,7 +262,7 @@
   min-width: 0;
   overflow: clip;
   overflow-anchor: none;
-  background: var(--detail-background);
+  background: transparent;
   clip-path: inset(var(--detail-panels-clip-top, 0px) 0 0);
 }
 .detail-tab-indicator {
@@ -493,10 +480,6 @@
   .detail-subscription dl {
     gap: 22px 16px;
   }
-  .detail-backdrop-stage {
-    width: 100%;
-    height: calc(380px + var(--detail-header-height));
-  }
   .detail-panel .list-pagination {
     align-items: start;
   }
@@ -591,14 +574,6 @@
   }
   .detail-tabs {
     margin-top: 20px;
-  }
-  .detail-tabs::before {
-    top: -20px;
-    background: linear-gradient(180deg, transparent 0%, var(--detail-background) 14px, var(--detail-background) 100%);
-  }
-  .detail-tabs[data-stuck]::before {
-    top: calc(-1 * var(--detail-tabs-top) - 24px);
-    background: linear-gradient(180deg, transparent 0%, var(--detail-background) 24px, var(--detail-background) 100%);
   }
 }
 @media (max-width: 359px) {

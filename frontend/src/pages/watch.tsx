@@ -35,7 +35,7 @@ export function WatchPage() {
     enabled: sourceId != null,
   })
   const library = useQuery({
-    queryKey: ["show-library", sourceId],
+    queryKey: ["shows", "library", sourceId],
     queryFn: () => api<ShowLibrary>(`/shows/${sourceId}/library`),
     enabled: sourceId != null,
   })

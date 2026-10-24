@@ -20,17 +20,6 @@ export function FeedsPage() {
   const feeds = useQuery({ queryKey: ["feeds"], queryFn: () => api<Feed[]>("/feeds") })
   const shows = useQuery({ queryKey: ["shows"], queryFn: () => api<Show[]>("/shows") })
   const clearlogos = new Map(shows.data?.filter((show) => show.clearlogo_ready).map((show) => [show.id, show]))
-  const refresh = useMutation({
-    mutationFn: (id: number) =>
-      api<{ created: number; duplicates: number }>(`/feeds/${id}/refresh`, { method: "POST" }),
-    onSuccess: (result) => {
-      void client.invalidateQueries({ queryKey: ["feeds"] })
-      void client.invalidateQueries({ queryKey: ["dashboard"] })
-      void client.invalidateQueries({ queryKey: ["shows"] })
-      toast("RSS 刷新完成", { description: `新增 ${result.created} 条，忽略 ${result.duplicates} 条重复发布。` })
-    },
-    onError: (error) => toast("RSS 刷新失败", { description: error.message, tone: "error" }),
-  })
   const remove = useMutation({
     mutationFn: (id: number) => api(`/feeds/${id}`, { method: "DELETE" }),
     onSuccess: () => {
@@ -94,12 +83,9 @@ export function FeedsPage() {
                 <FeedCard
                   feed={feed}
                   clearlogo={clearlogos.get(feed.id)}
-                  refreshing={refresh.isPending && refresh.variables === feed.id}
-                  refreshPending={refresh.isPending}
                   deleting={remove.isPending}
                   onEdit={setEditing}
                   onDelete={setDeleting}
-                  onRefresh={(id) => refresh.mutate(id)}
                 />
               </BlurFade>
             ))}

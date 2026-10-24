@@ -1,4 +1,4 @@
-import { forwardRef, useState, type ButtonHTMLAttributes } from "react"
+import { forwardRef, type ButtonHTMLAttributes } from "react"
 import { motion, useReducedMotion, type HTMLMotionProps } from "motion/react"
 import { LoaderCircle, Plus } from "lucide-react"
 import { Link } from "react-router-dom"
@@ -13,15 +13,8 @@ export const AddSubscriptionButton = forwardRef<HTMLButtonElement, Props>(functi
   { to, pending, className, disabled, ...props },
   ref,
 ) {
-  const [hovered, setHovered] = useState(false)
-  const [focused, setFocused] = useState(false)
   const reducedMotion = useReducedMotion()
-  const highlighted = !disabled && !pending && (hovered || focused)
   const interaction = {
-    onPointerEnter: () => setHovered(true),
-    onPointerLeave: () => setHovered(false),
-    onFocus: () => setFocused(true),
-    onBlur: () => setFocused(false),
     whileTap: reducedMotion || disabled || pending ? undefined : { scale: 0.98 },
     transition: reducedMotion ? { duration: 0 } : spring.press,
   }
@@ -36,25 +29,14 @@ export const AddSubscriptionButton = forwardRef<HTMLButtonElement, Props>(functi
   )
   const content = (
     <>
-      <motion.span
-        className="add-subscription-fill"
-        aria-hidden="true"
-        initial={false}
-        animate={{ scaleX: highlighted ? 1 : 0 }}
-        transition={reducedMotion ? { duration: 0 } : spring.press}
-      />
+      <span className="add-subscription-fill" aria-hidden="true" />
       <span className="add-subscription-icon" aria-hidden="true">
         {pending ? (
           <LoaderCircle size={16} className="motion-safe:animate-spin" />
         ) : (
-          <motion.span
-            className="grid"
-            initial={false}
-            animate={{ rotate: highlighted && !reducedMotion ? 90 : 0 }}
-            transition={spring.snappy}
-          >
+          <span className="add-subscription-plus">
             <Plus size={16} />
-          </motion.span>
+          </span>
         )}
       </span>
       <span className="add-subscription-label">{pending ? "检查配置…" : "添加订阅"}</span>

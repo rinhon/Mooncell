@@ -5,8 +5,8 @@ import SwipeToast from "@/components/swipe-toast"
 import "./toast.css"
 
 type Tone = "success" | "warning" | "error"
-type Notice = { id: number; title: string; description?: string; tone: Tone }
-type ToastFn = (title: string, options?: { description?: string; tone?: Tone }) => void
+type Notice = { id: number; title: string; description?: string; tone: Tone; duration?: number }
+type ToastFn = (title: string, options?: { description?: string; tone?: Tone; duration?: number }) => void
 const ToastContext = createContext<ToastFn>(() => undefined)
 
 export function useToast() {
@@ -19,7 +19,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     const id = Date.now() + Math.random()
     setNotices((items) => [
       ...items,
-      { id, title, description: options?.description, tone: options?.tone ?? "success" },
+      { id, title, description: options?.description, tone: options?.tone ?? "success", duration: options?.duration },
     ])
   }, [])
   const close = useCallback((id: number) => {
@@ -49,7 +49,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
               color="var(--ink)"
               fuseColor="var(--muted)"
               width={380}
-              duration={notice.tone === "error" ? 0 : 3600}
+              duration={notice.duration ?? (notice.tone === "error" ? 0 : 3600)}
               inline
               closeButton
               onClose={() => close(notice.id)}

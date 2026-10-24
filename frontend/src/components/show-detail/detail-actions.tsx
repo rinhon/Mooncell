@@ -1,6 +1,7 @@
 import { ExternalLink, FolderOpen, MoreHorizontal, Pencil, Play, RefreshCw, Upload } from "lucide-react"
 import { Link } from "react-router-dom"
 import type { ShowDetail, ShowEpisode } from "@/lib/api"
+import { playbackTarget } from "@/lib/show-playback"
 import { Button } from "@/components/ui/button"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 
@@ -13,16 +14,6 @@ type Props = {
   onAction: (action: DetailAction) => void
   onEdit: () => void
   onUpload: () => void
-}
-
-function playbackTarget(items: ShowEpisode[], movie: boolean) {
-  const playable = items.filter((item) => item.media_id && !item.rename_pending)
-  const continuing = playable.find((item) => item.progress && item.progress.position > 0 && !item.progress.completed)
-  const item = continuing ?? playable.find((item) => !item.progress?.completed) ?? playable[0]
-  if (!item) return null
-  const episode = item.episode_start == null ? "视频" : `第 ${item.episode_start} 集`
-  const label = continuing ? `继续观看${movie ? "" : ` ${episode}`}` : movie ? "播放影片" : `播放${episode}`
-  return { item, label }
 }
 
 export function DetailActions({ show, items, pending, pendingAction, onAction, onEdit, onUpload }: Props) {
