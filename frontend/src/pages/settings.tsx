@@ -1,10 +1,10 @@
 import { SubscriptionSettingsSection } from "@/components/subscription-settings"
 import { AppearanceSettingsSection } from "@/components/appearance-settings"
 import { TmdbSettingsSection } from "@/components/tmdb-settings"
-import { useEffect } from "react"
+import { useEffect, type ReactNode } from "react"
 import { useLocation } from "react-router-dom"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { FolderTree, LogOut } from "lucide-react"
+import { FileVideo, FolderOpen, FolderTree, LogOut } from "lucide-react"
 import { api, type ParsedRelease } from "@/lib/api"
 import { DownloaderSettingsSection } from "@/components/downloader-settings"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -25,6 +25,36 @@ type Preview = {
   folder_name: string
   season_folder: string
   separator: string
+}
+
+function DirectoryPreviewNode({
+  name,
+  children,
+  isRoot = false,
+}: {
+  name: string
+  children?: ReactNode
+  isRoot?: boolean
+}) {
+  return (
+    <li className="relative min-w-0">
+      {!isRoot && (
+        <span
+          aria-hidden="true"
+          className="absolute -left-4 top-0 h-4 w-4 rounded-bl-md border-b border-l border-border"
+        />
+      )}
+      <div className="flex min-w-0 items-start gap-2 py-1">
+        {children ? (
+          <FolderOpen size={16} aria-hidden="true" className="mt-1 shrink-0 text-accent" />
+        ) : (
+          <FileVideo size={16} aria-hidden="true" className="mt-1 shrink-0 text-muted" />
+        )}
+        <span className="min-w-0 break-all">{name}</span>
+      </div>
+      {children && <ul className="ml-2 min-w-0 pl-4">{children}</ul>}
+    </li>
+  )
 }
 
 /** 集中管理下载器连接，以及媒体库目录和文件命名。 */
@@ -96,24 +126,16 @@ export function SettingsPage() {
               <div className="min-w-0">
                 <p className="mb-2 text-sm font-medium text-ink">目录预览</p>
                 {preview.data ? (
-                  <div className="rounded-inset bg-surface/20 p-3 font-mono text-xs leading-6 text-ink ring-1 ring-border">
-                    <div className="whitespace-normal break-all">
-                      <p>
-                        {preview.data.library_root}
-                        {preview.data.library_root.endsWith(preview.data.separator) ? "" : preview.data.separator}
-                      </p>
-                      <p>
-                        └── <span className="text-accent">{preview.data.folder_name}</span>
-                        {preview.data.separator}
-                      </p>
-                      <p>
-                        　　└── <span className="text-accent">{preview.data.season_folder}</span>
-                        {preview.data.separator}
-                      </p>
-                      <p>
-                        　　　　└── <span className="text-ink">{preview.data.filename}</span>
-                      </p>
-                    </div>
+                  <div className="pointer-events-none cursor-default rounded-inset bg-surface/20 p-3 font-mono text-xs leading-6 text-ink ring-1 ring-border">
+                    <ul aria-label="目录结构预览" className="min-w-0">
+                      <DirectoryPreviewNode name={preview.data.library_root} isRoot>
+                        <DirectoryPreviewNode name={preview.data.folder_name}>
+                          <DirectoryPreviewNode name={preview.data.season_folder}>
+                            <DirectoryPreviewNode name={preview.data.filename} />
+                          </DirectoryPreviewNode>
+                        </DirectoryPreviewNode>
+                      </DirectoryPreviewNode>
+                    </ul>
                     <p className="mt-2 break-all border-t border-border pt-2 text-muted">{preview.data.full_path}</p>
                   </div>
                 ) : (
