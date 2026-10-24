@@ -6,7 +6,6 @@ import { api, type DownloadCenter, type DownloadTask, type Show } from "@/lib/ap
 import { Badge } from "@/components/ui/badge"
 import { DownloadsHeading, DownloadsLoading, DownloadsMetrics, DownloadsRecords } from "@/components/downloads-loading"
 import { FeedClearlogo } from "@/components/feed-clearlogo"
-import { artworkUrl } from "@/lib/show-artwork"
 import { Progress } from "@/components/ui/progress"
 import { Pagination } from "@/components/ui/pagination"
 import { Input } from "@/components/ui/input"
@@ -202,8 +201,6 @@ function DownloadRow({ task, logoShow }: { task: DownloadTask; logoShow?: Show }
     },
     onError: (error) => toast("重试失败", { description: error.message, tone: "error" }),
   })
-  const [failedLogo, setFailedLogo] = useState<string | null>(null)
-  const logoUrl = logoShow ? artworkUrl(logoShow, "clearlogo") : undefined
   const status = statusDisplay(task)
   const completed = task.status === "completed" || task.progress >= 100
   const completedActivity =
@@ -214,8 +211,8 @@ function DownloadRow({ task, logoShow }: { task: DownloadTask; logoShow?: Show }
     <div className="download-row min-w-0 p-4 transition-colors">
       <div className="grid min-w-0 gap-4 sm:grid-cols-[112px_minmax(0,1fr)_auto] sm:items-center">
         <div className={`grid h-14 w-28 shrink-0 place-items-center ${task.matched ? "text-ink-2" : "text-faint"}`}>
-          {logoShow && logoUrl && failedLogo !== logoUrl ? (
-            <FeedClearlogo show={logoShow} onError={() => setFailedLogo(logoUrl)} />
+          {logoShow ? (
+            <FeedClearlogo show={logoShow} fallback={<HardDriveDownload size={18} />} />
           ) : (
             <HardDriveDownload size={18} />
           )}

@@ -41,6 +41,7 @@ from .download_queue import queue_lock, remote_root
 from .downloader_service import extract_info_hash, get_qbittorrent_snapshot, test_downloader
 from .episode_rename import schedule_rename
 from .events import EventMessage, broker, commit_and_publish, event_log_fields, record_event
+from .image_cache import cached_image_response, image_state
 from .library import get_library_root
 from .library_scan import local_image
 from .models import (
@@ -643,8 +644,14 @@ def _show_read(source: FeedSource, discovered_items: int) -> ShowRead:
     metadata = source.show_metadata
     artwork = source.artwork
 
-    def ready(path: str | None) -> bool:
-        return bool(path and Path(path).is_file())
+    artwork_versions = {}
+    for kind in ("poster", "fanart", "clearlogo"):
+        path = getattr(artwork, f"{kind}_path", None) if artwork else None
+        if path:
+            try:
+                artwork_versions[kind] = image_state(Path(path)).version
+            except (OSError, ValueError):
+                pass
 
     return ShowRead(
         id=source.id,
@@ -668,9 +675,10 @@ def _show_read(source: FeedSource, discovered_items: int) -> ShowRead:
                 artwork.file_version,
             ])) or None
         ) if artwork else None,
-        poster_ready=ready(artwork.poster_path) if artwork else False,
-        fanart_ready=ready(artwork.fanart_path) if artwork else False,
-        clearlogo_ready=ready(artwork.clearlogo_path) if artwork else False,
+        artwork_versions=artwork_versions,
+        poster_ready="poster" in artwork_versions,
+        fanart_ready="fanart" in artwork_versions,
+        clearlogo_ready="clearlogo" in artwork_versions,
     )
 
 
@@ -797,11 +805,13 @@ async def rename_show_episode(
     )
 
 
+@router.head("/shows/{source_id}/thumbnails/{thumbnail_id}", response_class=FileResponse,
+             include_in_schema=False)
 @router.get("/shows/{source_id}/thumbnails/{thumbnail_id}", response_class=FileResponse)
 async def episode_thumbnail_file(
-    source_id: int, thumbnail_id: int,
+    source_id: int, thumbnail_id: int, request: Request,
     _user: User = Depends(require_user), session: AsyncSession = Depends(get_session),
-) -> FileResponse:
+) -> Response:
     source = await session.get(FeedSource, source_id)
     thumbnail = await session.get(EpisodeThumbnail, thumbnail_id)
     if source is None or thumbnail is None or thumbnail.source_id != source_id:
@@ -811,9 +821,11 @@ async def episode_thumbnail_file(
     )
     try:
         path = await asyncio.to_thread(local_image, directory, thumbnail.image_path)
+        return await asyncio.to_thread(
+            cached_image_response, request, path, Path(thumbnail.image_path).as_posix(),
+        )
     except (OSError, ValueError, RuntimeError) as exc:
         raise HTTPException(404, "单集缩略图暂时不可用") from exc
-    return FileResponse(path)
 
 
 @router.get("/shows/{source_id}/releases", response_model=ShowReleasePage)
@@ -940,13 +952,16 @@ async def upload_show_artwork(
     return _show_read(source, count or 0)
 
 
+@router.head("/shows/{source_id}/artwork/{kind}", response_class=FileResponse,
+             include_in_schema=False)
 @router.get("/shows/{source_id}/artwork/{kind}", response_class=FileResponse)
 async def show_artwork_file(
     source_id: int,
     kind: str,
+    request: Request,
     _user: User = Depends(require_user),
     session: AsyncSession = Depends(get_session),
-) -> FileResponse:
+) -> Response:
     """通过认证接口读取本地图片，避免向浏览器暴露服务器文件路径。"""
     if kind not in {"poster", "fanart", "clearlogo"}:
         raise HTTPException(status_code=404, detail="图片类型不存在")
@@ -954,9 +969,12 @@ async def show_artwork_file(
     artwork = source.artwork if source else None
     path_value = getattr(artwork, f"{kind}_path", None) if artwork else None
     path = Path(path_value) if path_value else None
-    if path is None or not path.is_file():
+    if path is None:
         raise HTTPException(status_code=404, detail="图片尚未刮削")
-    return FileResponse(path)
+    try:
+        return await asyncio.to_thread(cached_image_response, request, path)
+    except (OSError, ValueError) as exc:
+        raise HTTPException(status_code=404, detail="图片尚未刮削") from exc
 
 
 @router.get("/shows/{source_id}/artwork/clearlogo/appearance", response_model=ArtworkAppearance)

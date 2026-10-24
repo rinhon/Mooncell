@@ -1,6 +1,7 @@
 import { useEffect, useId, useRef, useState, type KeyboardEvent } from "react"
 import { Check, ChevronDown, Film, ListVideo, LoaderCircle, Play, RefreshCw, X } from "lucide-react"
 import type { ShowEpisode, ShowLibrary } from "@/lib/api"
+import { RetryImage } from "@/components/ui/retry-image"
 
 export interface PlayerEpisodesProps {
   library?: ShowLibrary
@@ -34,8 +35,8 @@ function seasonLabel(season: number | null): string {
 }
 
 function EpisodeArtwork({ item, artwork, current }: { item: ShowEpisode; artwork?: string; current: boolean }) {
-  const [failedSources, setFailedSources] = useState<string[]>([])
-  const src = [item.thumbnail_url, artwork].find((candidate) => candidate && !failedSources.includes(candidate))
+  const empty = <Film className="player-episode-artwork-placeholder" size={25} />
+  const fallback = artwork ? <RetryImage src={artwork} alt="" loading="lazy" fallback={empty} /> : empty
   const progress =
     item.progress && item.progress.duration > 0
       ? Math.min(100, Math.max(0, (item.progress.position / item.progress.duration) * 100))
@@ -43,10 +44,10 @@ function EpisodeArtwork({ item, artwork, current }: { item: ShowEpisode; artwork
 
   return (
     <span className="player-episode-artwork" aria-hidden="true">
-      {src ? (
-        <img src={src} alt="" loading="lazy" onError={() => setFailedSources((previous) => [...previous, src])} />
+      {item.thumbnail_url && item.thumbnail_url !== artwork ? (
+        <RetryImage src={item.thumbnail_url} alt="" loading="lazy" fallback={fallback} />
       ) : (
-        <Film className="player-episode-artwork-placeholder" size={25} />
+        fallback
       )}
       <span className="player-episode-play">
         <Play size={18} fill="currentColor" />

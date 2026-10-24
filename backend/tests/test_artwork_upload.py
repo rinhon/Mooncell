@@ -66,14 +66,19 @@ async def test_upload_routes_and_persistence(monkeypatch, tmp_path, png):
             assert (await client.get(f"{base}/clearlogo/appearance")).status_code == 401
             app.dependency_overrides[require_user] = lambda: object()
             assert (await client.get(f"{base}/clearlogo/appearance")).status_code == 404
+            previous_versions = {}
             for kind in ("poster", "fanart", "clearlogo"):
                 response = await client.post(f"{base}/{kind}", content=png)
                 assert response.status_code == 200, response.text
                 assert response.json()[f"{kind}_ready"]
                 assert response.json()["artwork_version"]
-                image = await client.get(f"{base}/{kind}")
+                versions = response.json()["artwork_versions"]
+                assert all(versions[key] == value for key, value in previous_versions.items())
+                previous_versions = versions
+                image = await client.get(f"{base}/{kind}", params={"v": versions[kind]})
                 assert image.status_code == 200
                 assert image.headers["content-type"].startswith("image/")
+                assert image.headers["cache-control"] == "private, max-age=31536000"
             assert response.json()["artwork_status"] == "completed"
             appearance = await client.get(f"{base}/clearlogo/appearance")
             assert appearance.status_code == 200

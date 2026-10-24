@@ -19,6 +19,7 @@ import { DetailHeader } from "@/components/show-detail/detail-header"
 import { DetailActions } from "@/components/show-detail/detail-actions"
 import { SubscriptionInfoPanel } from "@/components/show-detail/subscription-info-panel"
 import { useToast } from "@/components/ui/toast"
+import { RetryImage } from "@/components/ui/retry-image"
 import "./show-detail.css"
 
 export function ShowDetailPage() {
@@ -38,8 +39,6 @@ function DetailContent({ sourceId, valid }: { sourceId: number; valid: boolean }
   const [selectedTab, setSelectedTab] = useState<string | null>(null)
   const [upload, setUpload] = useState(false)
   const [editing, setEditing] = useState(false)
-  const [failedPoster, setFailedPoster] = useState<string>()
-  const [failedBackdrop, setFailedBackdrop] = useState<string>()
   const detail = useQuery({
     queryKey: ["shows", "detail", sourceId],
     queryFn: () => api<ShowDetail>(`/shows/${sourceId}`),
@@ -133,11 +132,18 @@ function DetailContent({ sourceId, valid }: { sourceId: number; valid: boolean }
 
   const poster = posterUrl(show)
   const backdrop = show.fanart_ready ? artworkUrl(show, "fanart") : undefined
+  const noPoster = (
+    <span className="detail-no-poster">
+      <ImageOff size={42} />
+      <span>{show.name}</span>
+      <small>暂无海报</small>
+    </span>
+  )
   return (
     <div className="show-detail">
-      {backdrop && failedBackdrop !== backdrop && (
+      {backdrop && (
         <div className="detail-backdrop-stage" aria-hidden="true">
-          <img className="detail-backdrop" src={backdrop} alt="" onError={() => setFailedBackdrop(backdrop)} />
+          <RetryImage className="detail-backdrop" src={backdrop} alt="" />
           <div className="media-scrim media-scrim--backdrop" />
         </div>
       )}
@@ -158,14 +164,10 @@ function DetailContent({ sourceId, valid }: { sourceId: number; valid: boolean }
       >
         <aside className="detail-artwork">
           <div className="detail-poster">
-            {poster && failedPoster !== poster ? (
-              <img src={poster} alt={`${show.name} 海报`} onError={() => setFailedPoster(poster)} />
+            {poster ? (
+              <RetryImage src={poster} alt={`${show.name} 海报`} fallback={noPoster} />
             ) : (
-              <span className="detail-no-poster">
-                <ImageOff size={42} />
-                <span>{show.name}</span>
-                <small>暂无海报</small>
-              </span>
+              noPoster
             )}
           </div>
         </aside>

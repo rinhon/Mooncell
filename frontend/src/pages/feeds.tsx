@@ -51,7 +51,21 @@ export function FeedsPage() {
     <>
       <FeedsHeading action={<AddSubscriptionDialog />} />
       <FeedsSection count={feeds.data?.length ?? 0}>
-        {feeds.isError ? (
+        {feeds.isError && feeds.data !== undefined && (
+          <div role="alert" className="px-5 py-3 text-sm text-danger">
+            订阅刷新失败，正在显示上次读取的数据：{feeds.error.message}
+            <Button
+              variant="secondary"
+              size="sm"
+              className="ml-3"
+              disabled={feeds.isFetching}
+              onClick={() => void feeds.refetch()}
+            >
+              重试
+            </Button>
+          </div>
+        )}
+        {feeds.isError && feeds.data === undefined ? (
           <div role="alert" className="p-5 text-sm text-danger">
             订阅读取失败：{feeds.error.message}
             <Button variant="secondary" size="sm" className="ml-3" onClick={() => void feeds.refetch()}>

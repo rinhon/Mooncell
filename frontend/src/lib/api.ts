@@ -68,9 +68,11 @@ export type TmdbMetadata = {
   vote_count?: number
   href: string
 }
+export type ArtworkKind = "poster" | "fanart" | "clearlogo"
 export type Show = {
   background_operation_ids?: string[]
   artwork_version?: string | null
+  artwork_versions?: Partial<Record<ArtworkKind, string>>
   tmdb_url?: string | null
   id: number
   name: string

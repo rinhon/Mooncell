@@ -79,6 +79,7 @@ class ShowMetadataRead(BaseModel):
 class ShowRead(BaseModel):
     background_operation_ids: list[str] = Field(default_factory=list)
     artwork_version: str | None = None
+    artwork_versions: dict[str, str] = Field(default_factory=dict)
     tmdb_url: str | None = None
     id: int
     name: str

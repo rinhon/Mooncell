@@ -107,6 +107,49 @@ async def test_overwrite_missing_and_reappearance_update_versions(
 
 
 @pytest.mark.asyncio
+async def test_renamed_video_thumbnail_overwrite_updates_url_and_scan_is_idempotent(
+    show_client, monkeypatch, tmp_path,
+):
+    client, sessions, _ = show_client
+    monkeypatch.setattr("app.library_scan.SessionFactory", sessions)
+    await bind(sessions, tmp_path)
+    old_video = "Season 01/作品 S01E01.mkv"
+    new_video = "Season 01/作品 S01E01 修正版.mkv"
+    image_path = "Season 01/作品 S01E01-thumb.jpg"
+    video = put(tmp_path, old_video, b"video")
+    image = put(tmp_path, image_path)
+    assert await scan_source(2) == (True, 1)
+    before = (await client.get("/api/v1/shows/2/library")).json()
+    old_url = before["seasons"][0]["items"][0]["thumbnail_url"]
+    assert old_url and (await client.get(old_url)).content == b"image"
+    async with sessions() as session:
+        thumbnail = await session.scalar(select(EpisodeThumbnail))
+        thumbnail_id, old_version = thumbnail.id, thumbnail.file_version
+        # 模拟改名流程：只移动视频并更新视频关联，缩略图沿用原文件名。
+        video.rename(tmp_path / new_video)
+        thumbnail.video_path = new_video
+        await session.commit()
+    assert await scan_source(2) == (False, 0)
+    renamed = (await client.get("/api/v1/shows/2/library")).json()
+    episode = renamed["seasons"][0]["items"][0]
+    assert episode["path"] == new_video and episode["thumbnail_url"] == old_url
+    image.write_bytes(b"updated image")
+    assert await scan_source(2) == (True, 0)
+    async with sessions() as session:
+        thumbnail = await session.scalar(select(EpisodeThumbnail))
+        assert thumbnail.id == thumbnail_id and thumbnail.image_path == image_path
+        assert thumbnail.video_path == new_video and thumbnail.file_version != old_version
+        assert await session.scalar(select(func.count(DomainEvent.id))) == 2
+    updated = (await client.get("/api/v1/shows/2/library")).json()
+    new_url = updated["seasons"][0]["items"][0]["thumbnail_url"]
+    assert new_url and new_url != old_url
+    assert (await client.get(new_url)).content == b"updated image"
+    assert await scan_source(2) == (False, 0)
+    async with sessions() as session:
+        assert await session.scalar(select(func.count(DomainEvent.id))) == 2
+
+
+@pytest.mark.asyncio
 async def test_unavailable_directory_preserves_records_and_other_shows_continue(
     show_client, monkeypatch, tmp_path,
 ):

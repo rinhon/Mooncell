@@ -172,16 +172,17 @@ async def source_busy(session, source_id: int) -> bool:
     ).limit(1)))
 
 
-def valid_thumbnail_binding(directory: Path, item: EpisodeThumbnail) -> bool:
+def thumbnail_binding_image(directory: Path, item: EpisodeThumbnail) -> ImageFile | None:
     # 手动改名后视频和缩略图可以不同名；仍有效的显式关联应当保留。
     from .playback.media import MediaError, safe_file
 
     try:
         safe_file(directory, directory, item.video_path)
-        local_image(directory, item.image_path)
-        return True
+        path = local_image(directory, item.image_path)
+        stat = path.stat()
+        return ImageFile(path.relative_to(directory).as_posix(), stat.st_mtime_ns, stat.st_size)
     except (MediaError, OSError, ValueError):
-        return False
+        return None
 
 
 async def scan_source(source_id: int) -> tuple[bool, int]:
@@ -239,10 +240,13 @@ async def scan_source(source_id: int) -> tuple[bool, int]:
                 changed = True
         if not images.partial:
             for item in saved.values():
-                if await asyncio.to_thread(valid_thumbnail_binding, Path(before[1]), item):
-                    continue
-                await session.delete(item)
-                changed = True
+                image = await asyncio.to_thread(thumbnail_binding_image, Path(before[1]), item)
+                if image is None:
+                    await session.delete(item)
+                    changed = True
+                elif item.file_version != image.version:
+                    item.file_version = image.version
+                    changed = True
         if changed:
             record_event(session, "library.scan.changed", "feed_source", source_id, {
                 "name": source.name, "thumbnails": len(images.thumbnails),

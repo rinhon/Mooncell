@@ -1,7 +1,10 @@
-import type { Show } from "@/lib/api"
+import type { ArtworkKind, Show } from "@/lib/api"
 
-export const artworkUrl = (show: Show, kind: "poster" | "fanart" | "clearlogo") =>
-  `/api/v1/shows/${show.id}/artwork/${kind}?v=${encodeURIComponent(show.artwork_version ?? "")}`
+export const artworkVersion = (show: Show, kind: ArtworkKind) =>
+  show.artwork_versions?.[kind] ?? show.artwork_version ?? ""
+
+export const artworkUrl = (show: Show, kind: ArtworkKind) =>
+  `/api/v1/shows/${show.id}/artwork/${kind}?v=${encodeURIComponent(artworkVersion(show, kind))}`
 
 export const posterUrl = (show: Show) => (show.poster_ready ? artworkUrl(show, "poster") : show.poster_url || undefined)
 

@@ -5,6 +5,7 @@ import type { Show, ShowEpisode } from "@/lib/api"
 import { artworkUrl, posterUrl } from "@/lib/show-artwork"
 import { BlurFade } from "@/components/ui/blur-fade"
 import { Button } from "@/components/ui/button"
+import { RetryImage } from "@/components/ui/retry-image"
 import { RenameEpisodeDialog } from "@/components/rename-episode-dialog"
 import { formatTime } from "@/lib/player/types"
 
@@ -20,13 +21,14 @@ function fileSize(size: number) {
 
 function EpisodeThumbnail({ show, item }: { show: Show; item: ShowEpisode }) {
   const fallback = show.fanart_ready ? artworkUrl(show, "fanart") : posterUrl(show)
-  const [failed, setFailed] = useState<string[]>([])
-  const src = [item.thumbnail_url, fallback].find((url) => url && !failed.includes(url))
-  const image = src ? (
-    <img src={src} alt="" loading="lazy" onError={() => setFailed((previous) => [...previous, src])} />
-  ) : (
-    <FileVideo2 size={25} aria-hidden="true" />
-  )
+  const empty = <FileVideo2 size={25} aria-hidden="true" />
+  const fallbackImage = fallback ? <RetryImage src={fallback} alt="" loading="lazy" fallback={empty} /> : empty
+  const image =
+    item.thumbnail_url && item.thumbnail_url !== fallback ? (
+      <RetryImage src={item.thumbnail_url} alt="" loading="lazy" fallback={fallbackImage} />
+    ) : (
+      fallbackImage
+    )
   const playLabel = item.progress?.completed
     ? "重新播放"
     : item.progress && item.progress.position > 0
