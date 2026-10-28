@@ -146,3 +146,22 @@ Ruff 自动修复和格式化不在 CI 中执行；需要修复格式时在本�
 - SHA-256：`90b53abc13dfd9bd8ecb9d8efb9bd7e865833d1ce426afdb2d7b2696b92e95c5`，与官方 OCI manifest 一致。
 - 扫描日志中缺少 site-packages/node_modules 的提示只影响许可证信息收集；pip 与 pnpm 漏洞检查均已执行并产出结果。
 - 本次完成的是本地完整扫描；GitHub hosted CI 和 SonarQube 服务器门禁仍需在相应服务中执行。
+
+## CI 失败修复（2026-10-28）
+
+[首次 hosted CI](https://github.com/rinhon/Mooncell/actions/runs/40693220979) 的后端结果为 689 通过、1 失败，唯一失败项为 `test_actual_owned_process_suspend_resume_and_stop`。FFmpeg 暂停后，Python 后台线程仍可能消费 stdout 管道中积压的进度，因此固定等待 0.2 秒再断言进度不变会产生竞态。测试现改为有界等待启动和恢复进度，暂停阶段连续核验操作系统的挂起状态及 CPU 时间不变，保留暂停后停止进程的验证。
+
+安全修复包括 Vite 升级到 6.4.5、传递依赖 `source-map-js` 升级到 1.2.2，以及将后端 `cryptography` 的版本范围调整为 `>=50,<51`。前端 nginx 以 `nginx` 用户运行，PID 移到 `/tmp`，缓存目录授予该用户写权限；仅赋予 nginx 可执行文件绑定低端口的能力，继续使用原有 80 端口、反向代理和健康检查。
+
+Trivy 仍包含开发依赖，HIGH/CRITICAL 仍阻断。扫描失败时，新增步骤将 JSON 报告转换为表格输出到作业日志，原始报告继续上传。
+
+本地验证结果：
+
+- 暂停／恢复测试连续运行 10 次通过；Ruff lint、格式检查以及 actionlint 1.7.12 工作流检查通过。
+- 使用 cryptography 50.0.2 的独立环境运行完整后端与脚本测试：688 通过、2 跳过、0 失败，耗时 1040.83 秒。两项跳过均因本机 Windows 未允许创建符号链接。JUnit 与覆盖率 XML 已核对；语句覆盖率 80.04%，分支覆盖率 66.32%。升级前后的 Fernet 加密数据可双向解密。
+- 前端冻结安装、ESLint、TypeScript、Prettier、149 项测试及 Vite 生产构建通过；保留既有 Hooks 依赖警告和大 chunk 提示。
+- Trivy 0.76.1 使用经官方 OCI 摘要校验的漏洞数据库及最新官方检查规则完成实扫，返回码 0；344 个 pnpm 包、44 个 Python 包和 3 个 Dockerfile 中，HIGH/CRITICAL 漏洞、配置问题、密钥问题均为 0。数据库更新时间为北京时间 2026-10-28 15:10:42；没有回退到内置检查规则。最终 JSON 到日志表格的转换也已实际验证。
+- nginx 运行阶段使用实际 Dockerfile 与已通过构建的前端产物验证：UID 101，仅持有绑定低端口能力；强制低端口阈值为 1024 时仍可监听 80，PID、缓存权限、`nginx -t`、健康检查及 SPA 深层路径回退均通过。
+- 新增 `frontend/.dockerignore` 排除本机 node_modules、产物和真实环境文件。完整 Linux 多阶段冷构建两次受依赖下载超时阻断，直连和本次构建的代理参数重试分别未能下载完 hls.js / Linux esbuild；不将运行阶段验证表述为完整镜像构建成功。
+
+以上为本地验证，不能代替 GitHub hosted CI；远端结果需在推送后确认。

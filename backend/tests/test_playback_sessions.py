@@ -10,6 +10,7 @@ import time
 import uuid
 from pathlib import Path
 
+import psutil
 import pytest
 import pytest_asyncio
 
@@ -535,15 +536,28 @@ async def test_actual_owned_process_suspend_resume_and_stop():
         ]
     )
     try:
-        await asyncio.sleep(1.2)
+        async with asyncio.timeout(10):
+            while process.out_time <= 0:
+                assert process.running, list(process.stderr)
+                await asyncio.sleep(0.05)
+        assert process.process is not None
+        actual = psutil.Process(process.process.pid)
         process.suspend()
-        await asyncio.sleep(0.2)
+        async with asyncio.timeout(5):
+            while actual.status() != psutil.STATUS_STOPPED:
+                await asyncio.sleep(0.05)
+        paused_cpu = actual.cpu_times()
+        # stdout 读取线程仍会消费暂停前的积压；用操作系统状态与 CPU 时间验证暂停。
+        for _ in range(7):
+            await asyncio.sleep(0.1)
+            assert actual.status() == psutil.STATUS_STOPPED
+            assert actual.cpu_times() == paused_cpu
         before = process.out_time
-        await asyncio.sleep(0.7)
-        assert process.out_time == before
         process.resume()
-        await asyncio.sleep(0.8)
-        assert process.out_time > before
+        async with asyncio.timeout(10):
+            while process.out_time <= before or actual.status() == psutil.STATUS_STOPPED:
+                assert process.running, list(process.stderr)
+                await asyncio.sleep(0.05)
         process.suspend()
     finally:
         await process.stop()
