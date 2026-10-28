@@ -1,5 +1,6 @@
-from app.release_parser import parse_release_title
 import pytest
+
+from app.release_parser import parse_release_title
 
 
 def test_parses_ani_release() -> None:
@@ -23,9 +24,15 @@ def test_revision_does_not_change_episode_identity() -> None:
     assert release.revision == 2
 
 
-@pytest.mark.parametrize("marker,episode,revision", [
-    ("01", 1, 1), ("01v2", 1, 2), ("06V3", 6, 3), ("12.5v2", 12.5, 2),
-])
+@pytest.mark.parametrize(
+    "marker,episode,revision",
+    [
+        ("01", 1, 1),
+        ("01v2", 1, 2),
+        ("06V3", 6, 3),
+        ("12.5v2", 12.5, 2),
+    ],
+)
 def test_bracket_episode_and_revision(marker, episode, revision):
     release = parse_release_title(f"[Group] 中文 / Example [{marker}][1080P][简体内嵌]")
     assert release.title == "中文 / Example"
@@ -64,15 +71,18 @@ def test_youjo_senki_second_season() -> None:
     assert "season:roman_suffix" in release.evidence
 
 
-@pytest.mark.parametrize("title,season", [
-    ("幼女战记Ⅱ", 2),
-    ("Example III", 3),
-    ("Example IV", 4),
-    ("Example VIII", 8),
-    ("CLANNAD", 1),
-    ("Example MIX", 1),
-    ("Example II OVA", 0),
-])
+@pytest.mark.parametrize(
+    "title,season",
+    [
+        ("幼女战记Ⅱ", 2),
+        ("Example III", 3),
+        ("Example IV", 4),
+        ("Example VIII", 8),
+        ("CLANNAD", 1),
+        ("Example MIX", 1),
+        ("Example II OVA", 0),
+    ],
+)
 def test_roman_season_suffix_boundaries(title, season):
     assert parse_release_title(f"[Group] {title} - 04 [1080p]").season == season
 

@@ -44,6 +44,11 @@ export type Feed = {
   last_error?: string
   show_metadata?: TmdbMetadata
 }
+export type FeedBatchStopResult = {
+  items: Feed[]
+  stopped_count: number
+  already_stopped_count: number
+}
 export type FeedInspection = { raw_title: string; name: string; kind: "mikan" | "standard"; entries: number }
 export type TmdbCandidate = {
   tmdb_id: number

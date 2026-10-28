@@ -5,6 +5,7 @@ import type { ShowLibrary } from "@/lib/api"
 import { usePlaybackSession } from "@/hooks/use-playback-session"
 import type { PlaybackInfo, SeekPath } from "@/lib/player/types"
 import { clampTime } from "@/lib/player/types"
+import { preferredChineseSubtitle } from "@/lib/player/subtitle-preference"
 import { HlsEngine } from "@/lib/player/hls-engine"
 import { NativeEngine } from "@/lib/player/native-engine"
 import type { PlaybackEngine } from "@/lib/player/engine"
@@ -90,7 +91,8 @@ export function Player({
   useEffect(() => {
     onPreferencesChange({ volume, rate })
   }, [volume, rate, onPreferencesChange])
-  const [subtitleTrack, setSubtitleTrack] = useState("")
+  // Player 随视频重新挂载；同一视频的重试与流切换保留用户选择，包括手动关闭。
+  const [subtitleTrack, setSubtitleTrack] = useState(() => preferredChineseSubtitle(info.subtitle_tracks))
   const [mode, setMode] = useState<Anime4kMode>(preferredMode)
   const [enhanced, setEnhanced] = useState(false)
   const [reason, setReason] = useState<string>()
@@ -627,6 +629,11 @@ export function Player({
       onBlurCapture={revealControls}
       onKeyDownCapture={(event) => {
         if (event.key === "Escape" && panel) {
+          if (
+            event.target instanceof HTMLElement &&
+            event.target.closest('[role="listbox"], [role="combobox"][aria-expanded="true"]')
+          )
+            return
           event.preventDefault()
           event.stopPropagation()
           changePanel(null)

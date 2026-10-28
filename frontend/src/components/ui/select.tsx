@@ -36,11 +36,14 @@ export function SelectContent({
   className,
   children,
   position = "popper",
+  portalContainer,
   ...props
-}: React.ComponentProps<typeof SelectPrimitive.Content>) {
+}: React.ComponentProps<typeof SelectPrimitive.Content> & {
+  portalContainer?: React.ComponentProps<typeof SelectPrimitive.Portal>["container"]
+}) {
   const reducedMotion = useReducedMotion()
   return (
-    <SelectPrimitive.Portal>
+    <SelectPrimitive.Portal container={portalContainer}>
       <SelectPrimitive.Content position={position} sideOffset={6} asChild {...props}>
         <motion.div
           style={{ transformOrigin: "var(--radix-select-content-transform-origin)" }}

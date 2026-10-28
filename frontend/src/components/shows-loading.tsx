@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
+import { Masonry } from "@/components/ui/masonry"
 
 import type { ShowsView } from "@/lib/show-artwork"
 export type { ShowsView } from "@/lib/show-artwork"
@@ -90,38 +91,37 @@ export function ShowsHeader({
 
 function ShowCardSkeleton() {
   return (
-    <Card className="flex h-full min-w-0 flex-col overflow-hidden rounded-panel border-island-border bg-island-background">
-      <div className="relative h-56 overflow-hidden bg-[var(--skeleton)]">
+    <Card className="flex h-[440px] min-w-0 flex-col overflow-hidden rounded-panel border-island-border bg-island-background">
+      <div className="relative h-40 shrink-0 overflow-hidden bg-[var(--skeleton)]">
         <Skeleton className="absolute inset-0 size-full" />
-        <div className="absolute inset-x-4 bottom-4 flex items-end gap-4">
-          <Skeleton className="h-32 w-22 shrink-0 ring-1 ring-white/30" />
+        <div className="absolute inset-x-3 bottom-3 flex items-end gap-3">
+          <Skeleton className="h-24 w-16 shrink-0 ring-1 ring-white/30" />
           <div className="min-w-0 flex-1 pb-1">
-            <Skeleton className="mb-3 h-10 w-3/4" />
-            <Skeleton className="h-6 w-full" />
-            <Skeleton className="mt-1 h-4 w-2/3" />
+            <Skeleton className="mb-2 h-8 w-3/4" />
+            <Skeleton className="h-4 w-full" />
           </div>
         </div>
       </div>
-      <CardContent className="flex flex-1 flex-col p-5">
-        <div className="flex items-center gap-2">
-          <Skeleton className="h-6 w-28" />
+      <CardContent className="flex min-h-0 min-w-0 flex-1 flex-col gap-3 p-4">
+        <div className="flex min-w-0 items-center gap-2">
+          <Skeleton className="h-6 w-20 max-w-full" />
           <Skeleton className="h-4 w-10" />
-          <Skeleton className="ml-auto size-8" />
+          <Skeleton className="ml-auto size-8 shrink-0" />
         </div>
-        <div className="mt-4 grid h-18 content-start gap-2">
+        <div className="grid h-15 content-start gap-2">
           {["w-full", "w-full", "w-3/4"].map((width, index) => (
-            <Skeleton key={index} className={`h-4 ${width}`} />
+            <Skeleton key={index} className={`h-3.5 ${width}`} />
           ))}
         </div>
-        <div className="mt-4 grid grid-cols-2 gap-3 rounded-control border border-border-soft bg-surface/35 p-3">
+        <div className="mt-auto grid shrink-0 grid-cols-2 gap-3 rounded-control border border-border-soft bg-surface/35 p-2.5">
           {[0, 1].map((index) => (
-            <div key={index}>
-              <Skeleton className="h-4 w-16" />
-              <Skeleton className="mt-1 h-4 w-10" />
+            <div key={index} className="min-w-0">
+              <Skeleton className="h-4 w-full" />
+              <Skeleton className="mt-1 h-4 w-8 max-w-full" />
             </div>
           ))}
         </div>
-        <Skeleton className="mt-4 h-10 w-full" />
+        <Skeleton className="h-10 w-full shrink-0" />
       </CardContent>
     </Card>
   )
@@ -179,17 +179,23 @@ export function ShowsLoading({
           {view === "list" ? (
             <ShowsListSkeleton count={count} />
           ) : view === "posters" ? (
-            <div className="show-poster-grid">
+            <Masonry className="show-poster-grid" columnWidth={250} animate={false}>
               {Array.from({ length: count }, (_, index) => (
                 <Skeleton key={index} className="show-poster-tile" />
               ))}
-            </div>
+            </Masonry>
           ) : (
-            <div className="show-card-grid">
+            <Masonry
+              className="show-card-grid"
+              columns="auto-fit"
+              columnWidth={400}
+              contentHeight={440}
+              animate={false}
+            >
               {Array.from({ length: count }, (_, index) => (
                 <ShowCardSkeleton key={index} />
               ))}
-            </div>
+            </Masonry>
           )}
         </div>
       </div>

@@ -71,7 +71,7 @@ from .notifications import (
 from .playback.media import register_library_media
 from .providers.tmdb import scrape_tmdb, search_tmdb
 from .release_parser import parse_release_title
-from .rss_service import FeedRefreshService, describe_rss_exception, inspect_feed
+from .rss_service import FeedRefreshService, FeedStoppedError, describe_rss_exception, inspect_feed
 from .schemas import (
     ApiMessage,
     ArtworkAppearance,
@@ -86,6 +86,8 @@ from .schemas import (
     DownloadTaskRead,
     EpisodeRenameRead,
     EpisodeRenameRequest,
+    FeedBatchStopRequest,
+    FeedBatchStopResult,
     FeedCreate,
     FeedInspectRequest,
     FeedInspectResult,
@@ -220,33 +222,103 @@ async def list_feeds(
     return list(result)
 
 
+async def _stop_feed_sources(session: AsyncSession, source_ids: list[int]) -> FeedBatchStopResult:
+    """先校验整批来源，再在同一事务中停止；重复停止不产生额外事件。"""
+    source_ids = list(dict.fromkeys(source_ids))
+    async with queue_lock:
+        sources = {
+            source.id: source
+            for source in await session.scalars(
+                select(FeedSource).where(FeedSource.id.in_(source_ids))
+            )
+        }
+        missing = [source_id for source_id in source_ids if source_id not in sources]
+        if missing:
+            raise HTTPException(
+                status_code=404,
+                detail={"message": "部分订阅不存在", "source_ids": missing},
+            )
+        stopped_count = 0
+        for source_id in source_ids:
+            source = sources[source_id]
+            if source.active:
+                source.active = False
+                stopped_count += 1
+                record_event(
+                    session,
+                    "feed.updated",
+                    "feed_source",
+                    str(source.id),
+                    {"name": source.name, "active": False},
+                )
+        await commit_and_publish(session)
+        return FeedBatchStopResult(
+            items=[FeedRead.model_validate(sources[source_id]) for source_id in source_ids],
+            stopped_count=stopped_count,
+            already_stopped_count=len(source_ids) - stopped_count,
+        )
+
+
+@router.post("/feeds/batch-stop", response_model=FeedBatchStopResult)
+async def batch_stop_feeds(
+    data: FeedBatchStopRequest,
+    _user: User = Depends(require_user),
+    session: AsyncSession = Depends(get_session),
+) -> FeedBatchStopResult:
+    """批量停止订阅；任一 ID 不存在时整批不作修改，保留已有数据和文件。"""
+    return await _stop_feed_sources(session, data.source_ids)
+
+
+@router.post("/feeds/{source_id}/stop", response_model=FeedRead)
+async def stop_feed(
+    source_id: int,
+    _user: User = Depends(require_user),
+    session: AsyncSession = Depends(get_session),
+) -> FeedRead:
+    """停止订阅刷新和自动投递，保留订阅、下载记录及文件；支持重复调用。"""
+    result = await _stop_feed_sources(session, [source_id])
+    return result.items[0]
+
+
 async def _validate_feed_prerequisites(session: AsyncSession) -> None:
     tmdb = await session.get(TmdbSettings, 1)
     if not tmdb or not (tmdb.encrypted_read_access_token or tmdb.encrypted_api_key):
-        raise HTTPException(status_code=409, detail={
-            "message": "请先填写 TMDB API 读访问令牌或 API Key，两项任选其一。",
-            "settings_path": "/settings#tmdb",
-        })
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": "请先填写 TMDB API 读访问令牌或 API Key，两项任选其一。",
+                "settings_path": "/settings#tmdb",
+            },
+        )
     downloader = await session.scalar(
-        select(DownloaderConfig).where(DownloaderConfig.active.is_(True))
-        .order_by(DownloaderConfig.created_at.desc()).limit(1)
+        select(DownloaderConfig)
+        .where(DownloaderConfig.active.is_(True))
+        .order_by(DownloaderConfig.created_at.desc())
+        .limit(1)
     )
     if downloader is None:
-        raise HTTPException(status_code=409, detail={
-            "message": "请先配置并启用下载器，测试连接成功后再添加订阅。",
-            "settings_path": "/settings#downloader",
-        })
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": "请先配置并启用下载器，测试连接成功后再添加订阅。",
+                "settings_path": "/settings#downloader",
+            },
+        )
     result = await _check_saved_downloader(session, downloader)
     if not result.ok:
-        raise HTTPException(status_code=409, detail={
-            "message": "下载器连接失败，请检查设置并测试连接后再添加订阅。",
-            "settings_path": "/settings#downloader",
-        })
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": "下载器连接失败，请检查设置并测试连接后再添加订阅。",
+                "settings_path": "/settings#downloader",
+            },
+        )
 
 
 @router.post("/feeds/prerequisites", response_model=ApiMessage)
 async def check_feed_prerequisites(
-    _user: User = Depends(require_user), session: AsyncSession = Depends(get_session),
+    _user: User = Depends(require_user),
+    session: AsyncSession = Depends(get_session),
 ) -> ApiMessage:
     await _validate_feed_prerequisites(session)
     return ApiMessage(message="订阅配置检查通过")
@@ -303,23 +375,36 @@ async def create_feed(
         background_tasks.add_task(_complete_feed_setup, source.id, operation.id)
     else:
         await _record_and_publish_event(
-            session, "feed.setup.completed", "feed_source", str(source.id),
+            session,
+            "feed.setup.completed",
+            "feed_source",
+            str(source.id),
             {"name": source.name, "hasTmdb": False},
         )
     return source
 
 
 async def _create_scrape_operation(session, user_id, source, kind):
-    for previous in await session.scalars(select(BackgroundOperation).where(
-        BackgroundOperation.source_id == source.id,
-        BackgroundOperation.kind.in_(["feed_scrape", "metadata_refresh", "artwork_scrape"]),
-        BackgroundOperation.status.in_(ACTIVE),
-    )):
+    for previous in await session.scalars(
+        select(BackgroundOperation).where(
+            BackgroundOperation.source_id == source.id,
+            BackgroundOperation.kind.in_(["feed_scrape", "metadata_refresh", "artwork_scrape"]),
+            BackgroundOperation.status.in_(ACTIVE),
+        )
+    ):
         transition(session, previous, "cancelled", "已被新的刮削请求取代")
     metadata = source.show_metadata
-    return await create_operation(session, user_id, source, kind, context={
-        "tmdb_id": metadata.tmdb_id, "media_type": metadata.media_type, "name": source.name,
-    })
+    return await create_operation(
+        session,
+        user_id,
+        source,
+        kind,
+        context={
+            "tmdb_id": metadata.tmdb_id,
+            "media_type": metadata.media_type,
+            "name": source.name,
+        },
+    )
 
 
 async def _complete_feed_setup(source_id: int, operation_id: str) -> None:
@@ -329,8 +414,13 @@ async def _complete_feed_setup(source_id: int, operation_id: str) -> None:
         async with SessionFactory() as session:
             operation = await session.get(BackgroundOperation, operation_id)
             if operation and operation.status in ACTIVE:
-                transition(session, operation, "failed", "订阅已保存，刮削失败，请重新刮削",
-                           f"{type(exc).__name__}: {exc}")
+                transition(
+                    session,
+                    operation,
+                    "failed",
+                    "订阅已保存，刮削失败，请重新刮削",
+                    f"{type(exc).__name__}: {exc}",
+                )
                 await commit_and_publish(session)
 
 
@@ -356,7 +446,8 @@ async def _run_feed_setup(source_id: int, operation_id: str) -> None:
             select(DownloaderConfig).where(DownloaderConfig.active.is_(True)).limit(1)
         )
         library_root = await get_library_root(
-            session, downloader.library_root if downloader else None,
+            session,
+            downloader.library_root if downloader else None,
         )
         transition(session, operation, "running", f"正在{LABELS[operation.kind]}", attention=False)
         await commit_and_publish(session)
@@ -373,14 +464,18 @@ async def _run_feed_setup(source_id: int, operation_id: str) -> None:
                 existing = existing_directory / f"{kind}{extension}"
                 if existing.is_file():
                     await asyncio.to_thread(
-                        shutil.copy2, existing, staged_directory / existing.name,
+                        shutil.copy2,
+                        existing,
+                        staged_directory / existing.name,
                     )
-        await _scrape_feed_result(source_id, operation_id, feed_name, tmdb_id,
-                                  media_type, library_root, staging)
+        await _scrape_feed_result(
+            source_id, operation_id, feed_name, tmdb_id, media_type, library_root, staging
+        )
 
 
-async def _scrape_feed_result(source_id, operation_id, feed_name, tmdb_id,
-                              media_type, library_root, staging):
+async def _scrape_feed_result(
+    source_id, operation_id, feed_name, tmdb_id, media_type, library_root, staging
+):
 
     # 网络请求期间不持有数据库事务，订阅列表可以立即读取和编辑。
     metadata_error: str | None = None
@@ -389,7 +484,9 @@ async def _scrape_feed_result(source_id, operation_id, feed_name, tmdb_id,
     except Exception as exc:
         metadata_error = f"{exc.__class__.__name__}: {str(exc).strip()}".rstrip(": ")
         metadata = TmdbMetadata(
-            tmdb_id=tmdb_id, media_type=media_type, title=feed_name,
+            tmdb_id=tmdb_id,
+            media_type=media_type,
+            title=feed_name,
             href=f"{settings.tmdb_base_url}/{media_type}/{tmdb_id}",
         )
     try:
@@ -401,7 +498,9 @@ async def _scrape_feed_result(source_id, operation_id, feed_name, tmdb_id,
     except Exception as exc:
         artwork = ArtworkResult(
             directory=str(Path(library_root) / safe_folder_name(feed_name)),
-            poster_path=None, fanart_path=None, clearlogo_path=None,
+            poster_path=None,
+            fanart_path=None,
+            clearlogo_path=None,
             status="failed",
             error=f"{exc.__class__.__name__}: {str(exc).strip()}".rstrip(": "),
             scraped_at=datetime.now(UTC),
@@ -412,16 +511,27 @@ async def _scrape_feed_result(source_id, operation_id, feed_name, tmdb_id,
         if operation is None or operation.status not in ACTIVE:
             return
         source = await session.get(FeedSource, source_id)
-        if (source is None or source.show_metadata is None or source.artwork is None
-                or source.show_metadata.tmdb_id != tmdb_id
-                or source.show_metadata.media_type != media_type or source.name != feed_name):
+        if (
+            source is None
+            or source.show_metadata is None
+            or source.artwork is None
+            or source.show_metadata.tmdb_id != tmdb_id
+            or source.show_metadata.media_type != media_type
+            or source.name != feed_name
+        ):
             transition(session, operation, "cancelled", "订阅关联已改变，旧刮削已取消")
             await commit_and_publish(session)
             return
         if metadata_error is None:
             for field in (
-                "title", "overview", "poster_url", "release_date", "episode_count", "rating",
-                "vote_count", "href",
+                "title",
+                "overview",
+                "poster_url",
+                "release_date",
+                "episode_count",
+                "rating",
+                "vote_count",
+                "href",
             ):
                 setattr(source.show_metadata, field, getattr(metadata, field))
             source.show_metadata.genres_json = json.dumps(metadata.genres, ensure_ascii=False)
@@ -441,12 +551,26 @@ async def _scrape_feed_result(source_id, operation_id, feed_name, tmdb_id,
         label = LABELS[operation.kind]
         result = {"completed": "完成", "partial": "部分完成，图片不完整", "failed": "失败"}
         result_status = artwork.status if artwork.status in result else "failed"
-        transition(session, operation, result_status,
-                   f"订阅已保存，{label}{result[result_status]}", artwork.error)
+        transition(
+            session,
+            operation,
+            result_status,
+            f"订阅已保存，{label}{result[result_status]}",
+            artwork.error,
+        )
         await _record_and_publish_event(
-            session, f"feed.setup.{result_status}", "feed_source", str(source.id),
-            {"name": source.name, "hasTmdb": True, "error": artwork.error,
-             "kind": operation.kind, "operation_id": operation.id, "source_id": source.id},
+            session,
+            f"feed.setup.{result_status}",
+            "feed_source",
+            str(source.id),
+            {
+                "name": source.name,
+                "hasTmdb": True,
+                "error": artwork.error,
+                "kind": operation.kind,
+                "operation_id": operation.id,
+                "source_id": source.id,
+            },
         )
 
 
@@ -498,7 +622,10 @@ async def update_feed(
 
 
 async def _update_feed(
-    source_id: int, data: FeedUpdate, session: AsyncSession, background_tasks: BackgroundTasks,
+    source_id: int,
+    data: FeedUpdate,
+    session: AsyncSession,
+    background_tasks: BackgroundTasks,
     user_id: int,
 ) -> FeedSource:
     source = await session.get(FeedSource, source_id)
@@ -514,13 +641,17 @@ async def _update_feed(
     previous_name = source.name
     new_url = str(values["url"]) if "url" in values else source.url
     if new_url != source.url:
-        duplicate = await session.scalar(select(FeedSource.id).where(
-            FeedSource.url == new_url, FeedSource.id != source_id,
-        ))
+        duplicate = await session.scalar(
+            select(FeedSource.id).where(
+                FeedSource.url == new_url,
+                FeedSource.id != source_id,
+            )
+        )
         if duplicate is not None:
             raise HTTPException(status_code=409, detail="该 RSS 源已经存在")
-    if (new_url != source.url or ("excluded_keywords" in values
-            and values["excluded_keywords"] != source.excluded_keywords)):
+    if new_url != source.url or (
+        "excluded_keywords" in values and values["excluded_keywords"] != source.excluded_keywords
+    ):
         # 新地址/筛选条件必须重新拉取完整 RSS，不能复用旧的 304 缓存。
         source.etag = None
         source.last_modified = None
@@ -537,7 +668,10 @@ async def _update_feed(
 
         try:
             migrating = await schedule_season_change(
-                session, source, source.season, rename_to=source.name if name_changed else None,
+                session,
+                source,
+                source.season,
+                rename_to=source.name if name_changed else None,
                 change_season=season_changed,
             )
             if name_changed:
@@ -552,8 +686,11 @@ async def _update_feed(
         current = source.show_metadata
         if tmdb is None:
             source.show_metadata = None
-        elif (current is None or current.tmdb_id != tmdb["tmdb_id"]
-                or current.media_type != tmdb["media_type"]):
+        elif (
+            current is None
+            or current.tmdb_id != tmdb["tmdb_id"]
+            or current.media_type != tmdb["media_type"]
+        ):
             tmdb_changed = True
             if current is None:
                 current = ShowMetadata()
@@ -562,35 +699,63 @@ async def _update_feed(
             current.media_type = tmdb["media_type"]
             current.title = source.name
             current.href = f"{settings.tmdb_base_url}/{current.media_type}/{current.tmdb_id}"
-            for field in ("overview", "poster_url", "release_date", "episode_count",
-                          "rating", "vote_count"):
+            for field in (
+                "overview",
+                "poster_url",
+                "release_date",
+                "episode_count",
+                "rating",
+                "vote_count",
+            ):
                 setattr(current, field, None)
             current.genres_json = "[]"
             if source.artwork is None:
-                source.artwork = ShowArtwork(directory=str(
-                    Path(await get_library_root(session)) / safe_folder_name(source.name),
-                ))
+                source.artwork = ShowArtwork(
+                    directory=str(
+                        Path(await get_library_root(session)) / safe_folder_name(source.name),
+                    )
+                )
             source.artwork.status = "pending"
             source.artwork.last_error = None
     try:
         operations = []
         if migrating:
-            operations.append(await create_operation(
-                session, user_id, source, "library_migration", migrations=migrating,
-                context={"previous_name": previous_name, "name": source.name,
-                         "previous_season": previous_season, "season": source.season},
-            ))
+            operations.append(
+                await create_operation(
+                    session,
+                    user_id,
+                    source,
+                    "library_migration",
+                    migrations=migrating,
+                    context={
+                        "previous_name": previous_name,
+                        "name": source.name,
+                        "previous_season": previous_season,
+                        "season": source.season,
+                    },
+                )
+            )
         if tmdb_changed:
-            operations.append(await _create_scrape_operation(
-                session, user_id, source, "metadata_refresh",
-            ))
+            operations.append(
+                await _create_scrape_operation(
+                    session,
+                    user_id,
+                    source,
+                    "metadata_refresh",
+                )
+            )
         await commit_and_publish(session)
     except IntegrityError as exc:
         await session.rollback()
         raise HTTPException(status_code=409, detail="该 RSS 源已经存在") from exc
     await session.refresh(source)
-    await _record_and_publish_event(session, "feed.updated", "feed_source", str(source.id),
-                                    {"name": source.name, "library_migrations": len(migrating)})
+    await _record_and_publish_event(
+        session,
+        "feed.updated",
+        "feed_source",
+        str(source.id),
+        {"name": source.name, "library_migrations": len(migrating)},
+    )
     source.background_operation_ids = [operation.id for operation in operations]
     if tmdb_changed:
         background_tasks.add_task(_complete_feed_setup, source.id, operations[-1].id)
@@ -608,9 +773,13 @@ async def delete_feed(
         raise HTTPException(status_code=404, detail="RSS 源不存在")
     async with queue_lock:
         await cancel_source_operations(session, source_id)
-        await session.execute(delete(DownloadJob).where(DownloadJob.item_id.in_(
-            select(FeedItem.id).where(FeedItem.source_id == source_id),
-        )))
+        await session.execute(
+            delete(DownloadJob).where(
+                DownloadJob.item_id.in_(
+                    select(FeedItem.id).where(FeedItem.source_id == source_id),
+                )
+            )
+        )
         await session.delete(source)
         await commit_and_publish(session)
         from .playback.leases import finish_mutation
@@ -633,6 +802,8 @@ async def refresh_feed(
         if source.kind == "magnet":
             raise HTTPException(409, "磁力合集是单次下载，无需刷新 RSS")
         return await FeedRefreshService(session).refresh(source)
+    except FeedStoppedError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except HTTPException:
         raise
     except Exception as exc:
@@ -670,11 +841,19 @@ def _show_read(source: FeedSource, discovered_items: int) -> ShowRead:
         discovered_items=discovered_items,
         artwork_status=artwork.status if artwork else "missing",
         artwork_version=(
-            "-".join(filter(None, [
-                artwork.scraped_at.isoformat() if artwork.scraped_at else None,
-                artwork.file_version,
-            ])) or None
-        ) if artwork else None,
+            "-".join(
+                filter(
+                    None,
+                    [
+                        artwork.scraped_at.isoformat() if artwork.scraped_at else None,
+                        artwork.file_version,
+                    ],
+                )
+            )
+            or None
+        )
+        if artwork
+        else None,
         artwork_versions=artwork_versions,
         poster_ready="poster" in artwork_versions,
         fanart_ready="fanart" in artwork_versions,
@@ -701,14 +880,17 @@ async def list_shows(
 @router.get("/shows/{source_id}", response_model=ShowDetailRead)
 async def get_show_detail(
     source_id: int,
-    _user: User = Depends(require_user), session: AsyncSession = Depends(get_session),
+    _user: User = Depends(require_user),
+    session: AsyncSession = Depends(get_session),
 ) -> ShowDetailRead:
     source = await session.get(FeedSource, source_id)
     if source is None:
         raise HTTPException(404, "番剧订阅不存在")
-    count = await session.scalar(select(func.count(FeedItem.id)).where(
-        FeedItem.source_id == source_id,
-    ))
+    count = await session.scalar(
+        select(func.count(FeedItem.id)).where(
+            FeedItem.source_id == source_id,
+        )
+    )
     metadata = source.show_metadata
     try:
         genres = json.loads(metadata.genres_json) if metadata else []
@@ -718,7 +900,8 @@ async def get_show_detail(
         genres = []
     return ShowDetailRead(
         **_show_read(source, count or 0).model_dump(),
-        subscription=FeedRead.model_validate(source), genres=genres,
+        subscription=FeedRead.model_validate(source),
+        genres=genres,
         vote_count=metadata.vote_count if metadata else None,
         metadata_scraped_at=metadata.scraped_at if metadata else None,
     )
@@ -727,34 +910,53 @@ async def get_show_detail(
 @router.get("/shows/{source_id}/library", response_model=ShowLibraryRead)
 async def get_show_library(
     source_id: int,
-    _user: User = Depends(require_user), session: AsyncSession = Depends(get_session),
+    _user: User = Depends(require_user),
+    session: AsyncSession = Depends(get_session),
 ) -> ShowLibraryRead:
     source = await session.get(FeedSource, source_id)
     if source is None:
         raise HTTPException(404, "番剧订阅不存在")
-    directory = Path(source.artwork.directory) if source.artwork else (
-        Path(await get_library_root(session)) / safe_folder_name(source.name)
+    directory = (
+        Path(source.artwork.directory)
+        if source.artwork
+        else (Path(await get_library_root(session)) / safe_folder_name(source.name))
     )
     try:
         library = await asyncio.to_thread(
-            scan_show_library, directory, source.season,
+            scan_show_library,
+            directory,
+            source.season,
             bool(source.show_metadata and source.show_metadata.media_type == "movie"),
         )
         await register_library_media(session, source_id, library, directory)
         progress = {}
         if user_id := getattr(_user, "id", None):
-            progress = {item.media_id: item for item in await session.scalars(
-                select(PlaybackProgress).join(MediaFile).where(
-                    PlaybackProgress.user_id == user_id, MediaFile.source_id == source_id,
-                ),
-            )}
-        thumbnails = {item.video_path: item for item in await session.scalars(
-            select(EpisodeThumbnail).where(EpisodeThumbnail.source_id == source_id),
-        )}
+            progress = {
+                item.media_id: item
+                for item in await session.scalars(
+                    select(PlaybackProgress)
+                    .join(MediaFile)
+                    .where(
+                        PlaybackProgress.user_id == user_id,
+                        MediaFile.source_id == source_id,
+                    ),
+                )
+            }
+        thumbnails = {
+            item.video_path: item
+            for item in await session.scalars(
+                select(EpisodeThumbnail).where(EpisodeThumbnail.source_id == source_id),
+            )
+        }
         renaming = set()
-        for raw_plan in await session.scalars(select(DownloadJob.plan).join(FeedItem).where(
-            FeedItem.source_id == source_id, DownloadJob.plan.contains('"episode_rename"'),
-        )):
+        for raw_plan in await session.scalars(
+            select(DownloadJob.plan)
+            .join(FeedItem)
+            .where(
+                FeedItem.source_id == source_id,
+                DownloadJob.plan.contains('"episode_rename"'),
+            )
+        ):
             pending = json.loads(raw_plan).get("episode_rename", {})
             renaming.update([pending.get("relative"), pending.get("target")])
         for group in library.seasons:
@@ -763,8 +965,10 @@ async def get_show_library(
                 saved = progress.get(episode.media_id)
                 if saved:
                     episode.progress = {
-                        "position": saved.position, "duration": saved.duration,
-                        "completed": saved.completed, "updated_at": saved.updated_at,
+                        "position": saved.position,
+                        "duration": saved.duration,
+                        "completed": saved.completed,
+                        "updated_at": saved.updated_at,
                     }
                 thumbnail = thumbnails.get(episode.path)
                 if thumbnail:
@@ -781,8 +985,11 @@ async def get_show_library(
 
 @router.post("/shows/{source_id}/episodes/rename", response_model=EpisodeRenameRead)
 async def rename_show_episode(
-    source_id: int, data: EpisodeRenameRequest, response: Response,
-    _user: User = Depends(require_user), session: AsyncSession = Depends(get_session),
+    source_id: int,
+    data: EpisodeRenameRequest,
+    response: Response,
+    _user: User = Depends(require_user),
+    session: AsyncSession = Depends(get_session),
 ) -> EpisodeRenameRead:
     from .playback.media import MediaError
 
@@ -801,28 +1008,41 @@ async def rename_show_episode(
     response.status_code = 202 if waiting else 200
     return EpisodeRenameRead(
         message="已提交改名，完成后列表会自动更新" if waiting else "文件名已修改",
-        path=pending["target"], filename=data.filename, pending=waiting,
+        path=pending["target"],
+        filename=data.filename,
+        pending=waiting,
     )
 
 
-@router.head("/shows/{source_id}/thumbnails/{thumbnail_id}", response_class=FileResponse,
-             include_in_schema=False)
+@router.head(
+    "/shows/{source_id}/thumbnails/{thumbnail_id}",
+    response_class=FileResponse,
+    include_in_schema=False,
+)
 @router.get("/shows/{source_id}/thumbnails/{thumbnail_id}", response_class=FileResponse)
 async def episode_thumbnail_file(
-    source_id: int, thumbnail_id: int, request: Request,
-    _user: User = Depends(require_user), session: AsyncSession = Depends(get_session),
+    source_id: int,
+    thumbnail_id: int,
+    request: Request,
+    _user: User = Depends(require_user),
+    session: AsyncSession = Depends(get_session),
 ) -> Response:
     source = await session.get(FeedSource, source_id)
     thumbnail = await session.get(EpisodeThumbnail, thumbnail_id)
     if source is None or thumbnail is None or thumbnail.source_id != source_id:
         raise HTTPException(404, "单集缩略图不存在")
-    directory = Path(source.artwork.directory) if source.artwork else (
-        Path(await get_library_root(session)) / safe_folder_name(source.name)
+    directory = (
+        Path(source.artwork.directory)
+        if source.artwork
+        else (Path(await get_library_root(session)) / safe_folder_name(source.name))
     )
     try:
         path = await asyncio.to_thread(local_image, directory, thumbnail.image_path)
         return await asyncio.to_thread(
-            cached_image_response, request, path, Path(thumbnail.image_path).as_posix(),
+            cached_image_response,
+            request,
+            path,
+            Path(thumbnail.image_path).as_posix(),
         )
     except (OSError, ValueError, RuntimeError) as exc:
         raise HTTPException(404, "单集缩略图暂时不可用") from exc
@@ -830,18 +1050,26 @@ async def episode_thumbnail_file(
 
 @router.get("/shows/{source_id}/releases", response_model=ShowReleasePage)
 async def list_show_releases(
-    source_id: int, page: int = Query(1, ge=1), page_size: int = Query(20, ge=1, le=100),
-    _user: User = Depends(require_user), session: AsyncSession = Depends(get_session),
+    source_id: int,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    _user: User = Depends(require_user),
+    session: AsyncSession = Depends(get_session),
 ) -> ShowReleasePage:
     if await session.scalar(select(FeedSource.id).where(FeedSource.id == source_id)) is None:
         raise HTTPException(404, "番剧订阅不存在")
     condition = FeedItem.source_id == source_id
     total = await session.scalar(select(func.count(FeedItem.id)).where(condition))
     rows = await session.scalars(
-        select(FeedItem).where(condition).order_by(
+        select(FeedItem)
+        .where(condition)
+        .order_by(
             FeedItem.published_at.desc().nulls_last(),
-            FeedItem.discovered_at.desc(), FeedItem.id.desc(),
-        ).offset((page - 1) * page_size).limit(page_size),
+            FeedItem.discovered_at.desc(),
+            FeedItem.id.desc(),
+        )
+        .offset((page - 1) * page_size)
+        .limit(page_size),
     )
     items = []
     for row in rows:
@@ -849,10 +1077,16 @@ async def list_show_releases(
             parsed = ParsedRelease.model_validate_json(row.parse_data)
         except (ValidationError, ValueError, TypeError):
             parsed = None
-        items.append(ShowReleaseRead(
-            id=row.id, title=row.title, published_at=row.published_at,
-            discovered_at=row.discovered_at, parse_status=row.parse_status, parsed=parsed,
-        ))
+        items.append(
+            ShowReleaseRead(
+                id=row.id,
+                title=row.title,
+                published_at=row.published_at,
+                discovered_at=row.discovered_at,
+                parse_status=row.parse_status,
+                parsed=parsed,
+            )
+        )
     return ShowReleasePage(items=items, total=total or 0, page=page, page_size=page_size)
 
 
@@ -863,9 +1097,7 @@ async def list_show_item_titles(
     session: AsyncSession = Depends(get_session),
 ) -> list[str]:
     """返回指定番剧 RSS 中已发现条目的原始标题。"""
-    source_exists = await session.scalar(
-        select(FeedSource.id).where(FeedSource.id == source_id)
-    )
+    source_exists = await session.scalar(select(FeedSource.id).where(FeedSource.id == source_id))
     if source_exists is None:
         raise HTTPException(status_code=404, detail="番剧订阅不存在")
 
@@ -892,15 +1124,19 @@ async def rescrape_show_artwork(
         if source.show_metadata is None:
             raise HTTPException(409, "该订阅尚未关联 TMDB，无法刮削图片")
         if source.artwork is None:
-            source.artwork = ShowArtwork(directory=str(
-                Path(await get_library_root(session)) / safe_folder_name(source.name),
-            ))
+            source.artwork = ShowArtwork(
+                directory=str(
+                    Path(await get_library_root(session)) / safe_folder_name(source.name),
+                )
+            )
         operation = await _create_scrape_operation(session, _user.id, source, "artwork_scrape")
         source.artwork.status = "pending"
         await commit_and_publish(session)
-        count = await session.scalar(select(func.count(FeedItem.id)).where(
-            FeedItem.source_id == source.id,
-        ))
+        count = await session.scalar(
+            select(func.count(FeedItem.id)).where(
+                FeedItem.source_id == source.id,
+            )
+        )
         result = _show_read(source, count or 0)
         result.background_operation_ids = [operation.id]
         background_tasks.add_task(_complete_feed_setup, source.id, operation.id)
@@ -909,8 +1145,11 @@ async def rescrape_show_artwork(
 
 @router.post("/shows/{source_id}/artwork/{kind}", response_model=ShowRead)
 async def upload_show_artwork(
-    source_id: int, kind: str, request: Request,
-    _user: User = Depends(require_user), session: AsyncSession = Depends(get_session),
+    source_id: int,
+    kind: str,
+    request: Request,
+    _user: User = Depends(require_user),
+    session: AsyncSession = Depends(get_session),
 ) -> ShowRead:
     if kind not in {"poster", "fanart", "clearlogo"}:
         raise HTTPException(422, "不支持的图片类型")
@@ -931,18 +1170,31 @@ async def upload_show_artwork(
         setattr(artwork, f"{kind}_path", str(path))
         artwork.directory = str(directory)
         artwork.scraped_at = datetime.now(UTC)
-        artwork.status = "completed" if all(
-            value and Path(value).is_file() for value in
-            [artwork.poster_path, artwork.fanart_path, artwork.clearlogo_path]
-        ) else "partial"
+        artwork.status = (
+            "completed"
+            if all(
+                value and Path(value).is_file()
+                for value in [artwork.poster_path, artwork.fanart_path, artwork.clearlogo_path]
+            )
+            else "partial"
+        )
         artwork.last_error = None
-        await _record_and_publish_event(session, "artwork.upload.completed", "feed_source",
-                                        str(source_id), {"name": source.name, "kind": kind})
+        await _record_and_publish_event(
+            session,
+            "artwork.upload.completed",
+            "feed_source",
+            str(source_id),
+            {"name": source.name, "kind": kind},
+        )
     except (ValueError, OSError, subprocess.SubprocessError, HTTPException) as exc:
         detail = exc.detail if isinstance(exc, HTTPException) else str(exc)
-        await _record_and_publish_event(session, "artwork.upload.failed", "feed_source",
-                                        str(source_id), {"name": source.name, "kind": kind,
-                                                         "error": detail})
+        await _record_and_publish_event(
+            session,
+            "artwork.upload.failed",
+            "feed_source",
+            str(source_id),
+            {"name": source.name, "kind": kind, "error": detail},
+        )
         if isinstance(exc, HTTPException):
             raise
         raise HTTPException(422, "图片上传失败，请确认文件有效并查看实时日志。") from exc
@@ -952,8 +1204,9 @@ async def upload_show_artwork(
     return _show_read(source, count or 0)
 
 
-@router.head("/shows/{source_id}/artwork/{kind}", response_class=FileResponse,
-             include_in_schema=False)
+@router.head(
+    "/shows/{source_id}/artwork/{kind}", response_class=FileResponse, include_in_schema=False
+)
 @router.get("/shows/{source_id}/artwork/{kind}", response_class=FileResponse)
 async def show_artwork_file(
     source_id: int,
@@ -979,7 +1232,8 @@ async def show_artwork_file(
 
 @router.get("/shows/{source_id}/artwork/clearlogo/appearance", response_model=ArtworkAppearance)
 async def clearlogo_appearance(
-    source_id: int, _user: User = Depends(require_user),
+    source_id: int,
+    _user: User = Depends(require_user),
     session: AsyncSession = Depends(get_session),
 ) -> ArtworkAppearance:
     source = await session.get(FeedSource, source_id)
@@ -1001,8 +1255,10 @@ async def open_show_folder(
     artwork = source.artwork if source else None
     if source is None:
         raise HTTPException(status_code=404, detail="番剧订阅不存在")
-    directory = Path(artwork.directory) if artwork else (
-        Path(await get_library_root(session)) / safe_folder_name(source.name)
+    directory = (
+        Path(artwork.directory)
+        if artwork
+        else (Path(await get_library_root(session)) / safe_folder_name(source.name))
     )
     directory = directory.resolve()
     if not directory.is_dir():
@@ -1072,7 +1328,8 @@ async def update_downloader(
 
 @router.post("/downloaders/test", response_model=DownloaderTestResult)
 async def test_downloader_payload(
-    data: DownloaderCreate, _user: User = Depends(require_user),
+    data: DownloaderCreate,
+    _user: User = Depends(require_user),
     session: AsyncSession = Depends(get_session),
 ) -> DownloaderTestResult:
     result = await test_downloader(
@@ -1084,10 +1341,13 @@ async def test_downloader_payload(
 
 
 def _record_downloader_test(
-    session: AsyncSession, result: DownloaderTestResult, downloader_id: int | None = None,
+    session: AsyncSession,
+    result: DownloaderTestResult,
+    downloader_id: int | None = None,
 ) -> None:
     record_event(
-        session, f"downloader.test.{'completed' if result.ok else 'failed'}",
+        session,
+        f"downloader.test.{'completed' if result.ok else 'failed'}",
         "downloader" if downloader_id is not None else None,
         str(downloader_id) if downloader_id is not None else None,
         {"kind": result.kind, "message": result.message, "version": result.version},
@@ -1107,7 +1367,10 @@ async def test_saved_downloader(
 
 
 async def _check_saved_downloader(
-    session: AsyncSession, downloader: DownloaderConfig, *, log_test: bool = False,
+    session: AsyncSession,
+    downloader: DownloaderConfig,
+    *,
+    log_test: bool = False,
 ) -> DownloaderTestResult:
     result = await test_downloader(
         downloader.kind,
@@ -1166,8 +1429,10 @@ async def retry_download(
             parsed = ParsedRelease.model_validate_json(item.parse_data)
         except ValueError as exc:
             raise HTTPException(422, "发布解析信息无效，请重新解析后再下载") from exc
-        season = parsed.season if "manual_review" in parsed.evidence else (
-            source.season if source.season is not None else parsed.season
+        season = (
+            parsed.season
+            if "manual_review" in parsed.evidence
+            else (source.season if source.season is not None else parsed.season)
         )
         if season is None or parsed.episode_start is None:
             raise HTTPException(422, "缺少季度或集数，无法自动下载")
@@ -1180,19 +1445,30 @@ async def retry_download(
                 raise HTTPException(409, "修订版替换尚未结束，请先恢复原下载任务")
         if job and job.item_id != item.id:
             raise HTTPException(409, "同一种子已有其他下载记录，请在原记录上重试")
-        config = (await session.get(DownloaderConfig, job.downloader_id) if job else
-                  await session.scalar(select(DownloaderConfig).where(
-                      DownloaderConfig.active.is_(True), DownloaderConfig.kind == "qbittorrent",
-                      DownloaderConfig.organize_strategy == "downloader_managed",
-                  ).order_by(DownloaderConfig.id)))
+        config = (
+            await session.get(DownloaderConfig, job.downloader_id)
+            if job
+            else await session.scalar(
+                select(DownloaderConfig)
+                .where(
+                    DownloaderConfig.active.is_(True),
+                    DownloaderConfig.kind == "qbittorrent",
+                    DownloaderConfig.organize_strategy == "downloader_managed",
+                )
+                .order_by(DownloaderConfig.id)
+            )
+        )
         if not config or not config.active or config.kind != "qbittorrent":
             raise HTTPException(409, "请先配置并启用 qBittorrent 下载器")
         if config.organize_strategy != "downloader_managed":
             raise HTTPException(409, "请将下载器整理策略设为下载器管理")
         try:
             snapshot = await get_qbittorrent_snapshot(
-                config.base_url, config.username, decrypt_secret(config.encrypted_secret),
-                config.verify_tls, [info_hash],
+                config.base_url,
+                config.username,
+                decrypt_secret(config.encrypted_secret),
+                config.verify_tls,
+                [info_hash],
             )
         except Exception as exc:
             raise HTTPException(503, "无法连接 qBittorrent，请检查下载器连接后重试") from exc
@@ -1204,22 +1480,30 @@ async def retry_download(
             except ValueError as exc:
                 raise HTTPException(422, str(exc)) from exc
             job = DownloadJob(
-                item_id=item.id, info_hash=info_hash, downloader_id=config.id,
-                target_root=root, title=safe_folder_name(
+                item_id=item.id,
+                info_hash=info_hash,
+                downloader_id=config.id,
+                target_root=root,
+                title=safe_folder_name(
                     parsed.title if "manual_review" in parsed.evidence else source.name
-                ), season=season,
+                ),
+                season=season,
             )
             session.add(job)
             await session.flush()
-            await notify_task(session, item, "download_added", source=source,
-                              user_id=getattr(_user, "id", None))
+            await notify_task(
+                session, item, "download_added", source=source, user_id=getattr(_user, "id", None)
+            )
         job.state = "queued"
         job.plan = None
         job.last_error = None
         job.retry_attempts = 0
         job.next_retry_at = None
         await _record_and_publish_event(
-            session, "download.retry.requested", "feed_item", str(item.id),
+            session,
+            "download.retry.requested",
+            "feed_item",
+            str(item.id),
             {"info_hash": info_hash},
         )
     return ApiMessage(message="已重新加入下载队列，将在下一轮投递至 qBittorrent")
@@ -1236,8 +1520,11 @@ async def retry_download_automation(
         job = await session.scalar(select(DownloadJob).where(DownloadJob.item_id == item_id))
         if not job:
             raise HTTPException(404, "自动下载任务不存在")
-        if job.state not in {"queued", "metadata", "organizing", "moving",
-                             "upgrading", "season_changing"} or not job.last_error:
+        if (
+            job.state
+            not in {"queued", "metadata", "organizing", "moving", "upgrading", "season_changing"}
+            or not job.last_error
+        ):
             raise HTTPException(409, "此任务当前无需重试自动下载")
         item = await session.get(FeedItem, item_id)
         source = await session.get(FeedSource, item.source_id) if item else None
@@ -1246,7 +1533,10 @@ async def retry_download_automation(
             raise HTTPException(409, "请先启用对应的下载器和订阅")
         job.next_retry_at = None
         await _record_and_publish_event(
-            session, "download.automation.retry.requested", "feed_item", str(item_id),
+            session,
+            "download.automation.retry.requested",
+            "feed_item",
+            str(item_id),
             {"title": item.title},
         )
     return ApiMessage(message="已安排立即重试，将在下一轮检查下载器后继续")
@@ -1307,17 +1597,19 @@ async def download_center(
         downloaded = max(0, min(size, size - remaining))
         tasks.append(
             DownloadTaskRead(
-                review_required=item.parse_status != "ignored" and (
+                review_required=item.parse_status != "ignored"
+                and (
                     item.parse_status == "needs_review" or bool(job and job.state == "needs_review")
                 ),
                 source_id=item.source_id,
-                automation_state=job.state if job else (
-                    "superseded" if item.parse_status == "superseded" else None
-                ),
+                automation_state=job.state
+                if job
+                else ("superseded" if item.parse_status == "superseded" else None),
                 automation_error=job.last_error if job else None,
                 retry_attempts=job.retry_attempts if job else 0,
-                next_retry_at=(job.next_retry_at.replace(tzinfo=UTC)
-                               if job and job.next_retry_at else None),
+                next_retry_at=(
+                    job.next_retry_at.replace(tzinfo=UTC) if job and job.next_retry_at else None
+                ),
                 id=item.id,
                 title=item.title,
                 source_name=source_name,
@@ -1389,11 +1681,15 @@ async def dashboard(
     discovered_items = int(await session.scalar(select(func.count(FeedItem.id))) or 0)
     needs_review = int(
         await session.scalar(
-            select(func.count(FeedItem.id)).outerjoin(
-                DownloadJob, DownloadJob.item_id == FeedItem.id,
-            ).where(FeedItem.parse_status != "ignored", (
-                (FeedItem.parse_status == "needs_review") | (DownloadJob.state == "needs_review")
-            ))
+            select(func.count(FeedItem.id))
+            .outerjoin(
+                DownloadJob,
+                DownloadJob.item_id == FeedItem.id,
+            )
+            .where(
+                FeedItem.parse_status != "ignored",
+                ((FeedItem.parse_status == "needs_review") | (DownloadJob.state == "needs_review")),
+            )
         )
         or 0
     )
@@ -1448,15 +1744,13 @@ async def list_logs(
         query = query.where(DomainEvent.payload.contains(operation_id))
     if source_id:
         query = query.where(
-            ((DomainEvent.resource_type == "feed_source") &
-             (DomainEvent.resource_id == str(source_id))) |
-            (func.json_extract(DomainEvent.payload, "$.source_id") == source_id)
+            (
+                (DomainEvent.resource_type == "feed_source")
+                & (DomainEvent.resource_id == str(source_id))
+            )
+            | (func.json_extract(DomainEvent.payload, "$.source_id") == source_id)
         )
-    events = list(
-        await session.scalars(
-            query.order_by(DomainEvent.id.desc()).limit(safe_limit)
-        )
-    )
+    events = list(await session.scalars(query.order_by(DomainEvent.id.desc()).limit(safe_limit)))
     result: list[LogRead] = []
     for event in events:
         payload = json.loads(event.payload)
@@ -1469,9 +1763,13 @@ async def list_logs(
                 scope=scope,
                 event_type=event.event_type,
                 message=message,
-                source_id=payload.get("source_id") or (
-                    int(event.resource_id) if event.resource_type == "feed_source" and
-                    event.resource_id and event.resource_id.isdigit() else None
+                source_id=payload.get("source_id")
+                or (
+                    int(event.resource_id)
+                    if event.resource_type == "feed_source"
+                    and event.resource_id
+                    and event.resource_id.isdigit()
+                    else None
                 ),
                 operation_id=payload.get("operation_id"),
             )
@@ -1506,8 +1804,10 @@ async def event_stream(
 
     async def generate() -> AsyncIterator[str]:
         for event in historical:
-            if (event.event_type == "notification.changed"
-                    and json.loads(event.payload).get("user_id") != _user.id):
+            if (
+                event.event_type == "notification.changed"
+                and json.loads(event.payload).get("user_id") != _user.id
+            ):
                 continue
             message = EventMessage(
                 id=event.id,
@@ -1523,8 +1823,10 @@ async def event_stream(
             while not await request.is_disconnected():
                 try:
                     message = await asyncio.wait_for(queue.get(), timeout=15)
-                    if (message.event_type == "notification.changed"
-                            and message.payload.get("user_id") != _user.id):
+                    if (
+                        message.event_type == "notification.changed"
+                        and message.payload.get("user_id") != _user.id
+                    ):
                         continue
                     yield message.as_sse()
                     yield message.as_sse("log")

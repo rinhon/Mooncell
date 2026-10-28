@@ -63,13 +63,20 @@ async def test_mapped_remote_paths_and_qb_save_and_download_paths_are_protected(
 
     def handle(request):
         calls.append(request.url.path)
-        return httpx.Response(200, json=[{
-            "save_path": "/media/library/.mooncell/active-save",
-            "download_path": "/media/library/.mooncell/active-download",
-        }, {"save_path": "/other/library"}])
+        return httpx.Response(
+            200,
+            json=[
+                {
+                    "save_path": "/media/library/.mooncell/active-save",
+                    "download_path": "/media/library/.mooncell/active-download",
+                },
+                {"save_path": "/other/library"},
+            ],
+        )
 
-    async with httpx.AsyncClient(base_url="http://qb.test",
-                                 transport=httpx.MockTransport(handle)) as client:
+    async with httpx.AsyncClient(
+        base_url="http://qb.test", transport=httpx.MockTransport(handle)
+    ) as client:
         assert await cleanup_temporary_directories(client, "/media/library", config) == 2
     assert calls == ["/api/v2/torrents/info"]
     assert not (root / "stale").exists()
@@ -81,9 +88,12 @@ async def test_offline_downloader_does_not_remove_directories(tmp_path):
     root = tmp_path / ".mooncell"
     (root / "active-empty").mkdir(parents=True)
     config = SimpleNamespace(remote_download_root=None, local_download_root=None)
-    async with httpx.AsyncClient(base_url="http://qb.test", transport=httpx.MockTransport(
-        lambda request: httpx.Response(503),
-    )) as client:
+    async with httpx.AsyncClient(
+        base_url="http://qb.test",
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(503),
+        ),
+    ) as client:
         assert await cleanup_temporary_directories(client, str(tmp_path), config) == 0
     assert (root / "active-empty").is_dir()
 

@@ -29,15 +29,22 @@ async def test_show_items_returns_only_titles_in_newest_first_order():
         source = FeedSource(name="测试番剧", url="https://example.com/rss")
         session.add(source)
         await session.flush()
-        session.add_all([
-            FeedItem(source_id=source.id, title="较早标题", fingerprint="older", parse_data="{}"),
-            FeedItem(source_id=source.id, title="较新标题", fingerprint="newer", parse_data="{}"),
-        ])
+        session.add_all(
+            [
+                FeedItem(
+                    source_id=source.id, title="较早标题", fingerprint="older", parse_data="{}"
+                ),
+                FeedItem(
+                    source_id=source.id, title="较新标题", fingerprint="newer", parse_data="{}"
+                ),
+            ]
+        )
         await session.commit()
         source_id = source.id
 
     async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=app), base_url="http://test",
+        transport=httpx.ASGITransport(app=app),
+        base_url="http://test",
     ) as client:
         response = await client.get(f"/api/v1/shows/{source_id}/items")
         assert response.status_code == 200

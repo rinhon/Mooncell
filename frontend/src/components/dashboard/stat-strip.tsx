@@ -5,6 +5,7 @@ import { Bell, ChevronRight, Download, ListChecks, Rss } from "lucide-react"
 import type { DownloadCenter, NotificationSummary } from "@/lib/api"
 import { spring } from "@/lib/motion"
 import { Skeleton } from "@/components/ui/skeleton"
+import { ReviewLink } from "@/components/review-link"
 import { formatSpeed, type DashboardSummary, type ModuleQuery } from "./types"
 
 function AnimatedNumber({ value }: { value: number }) {
@@ -64,12 +65,14 @@ function StatCard({
         {content}
       </button>
     )
-  if (href)
+  if (href) {
+    const StatLink = href === "/review" ? ReviewLink : Link
     return (
-      <Link className="dashboard-stat" to={href} aria-label={ariaLabel}>
+      <StatLink className="dashboard-stat" to={href} aria-label={ariaLabel}>
         {content}
-      </Link>
+      </StatLink>
     )
+  }
   return (
     <button type="button" className="dashboard-stat" aria-label={ariaLabel} onClick={onClick}>
       {content}

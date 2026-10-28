@@ -20,25 +20,50 @@ def media_file(tmp_path: Path) -> ResolvedMedia:
     path.write_bytes(bytes(range(256)) * 4)
     stat = path.stat()
     version = file_version(path.name, stat.st_size, stat.st_mtime_ns)
-    return ResolvedMedia(version, 9721, path, version, stat.st_size, stat.st_mtime_ns,
-                         tmp_path, tmp_path, path.name)
+    return ResolvedMedia(
+        version, 9721, path, version, stat.st_size, stat.st_mtime_ns, tmp_path, tmp_path, path.name
+    )
 
 
 def metadata():
-    return {"format": {"duration": "120", "format_name": "mov,mp4,m4a,3gp,3g2,mj2",
-                       "start_time": "0", "bit_rate": "2000000",
-                       "tags": {"major_brand": "isom"}}, "streams": [
-        {"index": 0, "codec_type": "video", "codec_name": "h264", "profile": "High",
-         "level": 40, "pix_fmt": "yuv420p", "width": 1920, "height": 1080,
-         "avg_frame_rate": "24000/1001", "start_time": "0"},
-        {"index": 1, "codec_type": "audio", "codec_name": "aac", "profile": "LC",
-         "channels": 2, "sample_rate": "48000", "disposition": {"default": 1}},
-    ]}
+    return {
+        "format": {
+            "duration": "120",
+            "format_name": "mov,mp4,m4a,3gp,3g2,mj2",
+            "start_time": "0",
+            "bit_rate": "2000000",
+            "tags": {"major_brand": "isom"},
+        },
+        "streams": [
+            {
+                "index": 0,
+                "codec_type": "video",
+                "codec_name": "h264",
+                "profile": "High",
+                "level": 40,
+                "pix_fmt": "yuv420p",
+                "width": 1920,
+                "height": 1080,
+                "avg_frame_rate": "24000/1001",
+                "start_time": "0",
+            },
+            {
+                "index": 1,
+                "codec_type": "audio",
+                "codec_name": "aac",
+                "profile": "LC",
+                "channels": 2,
+                "sample_rate": "48000",
+                "disposition": {"default": 1},
+            },
+        ],
+    }
 
 
 def capable(info):
-    return ClientPlaybackCapabilities(native_mime_types=[info.native_mime_type],
-                                      hls_mime_types=[info.hls_mime_type])
+    return ClientPlaybackCapabilities(
+        native_mime_types=[info.native_mime_type], hls_mime_types=[info.hls_mime_type]
+    )
 
 
 def test_planner_requires_detected_capability_and_respects_constraints(tmp_path):
@@ -57,14 +82,19 @@ def test_planner_requires_detected_capability_and_respects_constraints(tmp_path)
 @pytest.mark.parametrize("bitrate", [256_000, 1_000_000, 20_000_000])
 @pytest.mark.parametrize("reason", ["legacy", "forced", "resolution", "source-rate"])
 def test_transcode_plan_reserves_audio_and_transport_bitrate_in_every_fallback(
-    tmp_path, bitrate, reason,
+    tmp_path,
+    bitrate,
+    reason,
 ):
     info = probe.parse_probe(media_file(tmp_path), metadata())
     info.bit_rate = 40_000_000
     plan = plan_playback(
-        info, 720 if reason == "resolution" else 0, 1,
+        info,
+        720 if reason == "resolution" else 0,
+        1,
         None if reason == "legacy" else capable(info),
-        force_transcode=reason == "forced", max_bitrate=bitrate,
+        force_transcode=reason == "forced",
+        max_bitrate=bitrate,
     )
     assert plan.mode == "transcode" and plan.total_bitrate == bitrate
     assert 0 < plan.video_bitrate <= 6_000_000
@@ -79,18 +109,22 @@ def test_impossible_bitrate_is_rejected_by_api_and_planner(tmp_path, bitrate):
         plan_playback(info, 0, 1, capable(info), max_bitrate=bitrate)
     assert invalid.value.code == "invalid_bitrate" and invalid.value.status == 422
     with pytest.raises(ValidationError):
-        CreateSession(media_id="id", request_id="00000000-0000-4000-8000-000000000001",
-                      max_bitrate=bitrate)
+        CreateSession(
+            media_id="id", request_id="00000000-0000-4000-8000-000000000001", max_bitrate=bitrate
+        )
     with pytest.raises(ValidationError):
-        SessionOptions(generation=1, position=0,
-                       request_id="00000000-0000-4000-8000-000000000001", max_bitrate=bitrate)
+        SessionOptions(
+            generation=1,
+            position=0,
+            request_id="00000000-0000-4000-8000-000000000001",
+            max_bitrate=bitrate,
+        )
 
 
 def test_planner_maps_other_audio_explicitly_and_only_copies_compatible_audio(tmp_path):
     media = media_file(tmp_path)
     data = metadata()
-    data["streams"].append({"index": 2, "codec_type": "audio", "codec_name": "ac3",
-                            "channels": 6})
+    data["streams"].append({"index": 2, "codec_type": "audio", "codec_name": "ac3", "channels": 6})
     info = probe.parse_probe(media, data)
     capabilities = ClientPlaybackCapabilities(hls_mime_types=[info.hls_mime_type])
     plan = plan_playback(info, 0, 2, capabilities)
@@ -146,8 +180,9 @@ async def test_direct_response_ranges_head_if_range_and_leases(tmp_path):
         leases.acquire_source(media.source_id)
         return DirectFileResponse(media)
 
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app),
-                                 base_url="http://test") as client:
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
         first = await client.get("/video", headers={"Range": "bytes=100-119"})
         assert first.status_code == 206
         assert first.content == media.path.read_bytes()[100:120]
@@ -162,8 +197,9 @@ async def test_direct_response_ranges_head_if_range_and_leases(tmp_path):
         head = await client.head("/video")
         assert head.status_code == 200 and not head.content
         assert head.headers["content-length"] == "1024"
-        changed = await client.get("/video", headers={"Range": "bytes=0-2",
-                                                      "If-Range": '"old-version"'})
+        changed = await client.get(
+            "/video", headers={"Range": "bytes=0-2", "If-Range": '"old-version"'}
+        )
         assert changed.status_code == 200 and len(changed.content) == 1024
         assert not leases.source_in_use(media.source_id)
 
@@ -179,8 +215,9 @@ async def test_direct_response_releases_lease_when_send_fails(tmp_path):
         raise RuntimeError("client disconnected")
 
     with pytest.raises(RuntimeError, match="disconnected"):
-        await DirectFileResponse(media)({"type": "http", "method": "GET", "headers": []},
-                                         receive, send)
+        await DirectFileResponse(media)(
+            {"type": "http", "method": "GET", "headers": []}, receive, send
+        )
     assert not leases.source_in_use(media.source_id)
 
 
@@ -227,6 +264,7 @@ async def test_prewarm_queue_is_bounded_and_shutdown_clears_it(monkeypatch):
     warmer = background.ProbePrewarmer()
     warmer.schedule(["not-started"])
     assert warmer.queue.empty()
+
     # 不让 worker 消费；验证扫描入队不依赖工具完成且不会无限累积。
     async def waiting():
         await asyncio.Event().wait()
@@ -287,8 +325,11 @@ async def test_subtitle_shared_task_keeps_lease_after_waiter_cancels(tmp_path, m
         with pytest.raises(asyncio.CancelledError):
             await caller
         assert leases.source_in_use(media.source_id)
-        task = next(task for key, task in probe._subtitle_inflight.items()
-                    if key[0] == media.media_id and key[1] == "s:lease-test")
+        task = next(
+            task
+            for key, task in probe._subtitle_inflight.items()
+            if key[0] == media.media_id and key[1] == "s:lease-test"
+        )
         finish.set()
         await task
         assert not leases.source_in_use(media.source_id)

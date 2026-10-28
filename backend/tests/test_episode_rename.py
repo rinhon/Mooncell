@@ -85,29 +85,61 @@ async def rename_env(show_client, monkeypatch, tmp_path):
     async with sessions() as session:
         source = await session.get(FeedSource, 1)
         source.name, source.season = "番名", 1
-        session.add_all([
-            User(id=1, username="admin", password_hash="test"),
-            LibrarySettings(id=1, library_root=str(library)),
-            ShowArtwork(source_id=1, directory=str(directory)),
-            EpisodeThumbnail(source_id=1, video_path=OLD,
-                             image_path="Season 01/episode-thumb.jpg", file_version="v1"),
-            DownloaderConfig(id=1, name="qB", kind="qbittorrent", base_url="http://qb.rename",
-                             local_download_root=str(library), remote_download_root="/media"),
-            FeedItem(id=1, source_id=1, title="番名 S01E01", fingerprint="test", parse_data="{}"),
-        ])
+        session.add_all(
+            [
+                User(id=1, username="admin", password_hash="test"),
+                LibrarySettings(id=1, library_root=str(library)),
+                ShowArtwork(source_id=1, directory=str(directory)),
+                EpisodeThumbnail(
+                    source_id=1,
+                    video_path=OLD,
+                    image_path="Season 01/episode-thumb.jpg",
+                    file_version="v1",
+                ),
+                DownloaderConfig(
+                    id=1,
+                    name="qB",
+                    kind="qbittorrent",
+                    base_url="http://qb.rename",
+                    local_download_root=str(library),
+                    remote_download_root="/media",
+                ),
+                FeedItem(
+                    id=1, source_id=1, title="番名 S01E01", fingerprint="test", parse_data="{}"
+                ),
+            ]
+        )
         await session.flush()
-        session.add(DownloadJob(id=1, item_id=1, info_hash=HASH, downloader_id=1, state="done",
-                                target_root="/media", title="番名", season=1,
-                                plan=json.dumps({"files": [{"old": "video.mkv", "new": OLD}]})))
+        session.add(
+            DownloadJob(
+                id=1,
+                item_id=1,
+                info_hash=HASH,
+                downloader_id=1,
+                state="done",
+                target_root="/media",
+                title="番名",
+                season=1,
+                plan=json.dumps({"files": [{"old": "video.mkv", "new": OLD}]}),
+            )
+        )
         await session.commit()
     app.dependency_overrides[require_user] = lambda: User(id=1, username="admin")
     episode = (await api.get("/api/v1/shows/1/library")).json()["seasons"][0]["items"][0]
     async with sessions() as session:
-        session.add(PlaybackProgress(
-            user_id=1, media_id=episode["media_id"], position=123, duration=1440,
-            completed=False, session_id="old-session", session_created_at=datetime.now(UTC),
-            generation=1, sequence=1,
-        ))
+        session.add(
+            PlaybackProgress(
+                user_id=1,
+                media_id=episode["media_id"],
+                position=123,
+                duration=1440,
+                completed=False,
+                session_id="old-session",
+                session_created_at=datetime.now(UTC),
+                generation=1,
+                sequence=1,
+            )
+        )
         await session.commit()
     fake = RenameQB(directory)
     original = httpx.AsyncClient
@@ -125,9 +157,13 @@ async def rename_env(show_client, monkeypatch, tmp_path):
 
 
 async def rename(api, episode, filename="番名 S01E01 修正版.mkv"):
-    return await api.post("/api/v1/shows/1/episodes/rename", json={
-        "media_id": episode["media_id"], "filename": filename,
-    })
+    return await api.post(
+        "/api/v1/shows/1/episodes/rename",
+        json={
+            "media_id": episode["media_id"],
+            "filename": filename,
+        },
+    )
 
 
 async def test_rename_uses_qb_file_api_and_preserves_playback(rename_env):
@@ -197,10 +233,23 @@ async def test_renaming_back_keeps_the_latest_watch_progress(rename_env):
     assert restored["progress"]["position"] == 456
 
 
-@pytest.mark.parametrize("filename", [
-    "../escape.mkv", "x/y.mkv", "x\\y.mkv", "x:bad.mkv", "CON.mkv", "x?.mkv",
-    ".hidden.mkv", "new.mp4", "x.mkv ", "x\nm.mkv", "番名 S01E01.mkv", "长" * 90 + ".mkv",
-])
+@pytest.mark.parametrize(
+    "filename",
+    [
+        "../escape.mkv",
+        "x/y.mkv",
+        "x\\y.mkv",
+        "x:bad.mkv",
+        "CON.mkv",
+        "x?.mkv",
+        ".hidden.mkv",
+        "new.mp4",
+        "x.mkv ",
+        "x\nm.mkv",
+        "番名 S01E01.mkv",
+        "长" * 90 + ".mkv",
+    ],
+)
 async def test_invalid_names_do_not_contact_qb(rename_env, filename):
     api, _, _, fake, episode = rename_env
     response = await rename(api, episode, filename)
@@ -250,7 +299,7 @@ async def test_qb_rejection_keeps_original_plan(rename_env):
 
 async def test_unfinished_files_and_bad_login_are_rejected(rename_env):
     api, _, _, fake, episode = rename_env
-    fake.files[0]["progress"] = .5
+    fake.files[0]["progress"] = 0.5
     assert (await rename(api, episode)).status_code == 409
     fake.files[0]["progress"] = 1
     fake.login_ok = False

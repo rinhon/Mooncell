@@ -21,7 +21,10 @@ async def image_client(show_client, tmp_path, request):
     async with sessions() as session:
         session.add(ShowArtwork(source_id=1, directory=str(tmp_path), poster_path=str(path)))
         thumbnail = EpisodeThumbnail(
-            source_id=1, video_path="episode.mkv", image_path=path.name, file_version=version,
+            source_id=1,
+            video_path="episode.mkv",
+            image_path=path.name,
+            file_version=version,
         )
         session.add(thumbnail)
         user = User(username="image-test", password_hash="unused")
@@ -30,7 +33,8 @@ async def image_client(show_client, tmp_path, request):
         token = await create_user_session(session, user.id)
         await session.commit()
         url = (
-            "/api/v1/shows/1/artwork/poster" if request.param == "artwork"
+            "/api/v1/shows/1/artwork/poster"
+            if request.param == "artwork"
             else f"/api/v1/shows/1/thumbnails/{thumbnail.id}"
         )
     app.dependency_overrides.pop(require_user)
@@ -83,7 +87,9 @@ async def test_image_cache_policy_matches_current_file_not_database_version(imag
     assert original.headers["cache-control"] == "private, max-age=31536000"
     assert "immutable" not in original.headers["cache-control"]
     cached = await client.get(
-        url, params={"v": version}, headers={"If-None-Match": original.headers["etag"]},
+        url,
+        params={"v": version},
+        headers={"If-None-Match": original.headers["etag"]},
     )
     assert cached.status_code == 304
     assert cached.headers["cache-control"] == original.headers["cache-control"]
@@ -93,14 +99,18 @@ async def test_image_cache_policy_matches_current_file_not_database_version(imag
     os.utime(path, ns=(previous_stat.st_atime_ns, previous_stat.st_mtime_ns + 2_000_000_000))
     current_stat = path.stat()
     current_version = ImageFile(
-        version_path, current_stat.st_mtime_ns, current_stat.st_size,
+        version_path,
+        current_stat.st_mtime_ns,
+        current_stat.st_size,
     ).version
     assert current_version != version
 
     # 数据库仍持有旧缩略图版本时，也只能按实际文件判断是否允许长期缓存。
     for params in ({"v": version}, {"v": "unknown"}, {}):
         changed = await client.get(
-            url, params=params, headers={"If-None-Match": original.headers["etag"]},
+            url,
+            params=params,
+            headers={"If-None-Match": original.headers["etag"]},
         )
         assert changed.status_code == 200
         assert changed.content == path.read_bytes()
@@ -118,7 +128,9 @@ async def test_image_conditional_requests_still_require_authentication(image_cli
     client.cookies.clear()
     for method in (client.get, client.head):
         response = await method(
-            url, params={"v": version}, headers={"If-None-Match": f'W/"{version}"'},
+            url,
+            params={"v": version},
+            headers={"If-None-Match": f'W/"{version}"'},
         )
         assert response.status_code == 401
         assert "etag" not in response.headers
@@ -134,11 +146,17 @@ async def test_artwork_versions_are_independent_of_global_scan_state(show_client
     poster.write_bytes(b"poster")
     logo.write_bytes(b"logo")
     async with sessions() as session:
-        session.add(ShowArtwork(
-            source_id=1, directory=str(tmp_path), poster_path=str(poster),
-            clearlogo_path=str(logo), fanart_path=str(tmp_path / "missing.jpg"),
-            file_version="scan-before", scraped_at=datetime(2020, 1, 1, tzinfo=UTC),
-        ))
+        session.add(
+            ShowArtwork(
+                source_id=1,
+                directory=str(tmp_path),
+                poster_path=str(poster),
+                clearlogo_path=str(logo),
+                fanart_path=str(tmp_path / "missing.jpg"),
+                file_version="scan-before",
+                scraped_at=datetime(2020, 1, 1, tzinfo=UTC),
+            )
+        )
         await session.commit()
     before = (await client.get("/api/v1/shows/1")).json()
     assert set(before["artwork_versions"]) == {"poster", "clearlogo"}

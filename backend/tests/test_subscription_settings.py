@@ -43,11 +43,15 @@ async def test_settings_persist_validate_and_route_only_rss(monkeypatch):
         session.add(source)
         await session.commit()
         source_id = source.id
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
         path = "/api/v1/settings/subscriptions"
         assert (await client.get(path)).json()["refresh_interval_minutes"] == 5
         for invalid in (0, 1441):
-            assert (await client.patch(path, json={"refresh_interval_minutes": invalid})).status_code == 422
+            assert (
+                await client.patch(path, json={"refresh_interval_minutes": invalid})
+            ).status_code == 422
         assert (await client.patch(path, json={"proxy_url": "ftp://proxy.test"})).status_code == 422
         data = {"proxy_url": "http://127.0.0.1:7890/", "refresh_interval_minutes": 30}
         assert (await client.patch(path, json=data)).json() == data
@@ -60,18 +64,29 @@ async def test_settings_persist_validate_and_route_only_rss(monkeypatch):
 
         def rss_client(**kwargs):
             captured.append(kwargs)
-            return original_client(transport=httpx.MockTransport(lambda request: httpx.Response(
-                200, content=b"<rss><channel><title>Example</title></channel></rss>",
-            )))
+            return original_client(
+                transport=httpx.MockTransport(
+                    lambda request: httpx.Response(
+                        200,
+                        content=b"<rss><channel><title>Example</title></channel></rss>",
+                    )
+                )
+            )
 
         monkeypatch.setattr(rss_service, "SessionFactory", sessions)
         monkeypatch.setattr(rss_service.httpx, "AsyncClient", rss_client)
         await rss_service.inspect_feed("https://example.com/rss")
         async with sessions() as session:
-            await rss_service.FeedRefreshService(session).refresh(await session.get(FeedSource, source_id))
+            await rss_service.FeedRefreshService(session).refresh(
+                await session.get(FeedSource, source_id)
+            )
         assert len(captured) == 2
-        assert all(call["proxy"] == data["proxy_url"] and call["trust_env"] is False for call in captured)
-        assert (await client.patch(path, json={"proxy_url": None, "refresh_interval_minutes": 5})).status_code == 200
+        assert all(
+            call["proxy"] == data["proxy_url"] and call["trust_env"] is False for call in captured
+        )
+        assert (
+            await client.patch(path, json={"proxy_url": None, "refresh_interval_minutes": 5})
+        ).status_code == 200
         await rss_service.inspect_feed("https://example.com/rss")
         assert captured[-1]["proxy"] is None
     await engine.dispose()

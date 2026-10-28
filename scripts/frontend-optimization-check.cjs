@@ -21,6 +21,7 @@ const check = (name, run, options = {}) => cases.push({ name, run, options });
 const region = (page, name) => page.getByRole('region', { name, exact: true });
 
 async function dashboardReady(page) {
+  await page.locator('.page-load-boundary[data-ready="true"]').waitFor();
   await region(page, '状态总览').getByRole('link', { name: /^订阅健康：7/ }).waitFor();
   await region(page, '正在下载').locator('.dashboard-download-list').waitFor();
   await region(page, '今日放送').locator('.dashboard-schedule-list').waitFor();
@@ -84,7 +85,7 @@ async function assertMotionSkipped(page) {
 for (const theme of ['forest', 'ocean']) {
   check(`design-token-utilities-${theme}`, async ({ page }) => {
     await page.goto(`${baseUrl}/shows`);
-    await page.locator('.show-card-grid').waitFor();
+    await page.locator('.page-load-content .show-card-grid').waitFor();
     const result = await page.evaluate(theme => {
       const root = document.documentElement;
       const previousTheme = root.dataset.theme;
@@ -136,8 +137,8 @@ for (const theme of ['forest', 'ocean']) {
 for (const width of [1024, 1280, 1440, 1920]) {
   check(`navigation-layout-${width}`, async ({ page }) => {
     await page.goto(`${baseUrl}/shows`);
-    await page.locator('.show-card-grid').waitFor();
-    await page.getByRole('button', { name: '更多导航，2 项待审核', exact: true }).waitFor();
+    await page.locator('.page-load-content .show-card-grid').waitFor();
+    await page.getByRole('button', { name: '更多导航', exact: true }).waitFor();
     const layout = await page.evaluate(() => {
       const selectors = ['.brand-mark', '.top-nav-list > a', '.notification-trigger', '.top-nav-more-trigger'];
       const nodes = selectors.flatMap(selector => [...document.querySelectorAll(selector)]);
@@ -165,7 +166,7 @@ for (const width of [1024, 1280, 1440, 1920]) {
 
 check('navigation-keyboard-more', async ({ page }) => {
   await page.goto(`${baseUrl}/shows`);
-  await page.locator('.show-card-grid').waitFor();
+  await page.locator('.page-load-content .show-card-grid').waitFor();
   await page.locator('.brand-mark').focus();
   const links = await page.locator('.top-nav-list > a').evaluateAll(nodes => nodes.map(node => node.getAttribute('href')));
   for (const href of links) {
@@ -179,9 +180,10 @@ check('navigation-keyboard-more', async ({ page }) => {
   await page.keyboard.press('Enter');
   const menu = page.locator('.top-nav-menu');
   await menu.waitFor();
-  await expectFocused(page, '.top-nav-menu a[href="/review"]');
-  await page.keyboard.press('ArrowDown');
+  assert.equal(await menu.locator('a[href="/review"]').count(), 0, '更多菜单不再提供审核入口');
   await expectFocused(page, '.top-nav-menu a[href="/logs"]');
+  await page.keyboard.press('ArrowDown');
+  await expectFocused(page, '.top-nav-menu a[href="/settings"]');
   await page.keyboard.press('Escape');
   await menu.waitFor({ state: 'hidden' });
   await expectFocused(page, '.top-nav-more-trigger', 'Esc 关闭菜单后恢复触发器焦点');
@@ -198,7 +200,7 @@ check('navigation-keyboard-more', async ({ page }) => {
 
 check('navigation-overflow', async ({ page }) => {
   await page.goto(`${baseUrl}/shows`);
-  await page.locator('.show-card-grid').waitFor();
+  await page.locator('.page-load-content .show-card-grid').waitFor();
   const total = await page.locator('.top-nav-list > a').count();
   await page.addStyleTag({ content: '.top-nav { max-width: 260px; }' });
   await page.waitForFunction(total => document.querySelectorAll('.top-nav-list > a').length < total, total);
@@ -249,7 +251,7 @@ check('navigation-desktop-detail-highlight', async ({ page }) => {
 for (const reducedMotion of ['no-preference', 'reduce']) {
   check(`navigation-scrolled-indicator-${reducedMotion}`, async ({ page }) => {
     await page.goto(`${baseUrl}/shows`);
-    await page.locator('.show-card-grid').waitFor();
+    await page.locator('.page-load-content .show-card-grid').waitFor();
     await page.waitForTimeout(700);
     const source = await page.evaluate(async () => {
       window.scrollTo({ top: document.documentElement.scrollHeight, behavior: 'instant' });
@@ -337,6 +339,7 @@ check('dashboard-keyboard-and-notifications', async ({ page }) => {
   }
   assert(names.every(Boolean));
   assert.deepEqual(await strip.locator('a').evaluateAll(nodes => nodes.map(node => node.getAttribute('href'))), ['/feeds', '/downloads', '/review']);
+  assert.equal(await strip.getByRole('link', { name: /^待审核：/ }).getAttribute('href'), '/review', '首页状态总览保留审核入口');
   await page.keyboard.press('Enter');
   const center = page.getByRole('dialog', { name: '提醒中心', exact: true });
   await center.waitFor();
@@ -355,13 +358,14 @@ const moduleContent = {
   shows: ['最近添加', '.dashboard-poster-grid'],
 };
 for (const endpoint of ['dashboard', 'downloads', 'calendar', 'shows', 'notifications/summary']) {
-  check(`dashboard-independent-500-${endpoint.replaceAll('/', '-')}`, async ({ page }) => {
+  check(`dashboard-initial-failure-${endpoint.replaceAll('/', '-')}`, async ({ page }) => {
     let failedRequests = 0;
     await page.route(url => url.pathname === `/api/v1/${endpoint}`, async route => {
       failedRequests++;
       await route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ detail: `模拟 ${endpoint} 不可用` }) });
     });
     await page.goto(baseUrl);
+    await page.locator('.page-load-boundary[data-ready="true"]').waitFor();
     if (endpoint === 'notifications/summary') {
       await region(page, '状态总览').getByRole('button', { name: /^后台提醒读取失败/ }).waitFor();
     } else {
@@ -379,7 +383,7 @@ for (const endpoint of ['dashboard', 'downloads', 'calendar', 'shows', 'notifica
   });
 }
 
-check('dashboard-slow-shows-does-not-block', async ({ page }) => {
+check('dashboard-slow-shows-waits-for-complete-page', async ({ page }) => {
   let release;
   let blocked = 0;
   const gate = new Promise(resolve => { release = resolve; });
@@ -391,15 +395,16 @@ check('dashboard-slow-shows-does-not-block', async ({ page }) => {
   const started = performance.now();
   try {
     await page.goto(baseUrl, { waitUntil: 'domcontentloaded' });
-    await dashboardReady(page);
-    const firstUsefulContentMs = Math.round(performance.now() - started);
-    await region(page, '最新发布').locator('.dashboard-release-list').waitFor();
-    await region(page, '最近添加').getByRole('status', { name: '正在加载最近添加的番剧', exact: true }).waitFor();
+    await page.locator('.page-load-content .dashboard-release-list').waitFor({ state: 'attached' });
+    await page.locator('.page-load-boundary[data-ready="false"]').waitFor();
+    await page.waitForTimeout(200);
     assert(blocked > 0, '测试必须真实阻塞番剧接口');
-    assert.equal(await page.locator('.dashboard-poster-grid').count(), 0);
+    assert.equal(await page.locator('.page-load-content .dashboard-release-list').isVisible(), false, '即使其他模块数据已完成，首页也应继续显示整体骨架');
+    assert.equal(await page.locator('.page-load-content .dashboard-poster-grid').count(), 0);
     release();
+    await dashboardReady(page);
     await region(page, '最近添加').locator('.dashboard-poster-grid').waitFor();
-    return { firstUsefulContentMs, blockedRequests: blocked, otherModulesRenderedBeforeShows: true };
+    return { completePageMs: Math.round(performance.now() - started), blockedRequests: blocked, revealedTogether: true };
   } finally { release(); }
 });
 
@@ -407,6 +412,12 @@ check('dashboard-download-polling-visibility', async ({ page, fixture }) => {
   const downloadRequests = () => fixture.requests.filter(item => item === 'GET /downloads').length;
   await page.goto(baseUrl);
   await dashboardReady(page);
+  await page.evaluate(() => {
+    window.__dashboardReadyChanges = [];
+    const boundary = document.querySelector('.page-load-boundary');
+    new MutationObserver(() => window.__dashboardReadyChanges.push(boundary.getAttribute('data-ready')))
+      .observe(boundary, { attributes: true, attributeFilter: ['data-ready'] });
+  });
   const initial = downloadRequests();
   await page.waitForTimeout(5400);
   const visible = downloadRequests();
@@ -421,6 +432,8 @@ check('dashboard-download-polling-visibility', async ({ page, fixture }) => {
   await constrainVisibility(page, false);
   await refreshed;
   assert(downloadRequests() > afterHidden, '恢复可见后应重新获取下载');
+  assert.equal(await page.locator('.page-load-boundary').getAttribute('data-ready'), 'true');
+  assert.equal(await page.evaluate(() => window.__dashboardReadyChanges.includes('false')), false, '后台轮询和可见性刷新不得把已显示页面切回骨架');
   return { initial, visible, beforeHidden, afterHidden, restoredVisible: downloadRequests(), visibility: 'synthetic visibilitychange' };
 });
 
@@ -504,7 +517,7 @@ check('error-toast-persists-and-closes', async ({ page }) => {
 
 check('reduced-motion-navigation', async ({ page }) => {
   await page.goto(`${baseUrl}/shows`);
-  await page.locator('.show-card-grid').waitFor();
+  await page.locator('.page-load-content .show-card-grid').waitFor();
   // Navigation uses a static translate for placement; its motion is checked by
   // navigation-scrolled-indicator-reduce using actual positions across frames.
   await recordMotion(page, '/feeds', '.page-content, .feed-card-reveal');
@@ -518,7 +531,7 @@ check('route-revisit-skips-entry', async ({ page }) => {
   await page.locator('.feed-card').first().waitFor();
   await page.waitForTimeout(700);
   await page.locator('.top-nav-list a[href="/shows"]').click();
-  await page.locator('.show-card-grid').waitFor();
+  await page.locator('.page-load-content .show-card-grid').waitFor();
   await page.waitForTimeout(700);
   await recordMotion(page, '/feeds', '.page-content, .feed-card-reveal');
   await page.locator('.top-nav-list a[href="/feeds"]').click();

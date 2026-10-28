@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from "react"
 import { Bell, CheckCheck, RefreshCw, X } from "lucide-react"
-import { GradualBlur } from "@/components/ui/gradual-blur"
 import { Popover, PopoverClose, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { NotificationItem } from "@/components/notification-item"
 import { useNotifications } from "@/hooks/use-notifications"
@@ -92,7 +91,7 @@ export function NotificationCenter() {
             标记已读失败，请重试。
           </p>
         )}
-        <div className="relative overflow-hidden">
+        <div className="relative flex min-h-0 flex-col overflow-hidden">
           <div className="notification-scroll">
             {list.isPending && (
               <p className="notification-empty" role="status">
@@ -138,16 +137,6 @@ export function NotificationCenter() {
               </button>
             )}
           </div>
-          {items.length > 3 && (
-            <GradualBlur
-              position="bottom"
-              height="28px"
-              strength={1.5}
-              divCount={3}
-              zIndex={2}
-              tint="var(--shell-bottom-tint)"
-            />
-          )}
         </div>
       </PopoverContent>
     </Popover>

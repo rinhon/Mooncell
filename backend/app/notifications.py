@@ -72,12 +72,22 @@ async def notify_task(session, item, kind, *, source=None, reason=None, user_id=
         return
     # SQLite 可能复用已删除条目的 ID；加入发现时间，保留旧提醒且不漏报新任务。
     discovered = item.discovered_at.replace(tzinfo=UTC).isoformat()
-    operation_id = str(uuid5(NAMESPACE_URL,
-                            f"mooncell/task/{user_id}/{kind}/{item.id}/{discovered}"))
-    inserted = await session.scalar(insert(BackgroundOperation).values(
-        id=operation_id, user_id=user_id, kind=kind,
-        source_id=source.id, source_name=source.name, context={"item_id": item.id},
-    ).on_conflict_do_nothing(index_elements=["id"]).returning(BackgroundOperation.id))
+    operation_id = str(
+        uuid5(NAMESPACE_URL, f"mooncell/task/{user_id}/{kind}/{item.id}/{discovered}")
+    )
+    inserted = await session.scalar(
+        insert(BackgroundOperation)
+        .values(
+            id=operation_id,
+            user_id=user_id,
+            kind=kind,
+            source_id=source.id,
+            source_name=source.name,
+            context={"item_id": item.id},
+        )
+        .on_conflict_do_nothing(index_elements=["id"])
+        .returning(BackgroundOperation.id)
+    )
     operation = await session.get(BackgroundOperation, operation_id)
     if kind == "download_added":
         if inserted:
@@ -88,17 +98,24 @@ async def notify_task(session, item, kind, *, source=None, reason=None, user_id=
 
 
 async def resolve_task_review(session, item, *, ignored=False):
-    operations = await session.scalars(select(BackgroundOperation).where(
-        BackgroundOperation.kind == "review_required",
-        BackgroundOperation.source_id == item.source_id,
-        BackgroundOperation.context["item_id"].as_integer() == item.id,
-        BackgroundOperation.status == "blocked",
-    ))
+    operations = await session.scalars(
+        select(BackgroundOperation).where(
+            BackgroundOperation.kind == "review_required",
+            BackgroundOperation.source_id == item.source_id,
+            BackgroundOperation.context["item_id"].as_integer() == item.id,
+            BackgroundOperation.status == "blocked",
+        )
+    )
     for operation in operations:
         operation.read_revision = operation.attention_revision
         operation.attention_key = None
-        transition(session, operation, "cancelled" if ignored else "completed",
-                   f"已{'忽略' if ignored else '批准'}：{item.title}", attention=False)
+        transition(
+            session,
+            operation,
+            "cancelled" if ignored else "completed",
+            f"已{'忽略' if ignored else '批准'}：{item.title}",
+            attention=False,
+        )
 
 
 def transition(session, operation, status, summary, error=None, *, attention=True, key=None):

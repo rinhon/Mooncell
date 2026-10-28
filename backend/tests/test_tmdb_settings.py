@@ -16,21 +16,25 @@ async def test_credentials_encrypted_preserved_cleared_and_not_returned(monkeypa
         await connection.run_sync(Base.metadata.create_all)
     sessions = async_sessionmaker(engine, expire_on_commit=False)
     monkeypatch.setattr(tmdb_settings, "SessionFactory", sessions)
+
     async def session_override():
         async with sessions() as session:
             yield session
+
     app = FastAPI()
     app.include_router(tmdb_settings.router)
     app.dependency_overrides[get_session] = session_override
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app),
-                                 base_url="http://test") as client:
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
         path = "/api/v1/settings/tmdb"
         assert (await client.get(path)).status_code == 401
         assert (await client.patch(path, json={})).status_code == 401
         app.dependency_overrides[require_user] = lambda: object()
         assert not (await client.get(path)).json()["api_key_configured"]
-        result = await client.patch(path, json={"read_access_token": " token-secret ",
-                                               "api_key": "key-secret"})
+        result = await client.patch(
+            path, json={"read_access_token": " token-secret ", "api_key": "key-secret"}
+        )
         assert result.status_code == 200
         assert "secret" not in result.text
         assert all(result.json().values())
@@ -44,7 +48,9 @@ async def test_credentials_encrypted_preserved_cleared_and_not_returned(monkeypa
         await client.patch(path, json={"read_access_token": ""})
         assert await tmdb_settings.get_credentials() == (None, "key-secret")
         assert (await client.get(path)).json() == {
-            "read_access_token_configured": False, "api_key_configured": True}
+            "read_access_token_configured": False,
+            "api_key_configured": True,
+        }
         assert (await client.patch(path, json={"api_key": "bad\nkey"})).status_code == 422
         await client.patch(path, json={"api_key": ""})
         assert await tmdb_settings.get_credentials() == (None, None)

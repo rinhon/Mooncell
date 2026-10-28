@@ -9,6 +9,7 @@ import { TodaySchedule } from "@/components/dashboard/today-schedule"
 import { ActiveDownloads } from "@/components/dashboard/active-downloads"
 import { RecentReleases } from "@/components/dashboard/recent-releases"
 import { RecentShows } from "@/components/dashboard/recent-shows"
+import { MagicBento } from "@/components/ui/magic-bento"
 import type { DashboardSummary, SeasonCalendar } from "@/components/dashboard/types"
 
 export function DashboardPage() {
@@ -52,7 +53,7 @@ export function DashboardPage() {
   })
   const { summary } = useNotifications(false)
   return (
-    <div className="dashboard-v2">
+    <MagicBento className="dashboard-v2 dashboard-magic-bento">
       <DashboardHeading count={shows.data?.length} />
       <StatStrip dashboard={dashboard} downloads={downloads} notifications={summary} />
       {dashboard.data?.feeds === 0 && (
@@ -66,10 +67,10 @@ export function DashboardPage() {
       )}
       <div className="dashboard-main-grid">
         <TodaySchedule query={calendar} now={now} />
+        <RecentReleases query={dashboard} shows={shows.data ?? []} tasks={downloads.data?.tasks ?? []} />
         <ActiveDownloads query={downloads} />
       </div>
-      <RecentReleases query={dashboard} shows={shows.data ?? []} tasks={downloads.data?.tasks ?? []} />
       <RecentShows query={shows} />
-    </div>
+    </MagicBento>
   )
 }

@@ -22,15 +22,22 @@ NEW_HASH = "b" * 40
 TITLE = "[桜都字幕组] Example / Example [01{}][1080P][简体内嵌]"
 
 
-@pytest.mark.parametrize("state,priority", [
-    ("uploading", 0), ("checkingUP", 1), ("missingFiles", 1),
-])
+@pytest.mark.parametrize(
+    "state,priority",
+    [
+        ("uploading", 0),
+        ("checkingUP", 1),
+        ("missingFiles", 1),
+    ],
+)
 def test_completion_requires_selected_video_and_finished_checks(state, priority):
     from app.revision_upgrade import complete
 
     torrent = {"state": state, "progress": 1, "amount_left": 0}
-    files = [{"name": "video.mkv", "progress": 1, "priority": priority},
-             {"name": "notes.txt", "progress": 1, "priority": 1}]
+    files = [
+        {"name": "video.mkv", "progress": 1, "priority": priority},
+        {"name": "notes.txt", "progress": 1, "priority": 1},
+    ]
     assert not complete(torrent, files, {"video.mkv"})
 
 
@@ -38,21 +45,35 @@ def test_completion_requires_selected_video_and_finished_checks(state, priority)
 async def revision_database(monkeypatch, tmp_path):
     # 推进虚拟时间，验证接口故障后替换流程继续；真实退避边界另有专门用例。
     ticks = count()
-    monkeypatch.setattr(download_queue, "retry_now", lambda: (
-        datetime(2026, 10, 18, tzinfo=UTC) + timedelta(minutes=16 * next(ticks))
-    ))
+    monkeypatch.setattr(
+        download_queue,
+        "retry_now",
+        lambda: datetime(2026, 10, 18, tzinfo=UTC) + timedelta(minutes=16 * next(ticks)),
+    )
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
     async with engine.begin() as connection:
         await connection.run_sync(Base.metadata.create_all)
     sessions = async_sessionmaker(engine, expire_on_commit=False)
     monkeypatch.setattr(download_queue, "SessionFactory", sessions)
     async with sessions() as session:
-        session.add_all([
-            FeedSource(id=1, name="番名", url="https://example.test/rss", season=1,
-                       excluded_keywords=["繁"]),
-            DownloaderConfig(id=1, name="qB", kind="qbittorrent", base_url="http://qb.test",
-                             library_root=str(tmp_path)),
-        ])
+        session.add_all(
+            [
+                FeedSource(
+                    id=1,
+                    name="番名",
+                    url="https://example.test/rss",
+                    season=1,
+                    excluded_keywords=["繁"],
+                ),
+                DownloaderConfig(
+                    id=1,
+                    name="qB",
+                    kind="qbittorrent",
+                    base_url="http://qb.test",
+                    library_root=str(tmp_path),
+                ),
+            ]
+        )
         await session.commit()
     yield sessions
     await engine.dispose()
@@ -60,9 +81,13 @@ async def revision_database(monkeypatch, tmp_path):
 
 async def add_release(session, revision, info_hash, title=None):
     raw = title or TITLE.format("" if revision == 1 else f"v{revision}")
-    item = FeedItem(source_id=1, title=raw, fingerprint=info_hash,
-                    download_url=f"magnet:?xt=urn:btih:{info_hash}",
-                    parse_data=parse_release_title(raw).model_dump_json())
+    item = FeedItem(
+        source_id=1,
+        title=raw,
+        fingerprint=info_hash,
+        download_url=f"magnet:?xt=urn:btih:{info_hash}",
+        parse_data=parse_release_title(raw).model_dump_json(),
+    )
     session.add(item)
     await session.flush()
     return item
@@ -80,9 +105,13 @@ async def test_real_rss_only_highest_revision_is_queued(revision_database, monke
         channel.extend(reversed(entries))
     content = ElementTree.tostring(root)
     original = httpx.AsyncClient
-    monkeypatch.setattr(rss_service.httpx, "AsyncClient", lambda **kwargs: original(
-        transport=httpx.MockTransport(lambda request: httpx.Response(200, content=content)),
-    ))
+    monkeypatch.setattr(
+        rss_service.httpx,
+        "AsyncClient",
+        lambda **kwargs: original(
+            transport=httpx.MockTransport(lambda request: httpx.Response(200, content=content)),
+        ),
+    )
     async with revision_database() as session:
         source = await session.get(FeedSource, 1)
         for _ in range(2):
@@ -106,9 +135,13 @@ async def test_queued_old_versions_never_submitted(revision_database, revisions)
             await add_release(session, revision, str(revision) * 40)
             await download_queue.enqueue_source(session, source)
         await session.commit()
-        active = list(await session.scalars(select(DownloadJob).where(
-            DownloadJob.state == "queued",
-        )))
+        active = list(
+            await session.scalars(
+                select(DownloadJob).where(
+                    DownloadJob.state == "queued",
+                )
+            )
+        )
         assert len(active) == 1
         assert active[0].info_hash == "3" * 40
 
@@ -149,14 +182,17 @@ async def test_same_revision_uses_one_stable_task_and_cannot_retry_superseded(re
         assert error.value.status_code == 409
 
 
-@pytest.mark.parametrize("other", [
-    "[其他字幕组] Example / Example [01v2][1080P][简体内嵌]",
-    TITLE.format("v2").replace("1080P", "720P"),
-    TITLE.format("v2").replace("简体内嵌", "繁体内嵌"),
-    TITLE.format("v2").replace("内嵌", "内封"),
-    TITLE.format("v2").replace("[01v2]", "[02v2]"),
-    TITLE.format("v2").replace("Example / Example", "Other / Other"),
-])
+@pytest.mark.parametrize(
+    "other",
+    [
+        "[其他字幕组] Example / Example [01v2][1080P][简体内嵌]",
+        TITLE.format("v2").replace("1080P", "720P"),
+        TITLE.format("v2").replace("简体内嵌", "繁体内嵌"),
+        TITLE.format("v2").replace("内嵌", "内封"),
+        TITLE.format("v2").replace("[01v2]", "[02v2]"),
+        TITLE.format("v2").replace("Example / Example", "Other / Other"),
+    ],
+)
 async def test_different_specs_are_not_revision_candidates(revision_database, other):
     async with revision_database() as session:
         old = await add_release(session, 1, OLD_HASH)
@@ -194,17 +230,30 @@ class FakeQB:
         if endpoint == "login":
             return httpx.Response(200, text="Ok.")
         if endpoint == "info":
-            values = ([self.torrents[info_hash]] if info_hash in self.torrents else []) \
-                if info_hash else list(self.torrents.values())
+            values = (
+                ([self.torrents[info_hash]] if info_hash in self.torrents else [])
+                if info_hash
+                else list(self.torrents.values())
+            )
             return httpx.Response(200, json=deepcopy(values))
         if endpoint == "files":
             return httpx.Response(200, json=deepcopy(self.files[request.url.params["hash"]]))
         if endpoint == "add":
             info_hash = NEW_HASH
-            self.torrents[info_hash] = {"save_path": data["savepath"], "state": "stoppedDL",
-                                        "progress": 0, "amount_left": 100, "tags": data["tags"]}
-            self.files[info_hash] = [{"name": ("Pack/" if self.wrapper else "") + "video.mkv",
-                                      "priority": 1, "progress": 0}]
+            self.torrents[info_hash] = {
+                "save_path": data["savepath"],
+                "state": "stoppedDL",
+                "progress": 0,
+                "amount_left": 100,
+                "tags": data["tags"],
+            }
+            self.files[info_hash] = [
+                {
+                    "name": ("Pack/" if self.wrapper else "") + "video.mkv",
+                    "priority": 1,
+                    "progress": 0,
+                }
+            ]
             path = self.file_path(info_hash, self.files[info_hash][0]["name"])
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text("new", encoding="utf-8")
@@ -225,11 +274,15 @@ class FakeQB:
                     target.parent.mkdir(parents=True, exist_ok=True)
                     self.file_path(info_hash, old_name).replace(target)
         if endpoint == "setLocation":
-            if (info_hash == NEW_HASH and ".mooncell" not in data["location"]
-                    and self.fail_promotion):
+            if (
+                info_hash == NEW_HASH
+                and ".mooncell" not in data["location"]
+                and self.fail_promotion
+            ):
                 return httpx.Response(409)
-            old_paths = [(f["name"], self.file_path(info_hash, f["name"]))
-                         for f in self.files[info_hash]]
+            old_paths = [
+                (f["name"], self.file_path(info_hash, f["name"])) for f in self.files[info_hash]
+            ]
             self.torrents[info_hash]["save_path"] = data["location"]
             for name, path in old_paths:
                 target = self.file_path(info_hash, name)
@@ -259,15 +312,25 @@ async def existing_old_version(sessions, fake, extension="mkv"):
         old = await session.scalar(select(DownloadJob))
         filename = f"番名 S01E01.{extension}"
         name = "Season 01/" + filename if fake.wrapper else filename
-        old.plan = json.dumps({"wrapper": "Pack" if fake.wrapper else None,
-                               "season_folder": "Season 01", "files": [{"old": name, "new": name}],
-                               "selection_version": 2, "skip_file_ids": []})
+        old.plan = json.dumps(
+            {
+                "wrapper": "Pack" if fake.wrapper else None,
+                "season_folder": "Season 01",
+                "files": [{"old": name, "new": name}],
+                "selection_version": 2,
+                "skip_file_ids": [],
+            }
+        )
         old.state = "done"
         location = fake.root / "番名"
         if not fake.wrapper:
             location /= "Season 01"
-        fake.torrents[OLD_HASH] = {"state": "uploading", "save_path": str(location),
-                                   "progress": 1, "amount_left": 0}
+        fake.torrents[OLD_HASH] = {
+            "state": "uploading",
+            "save_path": str(location),
+            "progress": 1,
+            "amount_left": 0,
+        }
         fake.files[OLD_HASH] = [{"name": name, "priority": 1, "progress": 1}]
         old_path = fake.file_path(OLD_HASH, name)
         old_path.parent.mkdir(parents=True, exist_ok=True)
@@ -283,16 +346,26 @@ async def existing_old_version(sessions, fake, extension="mkv"):
 @pytest.mark.parametrize("fail_promotion", [False, True])
 @pytest.mark.parametrize("old_extension", ["mkv", "mp4"])
 async def test_upgrade_completion_cleanup_and_rollback(
-    revision_database, monkeypatch, tmp_path, wrapper, fail_promotion, old_extension,
+    revision_database,
+    monkeypatch,
+    tmp_path,
+    wrapper,
+    fail_promotion,
+    old_extension,
 ):
     fake = FakeQB(tmp_path, wrapper, fail_promotion)
     old_path = await existing_old_version(revision_database, fake, old_extension)
     unrelated = old_path.parent / "番名 S01E02.mkv"
     unrelated.write_text("other episode", encoding="utf-8")
     original = httpx.AsyncClient
-    monkeypatch.setattr(download_queue.httpx, "AsyncClient", lambda **kwargs: original(
-        base_url="http://qb.test", transport=httpx.MockTransport(fake.handle),
-    ))
+    monkeypatch.setattr(
+        download_queue.httpx,
+        "AsyncClient",
+        lambda **kwargs: original(
+            base_url="http://qb.test",
+            transport=httpx.MockTransport(fake.handle),
+        ),
+    )
     for _ in range(12):
         await download_queue.process_queue()
     assert old_path.read_text(encoding="utf-8") == "old"
@@ -329,9 +402,14 @@ async def test_upgrade_completion_cleanup_and_rollback(
             assert (old_path.parent / "番名 S01E01.mkv").read_text(encoding="utf-8") == "new"
             assert OLD_HASH not in fake.torrents
             assert not (fake.root / ".mooncell").exists()
-            assert await session.scalar(select(DomainEvent).where(
-                DomainEvent.event_type == "download.upgraded",
-            )) is not None
+            assert (
+                await session.scalar(
+                    select(DomainEvent).where(
+                        DomainEvent.event_type == "download.upgraded",
+                    )
+                )
+                is not None
+            )
         assert unrelated.read_text(encoding="utf-8") == "other episode"
         await download_queue.enqueue_source(session, await session.get(FeedSource, 1))
         assert len(list(await session.scalars(select(DownloadJob)))) == 2
@@ -339,15 +417,23 @@ async def test_upgrade_completion_cleanup_and_rollback(
 
 @pytest.mark.parametrize("fail_after_move", [OLD_HASH, NEW_HASH])
 async def test_ambiguous_api_failure_after_move_recovers(
-    revision_database, monkeypatch, tmp_path, fail_after_move,
+    revision_database,
+    monkeypatch,
+    tmp_path,
+    fail_after_move,
 ):
     fake = FakeQB(tmp_path, False)
     fake.fail_after_move = fail_after_move
     old_path = await existing_old_version(revision_database, fake)
     original = httpx.AsyncClient
-    monkeypatch.setattr(download_queue.httpx, "AsyncClient", lambda **kwargs: original(
-        base_url="http://qb.test", transport=httpx.MockTransport(fake.handle),
-    ))
+    monkeypatch.setattr(
+        download_queue.httpx,
+        "AsyncClient",
+        lambda **kwargs: original(
+            base_url="http://qb.test",
+            transport=httpx.MockTransport(fake.handle),
+        ),
+    )
     for _ in range(10):
         await download_queue.process_queue()
     fake.torrents[NEW_HASH].update(progress=1, amount_left=0)
@@ -368,7 +454,9 @@ async def test_ambiguous_api_failure_after_move_recovers(
 
 
 async def test_unrelated_spec_conflict_does_not_replace_old(
-    revision_database, monkeypatch, tmp_path,
+    revision_database,
+    monkeypatch,
+    tmp_path,
 ):
     fake = FakeQB(tmp_path, False)
     old_path = await existing_old_version(revision_database, fake)
@@ -378,9 +466,14 @@ async def test_unrelated_spec_conflict_does_not_replace_old(
         new.parse_data = parse_release_title(new.title).model_dump_json()
         await session.commit()
     original = httpx.AsyncClient
-    monkeypatch.setattr(download_queue.httpx, "AsyncClient", lambda **kwargs: original(
-        base_url="http://qb.test", transport=httpx.MockTransport(fake.handle),
-    ))
+    monkeypatch.setattr(
+        download_queue.httpx,
+        "AsyncClient",
+        lambda **kwargs: original(
+            base_url="http://qb.test",
+            transport=httpx.MockTransport(fake.handle),
+        ),
+    )
     for _ in range(12):
         await download_queue.process_queue()
     async with revision_database() as session:
@@ -393,7 +486,10 @@ async def test_unrelated_spec_conflict_does_not_replace_old(
 
 @pytest.mark.parametrize("fail_promotion", [False, True])
 async def test_playing_old_version_defers_replacement_until_release(
-    revision_database, monkeypatch, tmp_path, fail_promotion,
+    revision_database,
+    monkeypatch,
+    tmp_path,
+    fail_promotion,
 ):
     from app.playback.leases import (
         acquire_source,
@@ -407,9 +503,14 @@ async def test_playing_old_version_defers_replacement_until_release(
     fake = FakeQB(tmp_path, False, fail_promotion)
     old_path = await existing_old_version(revision_database, fake)
     original = httpx.AsyncClient
-    monkeypatch.setattr(download_queue.httpx, "AsyncClient", lambda **kwargs: original(
-        base_url="http://qb.test", transport=httpx.MockTransport(fake.handle),
-    ))
+    monkeypatch.setattr(
+        download_queue.httpx,
+        "AsyncClient",
+        lambda **kwargs: original(
+            base_url="http://qb.test",
+            transport=httpx.MockTransport(fake.handle),
+        ),
+    )
     for _ in range(12):
         await download_queue.process_queue()
     acquire_source(1)

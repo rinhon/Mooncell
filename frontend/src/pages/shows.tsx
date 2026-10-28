@@ -1,6 +1,7 @@
 import { ArtworkUpload } from "@/components/artwork-upload"
 import { ShowsHeader, ShowsLoading, type ShowsView } from "@/components/shows-loading"
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent } from "react"
+import { usePageLoadCycle, usePageReady } from "@/components/page-load-boundary"
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { ImageOff, LoaderCircle } from "lucide-react"
 import { Navigate, useLocation, useNavigate, useSearchParams } from "react-router-dom"
@@ -8,24 +9,11 @@ import { api, type Show } from "@/lib/api"
 import { showReturnState } from "@/lib/show-artwork"
 import { ShowCard } from "@/components/shows/show-card"
 import { ShowPosterTile } from "@/components/shows/show-poster-tile"
+import { Masonry } from "@/components/ui/masonry"
 import { ShowRow } from "@/components/shows/show-row"
 import { Card, CardContent } from "@/components/ui/card"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { useToast } from "@/components/ui/toast"
-
-function useCardColumns() {
-  const getColumns = () =>
-    window.matchMedia("(min-width: 1280px)").matches ? 3 : window.matchMedia("(min-width: 640px)").matches ? 2 : 1
-  const [columns, setColumns] = useState(getColumns)
-  useEffect(() => {
-    const breakpoints = [window.matchMedia("(min-width: 640px)"), window.matchMedia("(min-width: 1280px)")]
-    const update = () => setColumns(getColumns())
-    breakpoints.forEach((breakpoint) => breakpoint.addEventListener("change", update))
-    update()
-    return () => breakpoints.forEach((breakpoint) => breakpoint.removeEventListener("change", update))
-  }, [])
-  return columns
-}
 
 const viewStorageKey = "mooncell-shows-view"
 function isShowsView(value: unknown): value is ShowsView {
@@ -50,13 +38,14 @@ function initialView(state: unknown): ShowsView {
 
 /** 将 RSS 订阅、TMDB 元数据和本地三图组合成真实番剧媒体库。 */
 export function ShowsPage() {
-  const cardColumns = useCardColumns()
+  const pageReady = usePageReady()
   const location = useLocation()
   const navigate = useNavigate()
   const restore = showReturnState(location.state?.restoreShowList)
   const [params, setParams] = useSearchParams()
   const [query, setQuery] = useState(() => params.get("q") ?? "")
   const [view, setView] = useState<ShowsView>(() => initialView(location.state?.restoreShowList))
+  usePageLoadCycle(view, <ShowsLoading query={query} view={view} filtered={params.has("id")} />)
   function changeView(next: ShowsView) {
     setView(next)
     try {
@@ -97,42 +86,101 @@ export function ShowsPage() {
 
   const restoredScroll = useRef(false)
   useLayoutEffect(() => {
-    if (!showsQuery.data || restoredScroll.current) return
-    // 卡片与图片槽的尺寸由布局决定，数据提交后即可恢复，无需等待图片。
+    if (!pageReady || !showsQuery.data || restoredScroll.current) return
+    // 骨架结束、真实内容恢复高度后再还原滚动位置。
     const frame = window.requestAnimationFrame(() => {
       window.scrollTo({ top: restore.scrollY ?? 0, behavior: "instant" })
       restoredScroll.current = true
     })
     return () => window.cancelAnimationFrame(frame)
-  }, [showsQuery.data, restore.scrollY])
+  }, [pageReady, showsQuery.data, restore.scrollY])
   useEffect(() => {
     setQuery(params.get("q") ?? "")
   }, [params])
-  const detailState = () => ({
-    from: `/shows${query ? `?${new URLSearchParams({ q: query })}` : ""}`,
-    view,
-    scrollY: window.scrollY,
-  })
-  function openDetail(event: MouseEvent<HTMLAnchorElement>, id: number) {
-    if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return
-    event.preventDefault()
-    const context = detailState()
-    navigate(context.from, { replace: true, state: { restoreShowList: context } })
-    navigate(`/shows/${id}`, { state: context })
-  }
-  const displayProps = (show: Show, index: number) => ({
-    show,
-    index,
-    columns: cardColumns,
-    detailState,
-    openDetail,
-    onUpload: setUploadId,
-    onItems: setItemsShow,
-    onRescrape: (id: number) => rescrape.mutate(id),
-    onOpenFolder: (id: number) => openFolder.mutate(id),
-    rescraping: rescrape.isPending && rescrape.variables === show.id,
-    openingFolder: openFolder.isPending && openFolder.variables === show.id,
-  })
+  const returnState = useMemo(
+    () => ({
+      from: `/shows${query ? `?${new URLSearchParams({ q: query })}` : ""}`,
+      view,
+    }),
+    [query, view],
+  )
+  const openDetail = useCallback(
+    (event: MouseEvent<HTMLAnchorElement>, id: number) => {
+      if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return
+      event.preventDefault()
+      const context = { ...returnState, scrollY: window.scrollY }
+      navigate(context.from, { replace: true, state: { restoreShowList: context } })
+      navigate(`/shows/${id}`, { state: context })
+    },
+    [navigate, returnState],
+  )
+  const handleRescrape = useCallback((id: number) => rescrape.mutate(id), [rescrape.mutate])
+  const handleOpenFolder = useCallback((id: number) => openFolder.mutate(id), [openFolder.mutate])
+  const rescrapePendingId = rescrape.isPending ? rescrape.variables : null
+  const openFolderPendingId = openFolder.isPending ? openFolder.variables : null
+  const posterTiles = useMemo(
+    () =>
+      view === "posters"
+        ? shows.map((show, index) => (
+            <ShowPosterTile
+              key={show.id}
+              show={show}
+              index={index}
+              returnState={returnState}
+              openDetail={openDetail}
+              onUpload={setUploadId}
+              onItems={setItemsShow}
+              onRescrape={handleRescrape}
+              onOpenFolder={handleOpenFolder}
+              rescraping={rescrapePendingId === show.id}
+              openingFolder={openFolderPendingId === show.id}
+            />
+          ))
+        : null,
+    [view, shows, returnState, openDetail, handleRescrape, handleOpenFolder, rescrapePendingId, openFolderPendingId],
+  )
+  const cardTiles = useMemo(
+    () =>
+      view === "cards"
+        ? shows.map((show, index) => (
+            <ShowCard
+              key={show.id}
+              show={show}
+              index={index}
+              returnState={returnState}
+              openDetail={openDetail}
+              onUpload={setUploadId}
+              onItems={setItemsShow}
+              onRescrape={handleRescrape}
+              onOpenFolder={handleOpenFolder}
+              rescraping={rescrapePendingId === show.id}
+              openingFolder={openFolderPendingId === show.id}
+            />
+          ))
+        : null,
+    [view, shows, returnState, openDetail, handleRescrape, handleOpenFolder, rescrapePendingId, openFolderPendingId],
+  )
+  const listRows = useMemo(
+    () =>
+      view === "list"
+        ? shows.map((show, index) => (
+            <ShowRow
+              key={show.id}
+              show={show}
+              index={index}
+              returnState={returnState}
+              openDetail={openDetail}
+              onUpload={setUploadId}
+              onItems={setItemsShow}
+              onRescrape={handleRescrape}
+              onOpenFolder={handleOpenFolder}
+              rescraping={rescrapePendingId === show.id}
+              openingFolder={openFolderPendingId === show.id}
+            />
+          ))
+        : null,
+    [view, shows, returnState, openDetail, handleRescrape, handleOpenFolder, rescrapePendingId, openFolderPendingId],
+  )
   if (params.has("id")) {
     const legacy = new URLSearchParams(params)
     const id = legacy.get("id")
@@ -237,24 +285,24 @@ export function ShowsPage() {
       )}
 
       {view === "posters" && shows.length > 0 && (
-        <div className="show-poster-grid" aria-label="番剧海报">
-          {shows.map((show, index) => (
-            <ShowPosterTile key={show.id} {...displayProps(show, index)} />
-          ))}
-        </div>
+        <Masonry className="show-poster-grid" columnWidth={250} aria-label="番剧海报">
+          {posterTiles}
+        </Masonry>
       )}
       {view === "cards" && (
-        <div className="show-card-grid" aria-label="番剧卡片">
-          {shows.map((show, index) => (
-            <ShowCard key={show.id} {...displayProps(show, index)} />
-          ))}
-        </div>
+        <Masonry
+          className="show-card-grid"
+          columns="auto-fit"
+          columnWidth={400}
+          contentHeight={440}
+          aria-label="番剧卡片"
+        >
+          {cardTiles}
+        </Masonry>
       )}
       {view === "list" && shows.length > 0 && (
         <ul className="show-row-list" aria-label="番剧列表">
-          {shows.map((show, index) => (
-            <ShowRow key={show.id} {...displayProps(show, index)} />
-          ))}
+          {listRows}
         </ul>
       )}
     </div>

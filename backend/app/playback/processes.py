@@ -20,22 +20,37 @@ class WindowsJob:
         from ctypes import wintypes
 
         class Basic(ctypes.Structure):
-            _fields_ = [("process_time", ctypes.c_int64), ("job_time", ctypes.c_int64),
-                        ("flags", wintypes.DWORD), ("min_ws", ctypes.c_size_t),
-                        ("max_ws", ctypes.c_size_t), ("active", wintypes.DWORD),
-                        ("affinity", ctypes.c_size_t), ("priority", wintypes.DWORD),
-                        ("scheduling", wintypes.DWORD)]
+            _fields_ = [
+                ("process_time", ctypes.c_int64),
+                ("job_time", ctypes.c_int64),
+                ("flags", wintypes.DWORD),
+                ("min_ws", ctypes.c_size_t),
+                ("max_ws", ctypes.c_size_t),
+                ("active", wintypes.DWORD),
+                ("affinity", ctypes.c_size_t),
+                ("priority", wintypes.DWORD),
+                ("scheduling", wintypes.DWORD),
+            ]
 
         class Extended(ctypes.Structure):
-            _fields_ = [("basic", Basic), ("io", ctypes.c_uint64 * 6),
-                        ("process_memory", ctypes.c_size_t), ("job_memory", ctypes.c_size_t),
-                        ("peak_process", ctypes.c_size_t), ("peak_job", ctypes.c_size_t)]
+            _fields_ = [
+                ("basic", Basic),
+                ("io", ctypes.c_uint64 * 6),
+                ("process_memory", ctypes.c_size_t),
+                ("job_memory", ctypes.c_size_t),
+                ("peak_process", ctypes.c_size_t),
+                ("peak_job", ctypes.c_size_t),
+            ]
 
         self.kernel = ctypes.WinDLL("kernel32", use_last_error=True)
         self.kernel.CreateJobObjectW.argtypes = [ctypes.c_void_p, wintypes.LPCWSTR]
         self.kernel.CreateJobObjectW.restype = wintypes.HANDLE
-        self.kernel.SetInformationJobObject.argtypes = [wintypes.HANDLE, ctypes.c_int,
-                                                       ctypes.c_void_p, wintypes.DWORD]
+        self.kernel.SetInformationJobObject.argtypes = [
+            wintypes.HANDLE,
+            ctypes.c_int,
+            ctypes.c_void_p,
+            wintypes.DWORD,
+        ]
         self.kernel.SetInformationJobObject.restype = wintypes.BOOL
         self.kernel.AssignProcessToJobObject.argtypes = [wintypes.HANDLE, wintypes.HANDLE]
         self.kernel.AssignProcessToJobObject.restype = wintypes.BOOL
@@ -47,7 +62,10 @@ class WindowsJob:
         limits = Extended()
         limits.basic.flags = 0x2000  # JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
         if not self.kernel.SetInformationJobObject(
-            self.handle, 9, ctypes.byref(limits), ctypes.sizeof(limits),
+            self.handle,
+            9,
+            ctypes.byref(limits),
+            ctypes.sizeof(limits),
         ):
             self.close()
             raise ctypes.WinError(ctypes.get_last_error())
@@ -78,12 +96,25 @@ class OwnedProcess:
             self.job = WindowsJob()
             flags = 0x00000004 | subprocess.CREATE_NO_WINDOW  # CREATE_SUSPENDED
         elif sys.platform.startswith("linux"):
-            command = [sys.executable, "-m", "app.playback.processes", str(os.getpid()),
-                       "--", *command]
+            command = [
+                sys.executable,
+                "-m",
+                "app.playback.processes",
+                str(os.getpid()),
+                "--",
+                *command,
+            ]
         try:
             self.process = subprocess.Popen(
-                command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                text=True, encoding="utf-8", errors="replace", bufsize=1, close_fds=True,
+                command,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                bufsize=1,
+                close_fds=True,
                 creationflags=flags,
             )
             if self.job:
@@ -99,8 +130,10 @@ class OwnedProcess:
             if self.process is not None:
                 self.process.wait(timeout=5)
             raise
-        self._readers = [threading.Thread(target=self._stdout, daemon=True),
-                         threading.Thread(target=self._stderr, daemon=True)]
+        self._readers = [
+            threading.Thread(target=self._stdout, daemon=True),
+            threading.Thread(target=self._stderr, daemon=True),
+        ]
         for reader in self._readers:
             reader.start()
 

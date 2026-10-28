@@ -23,15 +23,16 @@ from .media import MediaError, ResolvedMedia, ensure_current, safe_file
 from .processes import WindowsJob
 from .schemas import AudioTrack, PlaybackCapabilities, PlaybackInfo, SubtitleTrack
 
-PROBE_SCHEMA_VERSION = 2
+PROBE_SCHEMA_VERSION = 3
 _slots = asyncio.Semaphore(2)
 _cache: OrderedDict[str, PlaybackInfo] = OrderedDict()
 _inflight: dict[str, asyncio.Task] = {}
 _capability_cache: tuple[float, PlaybackCapabilities] | None = None
 _subtitle_cache: OrderedDict[tuple[str, str, str], str] = OrderedDict()
 _subtitle_inflight: dict[tuple[str, str, str], asyncio.Task] = {}
-SUPPORTED_SUBTITLES = {"subrip", "srt", "webvtt", "vtt"}
+SUPPORTED_SUBTITLES = {"subrip", "srt", "webvtt", "vtt", "ass", "ssa"}
 SUBTITLE_EXTENSIONS = {".srt", ".vtt", ".ass", ".ssa", ".sup", ".sub", ".idx"}
+UNSUPPORTED_SUBTITLE_REASON = "暂不支持此字幕格式，请选择 SRT/WebVTT/ASS/SSA 文本字幕"
 
 
 def _remember(media_id: str, info: PlaybackInfo) -> None:
@@ -59,7 +60,11 @@ async def shutdown_probes() -> None:
 
 
 def _run_media_command_sync(
-    arguments: list[str], timeout: float, max_bytes: int, cancelled: threading.Event,
+    arguments: list[str],
+    timeout: float,
+    max_bytes: int,
+    cancelled: threading.Event,
+    input_bytes: bytes | None = None,
 ) -> bytes:
     """独立线程持有进程及管道，兼容 Windows Uvicorn 的 Selector 事件循环。"""
     process = None
@@ -81,23 +86,47 @@ def _run_media_command_sync(
         except (OSError, ValueError):
             pass
 
+    def write_input(stream) -> None:
+        # 输入同样由工作线程持有，写满管道时不阻塞超时/取消检查或输出排空。
+        try:
+            stream.write(input_bytes)
+        except (OSError, ValueError):
+            pass
+        finally:
+            with contextlib.suppress(OSError, ValueError):
+                stream.close()
+
     try:
         flags = 0
         if os.name == "nt":
             job = WindowsJob()
             flags = 0x00000004 | subprocess.CREATE_NO_WINDOW
         elif sys.platform.startswith("linux"):
-            arguments = [sys.executable, "-m", "app.playback.processes", str(os.getpid()),
-                         "--", *arguments]
+            arguments = [
+                sys.executable,
+                "-m",
+                "app.playback.processes",
+                str(os.getpid()),
+                "--",
+                *arguments,
+            ]
         process = subprocess.Popen(
-            arguments, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            creationflags=flags, close_fds=True,
+            arguments,
+            stdin=subprocess.PIPE if input_bytes is not None else subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            creationflags=flags,
+            close_fds=True,
         )
         if job:
             job.assign(process)
             psutil.Process(process.pid).resume()
-        readers = [threading.Thread(target=drain, args=(process.stdout, True), daemon=True),
-                   threading.Thread(target=drain, args=(process.stderr, False), daemon=True)]
+        readers = [
+            threading.Thread(target=drain, args=(process.stdout, True), daemon=True),
+            threading.Thread(target=drain, args=(process.stderr, False), daemon=True),
+        ]
+        if input_bytes is not None:
+            readers.append(threading.Thread(target=write_input, args=(process.stdin,), daemon=True))
         for reader in readers:
             reader.start()
         while process.poll() is None:
@@ -118,7 +147,9 @@ def _run_media_command_sync(
         return b"".join(chunks)
     except (OSError, ValueError, psutil.Error) as exc:
         raise MediaError(
-            "tool_unavailable", "FFmpeg/FFprobe 不可用，请检查服务端配置", 503,
+            "tool_unavailable",
+            "FFmpeg/FFprobe 不可用，请检查服务端配置",
+            503,
         ) from exc
     finally:
         if process is not None and process.poll() is None:
@@ -131,22 +162,34 @@ def _run_media_command_sync(
                 process.wait(timeout=5)
             for reader in readers:
                 reader.join(timeout=1)
-            for stream in (process.stdout, process.stderr):
+            for stream in (process.stdin, process.stdout, process.stderr):
                 if stream:
-                    stream.close()
+                    with contextlib.suppress(OSError, ValueError):
+                        stream.close()
             if os.name == "nt" and process.returncode is not None:
                 # Task 异常回溯可能继续持有 Popen，显式释放已收割进程的 Windows 句柄。
                 process._handle.Close()
 
 
 async def run_media_command(
-    arguments: list[str], timeout: float, max_bytes: int = 8 * 1024 * 1024,
+    arguments: list[str],
+    timeout: float,
+    max_bytes: int = 8 * 1024 * 1024,
+    *,
+    input_bytes: bytes | None = None,
 ) -> bytes:
     """持续排空有界管道，取消时等待线程终止并收割本次任务的进程。"""
     cancelled = threading.Event()
-    task = asyncio.create_task(asyncio.to_thread(
-        _run_media_command_sync, arguments, timeout, max_bytes, cancelled,
-    ))
+    task = asyncio.create_task(
+        asyncio.to_thread(
+            _run_media_command_sync,
+            arguments,
+            timeout,
+            max_bytes,
+            cancelled,
+            input_bytes,
+        )
+    )
     try:
         return await asyncio.shield(task)
     except asyncio.CancelledError:
@@ -174,19 +217,24 @@ def _rate(value: str | None) -> float:
 
 def parse_probe(media: ResolvedMedia, data: dict) -> PlaybackInfo:
     streams = data.get("streams", [])
-    videos = [stream for stream in streams if stream.get("codec_type") == "video"
-              and not stream.get("disposition", {}).get("attached_pic")]
+    videos = [
+        stream
+        for stream in streams
+        if stream.get("codec_type") == "video"
+        and not stream.get("disposition", {}).get("attached_pic")
+    ]
     if not videos:
         raise MediaError("video_missing", "文件没有可播放的视频轨道", 422)
     video = videos[0]
     duration = _number(data.get("format", {}).get("duration")) or _number(video.get("duration"))
     if duration <= 0:
         raise MediaError("duration_unknown", "无法确定视频时长，暂不能播放此文件", 422)
-    hdr = (video.get("color_transfer") in {"smpte2084", "arib-std-b67"}
-           or any("mastering display" in item.get("side_data_type", "").lower()
-                  or "content light" in item.get("side_data_type", "").lower()
-                  or "dovi" in item.get("side_data_type", "").lower()
-                  for item in video.get("side_data_list", [])))
+    hdr = video.get("color_transfer") in {"smpte2084", "arib-std-b67"} or any(
+        "mastering display" in item.get("side_data_type", "").lower()
+        or "content light" in item.get("side_data_type", "").lower()
+        or "dovi" in item.get("side_data_type", "").lower()
+        for item in video.get("side_data_list", [])
+    )
     width, height = int(video.get("width", 0)), int(video.get("height", 0))
     if width < 2 or height < 2:
         raise MediaError("video_dimensions", "视频尺寸无效", 422)
@@ -195,24 +243,40 @@ def parse_probe(media: ResolvedMedia, data: dict) -> PlaybackInfo:
         tags = stream.get("tags", {})
         codec = stream.get("codec_name", "unknown")
         if stream.get("codec_type") == "audio":
-            audio.append(AudioTrack(
-                id=stream["index"], codec=codec, language=tags.get("language"),
-                title=tags.get("title"), channels=stream.get("channels"),
-                default=bool(stream.get("disposition", {}).get("default")),
-                profile=stream.get("profile"),
-                sample_rate=int(_number(stream.get("sample_rate"))) or None,
-            ))
+            audio.append(
+                AudioTrack(
+                    id=stream["index"],
+                    codec=codec,
+                    language=tags.get("language"),
+                    title=tags.get("title"),
+                    channels=stream.get("channels"),
+                    default=bool(stream.get("disposition", {}).get("default")),
+                    profile=stream.get("profile"),
+                    sample_rate=int(_number(stream.get("sample_rate"))) or None,
+                )
+            )
         elif stream.get("codec_type") == "subtitle":
             supported = codec in SUPPORTED_SUBTITLES
-            subtitles.append(SubtitleTrack(
-                id=f"s:{stream['index']}", codec=codec, language=tags.get("language"),
-                title=tags.get("title") or f"内嵌字幕 {len(subtitles) + 1}", supported=supported,
-                reason=None if supported else "首版暂不支持此字幕格式，请选择 SRT/WebVTT 字幕",
-            ))
+            subtitles.append(
+                SubtitleTrack(
+                    id=f"s:{stream['index']}",
+                    codec=codec,
+                    language=tags.get("language"),
+                    title=tags.get("title") or f"内嵌字幕 {len(subtitles) + 1}",
+                    supported=supported,
+                    reason=None if supported else UNSUPPORTED_SUBTITLE_REASON,
+                )
+            )
     info = PlaybackInfo(
-        media_id=media.media_id, source_id=media.source_id, filename=media.path.name,
-        version=media.version, duration=duration, video_width=width, video_height=height,
-        video_codec=video.get("codec_name", "unknown"), video_track=int(video.get("index", 0)),
+        media_id=media.media_id,
+        source_id=media.source_id,
+        filename=media.path.name,
+        version=media.version,
+        duration=duration,
+        video_width=width,
+        video_height=height,
+        video_codec=video.get("codec_name", "unknown"),
+        video_track=int(video.get("index", 0)),
         probe_schema_version=PROBE_SCHEMA_VERSION,
         container=data.get("format", {}).get("format_name", ""),
         container_brand=data.get("format", {}).get("tags", {}).get("major_brand"),
@@ -224,10 +288,13 @@ def parse_probe(media: ResolvedMedia, data: dict) -> PlaybackInfo:
         video_start=_number(video.get("start_time")),
         frame_rate=_rate(
             video.get("avg_frame_rate") or video.get("r_frame_rate"),
-        ), hdr=hdr, supported=not hdr,
+        ),
+        hdr=hdr,
+        supported=not hdr,
         unsupported_reason="HDR 视频需要色调映射，首版暂不支持播放" if hdr else None,
         qualities=[720, 1080] if height > 720 else [720],
-        audio_tracks=audio, subtitle_tracks=subtitles,
+        audio_tracks=audio,
+        subtitle_tracks=subtitles,
     )
     from .planner import set_playback_mime_types
 
@@ -244,8 +311,9 @@ def _external_subtitles(media: ResolvedMedia) -> list[tuple[SubtitleTrack, Path]
     for candidate in candidates:
         if candidate.suffix.lower() not in SUBTITLE_EXTENSIONS:
             continue
-        if not (candidate.stem == media.path.stem
-                or candidate.stem.startswith(media.path.stem + ".")):
+        if not (
+            candidate.stem == media.path.stem or candidate.stem.startswith(media.path.stem + ".")
+        ):
             continue
         relative = candidate.relative_to(media.directory).as_posix()
         try:
@@ -255,10 +323,18 @@ def _external_subtitles(media: ResolvedMedia) -> list[tuple[SubtitleTrack, Path]
         codec = candidate.suffix[1:].lower()
         supported = codec in SUPPORTED_SUBTITLES
         track_id = "e:" + hashlib.sha256(relative.encode()).hexdigest()[:24]
-        results.append((SubtitleTrack(
-            id=track_id, codec=codec, title=candidate.name, supported=supported,
-            reason=None if supported else "首版暂不支持此字幕格式，请选择 SRT/WebVTT 字幕",
-        ), path))
+        results.append(
+            (
+                SubtitleTrack(
+                    id=track_id,
+                    codec=codec,
+                    title=candidate.name,
+                    supported=supported,
+                    reason=None if supported else UNSUPPORTED_SUBTITLE_REASON,
+                ),
+                path,
+            )
+        )
     return results
 
 
@@ -278,11 +354,23 @@ async def _load_probe(media: ResolvedMedia) -> PlaybackInfo:
         leases.acquire_source(media.source_id)
         try:
             await asyncio.to_thread(ensure_current, media)
-            output = await run_media_command([
-                settings.playback_ffprobe, "-v", "error", "-protocol_whitelist", "file,pipe",
-                "-format_whitelist", "mov,matroska,webm,avi,mpegts,mpeg,flv,asf,ogg",
-                "-show_streams", "-show_format", "-of", "json", str(media.path),
-            ], settings.playback_probe_timeout_seconds)
+            output = await run_media_command(
+                [
+                    settings.playback_ffprobe,
+                    "-v",
+                    "error",
+                    "-protocol_whitelist",
+                    "file,pipe",
+                    "-format_whitelist",
+                    "mov,matroska,webm,avi,mpegts,mpeg,flv,asf,ogg",
+                    "-show_streams",
+                    "-show_format",
+                    "-of",
+                    "json",
+                    str(media.path),
+                ],
+                settings.playback_probe_timeout_seconds,
+            )
             await asyncio.to_thread(ensure_current, media)
             try:
                 return parse_probe(media, json.loads(output))
@@ -295,6 +383,8 @@ async def _load_probe(media: ResolvedMedia) -> PlaybackInfo:
 async def probe_media(media: ResolvedMedia) -> PlaybackInfo:
     await asyncio.to_thread(ensure_current, media)
     cached = _cache.get(media.media_id)
+    if cached is not None and cached.probe_schema_version != PROBE_SCHEMA_VERSION:
+        cached = None
     if cached is None and media.probe_json:
         try:
             cached = PlaybackInfo.model_validate_json(media.probe_json)
@@ -318,9 +408,13 @@ async def probe_media(media: ResolvedMedia) -> PlaybackInfo:
                 _inflight.pop(media.media_id, None)
         _remember(media.media_id, cached)
     result = cached.model_copy(deep=True)
-    result.subtitle_tracks.extend(track for track, _path in await asyncio.to_thread(
-        _external_subtitles, media,
-    ))
+    result.subtitle_tracks.extend(
+        track
+        for track, _path in await asyncio.to_thread(
+            _external_subtitles,
+            media,
+        )
+    )
     for track in result.subtitle_tracks:
         if track.supported:
             track.url = f"/api/v1/media/{media.media_id}/subtitles/{track.id}"
@@ -345,17 +439,60 @@ async def _read_subtitle(media: ResolvedMedia, track_id: str) -> str:
             content = raw.decode("utf-8-sig")
         except UnicodeDecodeError as exc:
             raise MediaError("subtitle_encoding", "字幕需要使用 UTF-8 编码", 422) from exc
-        if track.codec == "srt":
+        if track.codec in {"ass", "ssa"}:
+            async with _slots:
+                output = await run_media_command(
+                    [
+                        settings.playback_ffmpeg,
+                        "-v",
+                        "error",
+                        "-nostdin",
+                        "-protocol_whitelist",
+                        "pipe",
+                        "-format_whitelist",
+                        "ass",
+                        "-f",
+                        "ass",
+                        "-i",
+                        "pipe:0",
+                        "-map",
+                        "0:s:0",
+                        "-f",
+                        "webvtt",
+                        "pipe:1",
+                    ],
+                    settings.playback_probe_timeout_seconds,
+                    5 * 1024 * 1024,
+                    input_bytes=content.encode("utf-8"),
+                )
+                return output.decode("utf-8-sig")
+        elif track.codec == "srt":
             content = "WEBVTT\n\n" + re.sub(r"(\d{2}:\d{2}:\d{2}),(\d{3})", r"\1.\2", content)
         elif not content.lstrip().startswith("WEBVTT"):
             raise MediaError("subtitle_invalid", "WebVTT 字幕格式无效", 422)
         return content
     async with _slots:
-        output = await run_media_command([
-            settings.playback_ffmpeg, "-v", "error", "-nostdin", "-protocol_whitelist",
-            "file,pipe", "-format_whitelist", "mov,matroska,webm,avi,mpegts,mpeg,flv,asf,ogg",
-            "-i", str(media.path), "-map", f"0:{track.id[2:]}", "-f", "webvtt", "pipe:1",
-        ], settings.playback_probe_timeout_seconds, 5 * 1024 * 1024)
+        output = await run_media_command(
+            [
+                settings.playback_ffmpeg,
+                "-v",
+                "error",
+                "-nostdin",
+                "-protocol_whitelist",
+                "file,pipe",
+                "-format_whitelist",
+                "mov,matroska,webm,avi,mpegts,mpeg,flv,asf,ogg",
+                "-i",
+                str(media.path),
+                "-map",
+                f"0:{track.id[2:]}",
+                "-f",
+                "webvtt",
+                "pipe:1",
+            ],
+            settings.playback_probe_timeout_seconds,
+            5 * 1024 * 1024,
+        )
         return output.decode("utf-8-sig")
 
 
@@ -395,8 +532,11 @@ async def subtitle_content(media: ResolvedMedia, track_id: str) -> str:
             if finished.cancelled() or finished.exception() is not None:
                 return
             _subtitle_cache[key] = finished.result()
-            while (len(_subtitle_cache) > 64 or sum(len(value.encode("utf-8"))
-                   for value in _subtitle_cache.values()) > 16 * 1024 * 1024):
+            while (
+                len(_subtitle_cache) > 64
+                or sum(len(value.encode("utf-8")) for value in _subtitle_cache.values())
+                > 16 * 1024 * 1024
+            ):
                 _subtitle_cache.popitem(last=False)
 
         task.add_done_callback(settled)
@@ -409,18 +549,37 @@ async def playback_capabilities() -> PlaybackCapabilities:
         return _capability_cache[1]
     ffmpeg = shutil.which(settings.playback_ffmpeg) is not None
     ffprobe = shutil.which(settings.playback_ffprobe) is not None
-    result = PlaybackCapabilities(available=False, ffmpeg=ffmpeg, ffprobe=ffprobe,
-                                  encoder=settings.playback_encoder)
+    result = PlaybackCapabilities(
+        available=False, ffmpeg=ffmpeg, ffprobe=ffprobe, encoder=settings.playback_encoder
+    )
     if not ffmpeg or not ffprobe:
         result.reason = "服务器尚未安装 FFmpeg/FFprobe，或可执行文件路径无效"
     else:
         try:
             async with _slots:
-                await run_media_command([
-                    settings.playback_ffmpeg, "-v", "error", "-nostdin", "-f", "lavfi",
-                    "-i", "color=size=128x72:rate=24", "-frames:v", "2", "-an", "-c:v",
-                    settings.playback_encoder, "-pix_fmt", "yuv420p", "-f", "null", "-",
-                ], min(settings.playback_probe_timeout_seconds, 10))
+                await run_media_command(
+                    [
+                        settings.playback_ffmpeg,
+                        "-v",
+                        "error",
+                        "-nostdin",
+                        "-f",
+                        "lavfi",
+                        "-i",
+                        "color=size=128x72:rate=24",
+                        "-frames:v",
+                        "2",
+                        "-an",
+                        "-c:v",
+                        settings.playback_encoder,
+                        "-pix_fmt",
+                        "yuv420p",
+                        "-f",
+                        "null",
+                        "-",
+                    ],
+                    min(settings.playback_probe_timeout_seconds, 10),
+                )
             result.available = True
             if settings.playback_encoder != "libx264":
                 result.hardware_encoders = [settings.playback_encoder]

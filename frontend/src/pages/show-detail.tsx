@@ -1,4 +1,4 @@
-import { useContext, useEffect, useState } from "react"
+import { useEffect, useState } from "react"
 import { Link, useLocation, useParams } from "react-router-dom"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { ArrowLeft, ImageOff } from "lucide-react"
@@ -6,7 +6,6 @@ import { motion, useReducedMotion } from "motion/react"
 import { api, ApiError, type ShowDetail, type ShowLibrary } from "@/lib/api"
 import { artworkUrl, posterUrl, showReturnState } from "@/lib/show-artwork"
 import { spring } from "@/lib/motion"
-import { PageMotionContext } from "@/lib/page-motion"
 import { Button } from "@/components/ui/button"
 import { ArtworkUpload } from "@/components/artwork-upload"
 import { EditSubscriptionDialog } from "@/components/edit-subscription-dialog"
@@ -20,6 +19,7 @@ import { DetailActions } from "@/components/show-detail/detail-actions"
 import { SubscriptionInfoPanel } from "@/components/show-detail/subscription-info-panel"
 import { useToast } from "@/components/ui/toast"
 import { RetryImage } from "@/components/ui/retry-image"
+import { FadeSlide } from "@/components/ui/fade-slide"
 import "./show-detail.css"
 
 export function ShowDetailPage() {
@@ -35,7 +35,6 @@ function DetailContent({ sourceId, valid }: { sourceId: number; valid: boolean }
   const client = useQueryClient()
   const toast = useToast()
   const reducedMotion = useReducedMotion()
-  const { animateEntry } = useContext(PageMotionContext)
   const [selectedTab, setSelectedTab] = useState<string | null>(null)
   const [upload, setUpload] = useState(false)
   const [editing, setEditing] = useState(false)
@@ -156,19 +155,13 @@ function DetailContent({ sourceId, valid }: { sourceId: number; valid: boolean }
           </button>
         </p>
       )}
-      <motion.div
+      <FadeSlide
         className="detail-grid"
-        initial={reducedMotion || !animateEntry ? false : { opacity: 0, y: 8 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={spring.gentle}
+        selector=".detail-poster, .detail-kicker, .detail-title, .detail-facts, .detail-genres, .detail-primary-actions, .detail-overview, .episode-list > li, .detail-subscription dl > div"
       >
         <aside className="detail-artwork">
           <div className="detail-poster">
-            {poster ? (
-              <RetryImage src={poster} alt={`${show.name} 海报`} fallback={noPoster} />
-            ) : (
-              noPoster
-            )}
+            {poster ? <RetryImage src={poster} alt={`${show.name} 海报`} fallback={noPoster} /> : noPoster}
           </div>
         </aside>
         <div className="detail-main">
@@ -246,7 +239,7 @@ function DetailContent({ sourceId, valid }: { sourceId: number; valid: boolean }
             </motion.section>
           </ShowDetailPanels>
         </div>
-      </motion.div>
+      </FadeSlide>
       <ArtworkUpload show={upload ? show : null} onClose={() => setUpload(false)} />
       {editing && <EditSubscriptionDialog feed={feed} onClose={() => setEditing(false)} />}
     </div>

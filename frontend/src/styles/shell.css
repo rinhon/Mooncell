@@ -1,3 +1,6 @@
+:root {
+  --navigation-height: 96px;
+}
 .app-frame {
   min-height: 100vh;
   display: grid;
@@ -14,8 +17,8 @@
   align-items: center;
   gap: 24px;
   min-width: 0;
-  height: 78px;
-  padding: 8px 36px;
+  height: var(--navigation-height);
+  padding: 12px 36px;
   border-bottom: 0;
   background: transparent;
 }
@@ -35,8 +38,8 @@
   display: flex;
   align-items: center;
   min-width: 0;
-  width: 164px;
-  height: 62px;
+  width: 200px;
+  height: 72px;
   min-height: 44px;
   padding: 0;
   border: 0;
@@ -47,7 +50,7 @@
   width: 100%;
 }
 .brand-mark .stroke-text__svg {
-  height: 52px;
+  height: 60px;
 }
 .top-actions {
   flex: 0 0 auto;
@@ -60,6 +63,25 @@
   background: var(--island-background);
   backdrop-filter: blur(18px);
   box-shadow: var(--island-shadow);
+}
+.top-actions .utility-link {
+  width: 42px;
+  height: 42px;
+}
+.top-actions .utility-link > svg {
+  width: 22px;
+  height: 22px;
+}
+.top-navigation .sm-trigger {
+  height: 52px;
+}
+.top-navigation .sm-trigger-label-window {
+  font-size: 16px;
+}
+.top-navigation .sm-trigger-icon,
+.top-navigation .sm-trigger-icon svg {
+  width: 20px;
+  height: 20px;
 }
 .brand-mark:focus-visible {
   outline: 2px solid var(--accent);
@@ -82,6 +104,9 @@
   }
 }
 @media (max-width: 600px) {
+  :root {
+    --navigation-height: 84px;
+  }
   .top-navigation {
     gap: 8px;
     padding-inline: 12px;
@@ -90,11 +115,11 @@
     gap: 8px;
   }
   .brand-mark {
-    width: clamp(112px, 36vw, 196px);
-    height: 44px;
+    width: clamp(124px, 36vw, 180px);
+    height: 56px;
   }
   .brand-mark .stroke-text__svg {
-    height: 40px;
+    height: 48px;
   }
   .top-actions {
     padding-inline: 4px;
@@ -136,7 +161,7 @@
 .notification-panel {
   z-index: 80;
   width: min(430px, calc(100vw - 24px));
-  max-height: min(720px, calc(100dvh - 96px));
+  max-height: min(720px, calc(100dvh - var(--navigation-height) - 16px));
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -205,6 +230,10 @@
   overflow-y: auto;
   overscroll-behavior: contain;
   min-height: 0;
+  scrollbar-width: none;
+}
+.notification-scroll::-webkit-scrollbar {
+  display: none;
 }
 .notification-scroll h3 {
   padding: 13px 20px 8px;
@@ -347,7 +376,7 @@
     gap: 4px;
   }
   .notification-panel {
-    max-height: calc(100dvh - 84px);
+    max-height: calc(100dvh - var(--navigation-height) - 16px);
   }
   .notification-header {
     padding: 16px;

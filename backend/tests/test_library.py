@@ -31,13 +31,15 @@ async def test_directory_selection_persists_and_rejects_files(tmp_path: Path):
     media = folder / "episode.mkv"
     media.write_text("test")
     async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=app), base_url="http://test",
+        transport=httpx.ASGITransport(app=app),
+        base_url="http://test",
     ) as client:
         listing = await client.get("/api/v1/filesystem/directories", params={"path": str(folder)})
         assert listing.status_code == 200
         assert [item["name"] for item in listing.json()["children"]] == ["Season 01"]
         response = await client.patch(
-            "/api/v1/settings/library", json={"library_root": str(folder)},
+            "/api/v1/settings/library",
+            json={"library_root": str(folder)},
         )
         assert response.status_code == 200
         saved = (await client.get("/api/v1/settings/library")).json()
@@ -46,12 +48,14 @@ async def test_directory_selection_persists_and_rejects_files(tmp_path: Path):
             assert await get_library_root(session, "old-path") == str(folder.resolve())
         for invalid in [str(media), str(folder / "missing"), "relative-path"]:
             response = await client.patch(
-                "/api/v1/settings/library", json={"library_root": invalid},
+                "/api/v1/settings/library",
+                json={"library_root": invalid},
             )
             assert response.status_code in {404, 422}
             assert (await client.get("/api/v1/settings/library")).json() == saved
         empty = await client.get(
-            "/api/v1/filesystem/directories", params={"path": str(folder / "Season 01")},
+            "/api/v1/filesystem/directories",
+            params={"path": str(folder / "Season 01")},
         )
         assert empty.json()["children"] == []
     await engine.dispose()

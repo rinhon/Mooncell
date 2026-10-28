@@ -88,20 +88,25 @@ async def job_files(session, job, stop=False, require_files=True):
     if not config or not config.active or config.kind != "qbittorrent":
         raise HTTPException(409, "请先启用此任务对应的 qBittorrent 下载器")
     try:
-        async with httpx.AsyncClient(base_url=config.base_url, timeout=10,
-                                     verify=config.verify_tls) as client:
-            login = await request(client, "POST", "auth/login", data={
-                "username": config.username or "",
-                "password": decrypt_secret(config.encrypted_secret) or "",
-            })
+        async with httpx.AsyncClient(
+            base_url=config.base_url, timeout=10, verify=config.verify_tls
+        ) as client:
+            login = await request(
+                client,
+                "POST",
+                "auth/login",
+                data={
+                    "username": config.username or "",
+                    "password": decrypt_secret(config.encrypted_secret) or "",
+                },
+            )
             if login.status_code != 204 and not login.text.startswith("Ok"):
                 raise ValueError("qBittorrent 拒绝登录")
             if stop:
                 await set_running(client, job.info_hash, False)
             if not require_files:
                 return []
-            result = await request(client, "GET", "torrents/files",
-                                   params={"hash": job.info_hash})
+            result = await request(client, "GET", "torrents/files", params={"hash": job.info_hash})
             files = result.json()
             if not files:
                 raise ValueError("下载器中没有文件，请确认种子仍存在且元数据已获取")
@@ -116,9 +121,14 @@ async def list_reviews(session: AsyncSession = Depends(get_session)):
         select(FeedItem, FeedSource, DownloadJob)
         .join(FeedSource, FeedItem.source_id == FeedSource.id)
         .outerjoin(DownloadJob, DownloadJob.item_id == FeedItem.id)
-        .where(FeedItem.parse_status != "ignored", or_(
-            FeedItem.parse_status == "needs_review", DownloadJob.state == "needs_review",
-        )).order_by(FeedItem.discovered_at.desc(), FeedItem.id.desc())
+        .where(
+            FeedItem.parse_status != "ignored",
+            or_(
+                FeedItem.parse_status == "needs_review",
+                DownloadJob.state == "needs_review",
+            ),
+        )
+        .order_by(FeedItem.discovered_at.desc(), FeedItem.id.desc())
     )
     root = await get_library_root(session)
     results = []
@@ -128,27 +138,43 @@ async def list_reviews(session: AsyncSession = Depends(get_session)):
         except ValueError:
             parsed = parse_release_title(item.title)
             parsed.warnings.append("保存的解析信息无效，请重新解析")
-        season = job.season if job else (
-            source.season if source.season is not None else parsed.season
+        season = (
+            job.season if job else (source.season if source.season is not None else parsed.season)
         )
         if not job and "manual_review" in parsed.evidence:
             season = parsed.season
-        title = job.title if job else safe_folder_name(
-            parsed.title if "manual_review" in parsed.evidence else source.name
+        title = (
+            job.title
+            if job
+            else safe_folder_name(
+                parsed.title if "manual_review" in parsed.evidence else source.name
+            )
         )
         path = None
         if season is not None and parsed.episode_start is not None:
             episode = f"{parsed.episode_start:g}".zfill(2)
             extension = parsed.container or "mkv"
-            path = str(path_type(root)(root) / title / f"Season {season:02d}" /
-                       f"{title} S{season:02d}E{episode}.{extension}")
-        results.append(ReviewRead(
-            id=item.id, raw_title=item.title, source_name=source.name,
-            source_active=source.active, parsed=parsed, season=season,
-            reason=job.last_error if job and job.last_error else
-            "；".join(parsed.warnings) or "解析置信度不足，需要确认季与集数",
-            proposed_path=path, job_state=job.state if job else None,
-        ))
+            path = str(
+                path_type(root)(root)
+                / title
+                / f"Season {season:02d}"
+                / f"{title} S{season:02d}E{episode}.{extension}"
+            )
+        results.append(
+            ReviewRead(
+                id=item.id,
+                raw_title=item.title,
+                source_name=source.name,
+                source_active=source.active,
+                parsed=parsed,
+                season=season,
+                reason=job.last_error
+                if job and job.last_error
+                else "；".join(parsed.warnings) or "解析置信度不足，需要确认季与集数",
+                proposed_path=path,
+                job_state=job.state if job else None,
+            )
+        )
     return results
 
 
@@ -158,10 +184,14 @@ async def read_files(item_id: int, session: AsyncSession = Depends(get_session))
         _, _, job = await load_pending(session, item_id)
         if not job:
             return []
-        return [{"name": str(f["name"]).replace("\\", "/"),
-                 "episode": parse_release_title(PurePosixPath(f["name"]).stem).episode_start}
-                for f in await job_files(session, job)
-                if PurePosixPath(f["name"]).suffix.lower() in VIDEO_EXTENSIONS]
+        return [
+            {
+                "name": str(f["name"]).replace("\\", "/"),
+                "episode": parse_release_title(PurePosixPath(f["name"]).stem).episode_start,
+            }
+            for f in await job_files(session, job)
+            if PurePosixPath(f["name"]).suffix.lower() in VIDEO_EXTENSIONS
+        ]
 
 
 @router.post("/{item_id}/ignore", response_model=ApiMessage)
@@ -174,8 +204,9 @@ async def ignore(item_id: int, session: AsyncSession = Depends(get_session)):
             job.state = "ignored"
         item.parse_status = "ignored"
         await resolve_task_review(session, item, ignored=True)
-        await _record_and_publish_event(session, "review.ignored", "feed_item", str(item_id),
-                                        {"title": item.title})
+        await _record_and_publish_event(
+            session, "review.ignored", "feed_item", str(item_id), {"title": item.title}
+        )
     return ApiMessage(message="已忽略条目；不会再次自动下载，已有文件保留")
 
 
@@ -189,14 +220,18 @@ async def reparse(item_id: int, session: AsyncSession = Depends(get_session)):
             parsed.season = source.season
         item.parse_data = parsed.model_dump_json()
         # 重新解析仅更新证据，必须显式批准才能解除审核。
-        await _record_and_publish_event(session, "review.reparsed", "feed_item", str(item_id),
-                                        {"title": item.title, "confidence": parsed.confidence})
+        await _record_and_publish_event(
+            session,
+            "review.reparsed",
+            "feed_item",
+            str(item_id),
+            {"title": item.title, "confidence": parsed.confidence},
+        )
     return ApiMessage(message="已重新解析，请确认结果后批准")
 
 
 @router.post("/{item_id}/approve", response_model=ApiMessage)
-async def approve(item_id: int, data: ReviewApproval,
-                  session: AsyncSession = Depends(get_session)):
+async def approve(item_id: int, data: ReviewApproval, session: AsyncSession = Depends(get_session)):
     async with queue_lock:
         item, source, job = await load_pending(session, item_id)
         require_replacement_settled(job)
@@ -219,8 +254,11 @@ async def approve(item_id: int, data: ReviewApproval,
             overrides = None
             if data.files is not None:
                 overrides = {f.name: f.episode for f in data.files}
-                video_names = {str(f["name"]).replace("\\", "/") for f in files
-                               if PurePosixPath(f["name"]).suffix.lower() in VIDEO_EXTENSIONS}
+                video_names = {
+                    str(f["name"]).replace("\\", "/")
+                    for f in files
+                    if PurePosixPath(f["name"]).suffix.lower() in VIDEO_EXTENSIONS
+                }
                 if len(overrides) != len(data.files) or set(overrides) != video_names:
                     raise HTTPException(422, "请为当前全部视频指定集数或跳过，文件名不能重复")
             try:
@@ -248,9 +286,20 @@ async def approve(item_id: int, data: ReviewApproval,
             job = await session.scalar(select(DownloadJob).where(DownloadJob.item_id == item_id))
             if job:
                 job.title, job.season = title, data.season
-        await _record_and_publish_event(session, "review.approved", "feed_item", str(item_id), {
-            "title": item.title, "before": before,
-            "correction": data.model_dump(), "queued": bool(job),
-        })
-    return ApiMessage(message="已批准，下载队列将继续处理" if job else
-                      "已保存审核结果；启用订阅并配置下载器后可重新下载")
+        await _record_and_publish_event(
+            session,
+            "review.approved",
+            "feed_item",
+            str(item_id),
+            {
+                "title": item.title,
+                "before": before,
+                "correction": data.model_dump(),
+                "queued": bool(job),
+            },
+        )
+    return ApiMessage(
+        message="已批准，下载队列将继续处理"
+        if job
+        else "已保存审核结果；启用订阅并配置下载器后可重新下载"
+    )

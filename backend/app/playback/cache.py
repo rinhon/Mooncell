@@ -84,18 +84,24 @@ def session_directory(root: Path, session_id: str) -> Path:
 
 def remove_owned(root: Path, directory: Path) -> None:
     # 必须同时通过父目录、名称与自有标记，绝不按进程名或任意路径回收。
-    if (directory.is_symlink() or directory.is_junction()
-            or directory.resolve().parent != root.resolve()
-            or not SESSION_NAME.fullmatch(directory.name)
-            or not (directory / MARKER).is_file()):
+    if (
+        directory.is_symlink()
+        or directory.is_junction()
+        or directory.resolve().parent != root.resolve()
+        or not SESSION_NAME.fullmatch(directory.name)
+        or not (directory / MARKER).is_file()
+    ):
         return
     shutil.rmtree(directory)
 
 
 def directory_bytes(directory: Path) -> int:
     try:
-        return sum(path.stat().st_size for path in directory.rglob("*")
-                   if path.is_file() and not path.is_symlink())
+        return sum(
+            path.stat().st_size
+            for path in directory.rglob("*")
+            if path.is_file() and not path.is_symlink()
+        )
     except OSError:
         return 0
 
@@ -124,8 +130,11 @@ def prune(segments: dict[int, Segment], position: float, grace: float = 15) -> N
     now = time.monotonic()
     # HLS 的 MEDIA-SEQUENCE 要求清单序号连续；在读的最旧片段必须连同后缀保留。
     for sequence, segment in sorted(segments.items()):
-        if (segment.source_start + segment.duration < position - 60 and segment.readers == 0
-                and now - max(segment.published_at, segment.last_access) > grace):
+        if (
+            segment.source_start + segment.duration < position - 60
+            and segment.readers == 0
+            and now - max(segment.published_at, segment.last_access) > grace
+        ):
             try:
                 segment.path.unlink(missing_ok=True)
             except OSError:
@@ -145,8 +154,13 @@ def playable_segments(segments: dict[int, Segment]) -> list[Segment]:
     return values[start:]
 
 
-def make_playlist(segments: dict[int, Segment], ended: bool, *,
-                  target_duration: int | None = None, independent: bool = True) -> str:
+def make_playlist(
+    segments: dict[int, Segment],
+    ended: bool,
+    *,
+    target_duration: int | None = None,
+    independent: bool = True,
+) -> str:
     values = playable_segments(segments)
     if not values:
         raise MediaError("session_preparing", "播放分片仍在准备中", 425)
@@ -154,8 +168,12 @@ def make_playlist(segments: dict[int, Segment], ended: bool, *,
     if target_duration is not None and actual_target > target_duration:
         raise MediaError("segment_duration_exceeded", "源视频关键帧间隔超出直接串流限制", 422)
     target = target_duration or actual_target
-    lines = ["#EXTM3U", "#EXT-X-VERSION:6", f"#EXT-X-TARGETDURATION:{target}",
-             f"#EXT-X-MEDIA-SEQUENCE:{values[0].sequence}"]
+    lines = [
+        "#EXTM3U",
+        "#EXT-X-VERSION:6",
+        f"#EXT-X-TARGETDURATION:{target}",
+        f"#EXT-X-MEDIA-SEQUENCE:{values[0].sequence}",
+    ]
     if independent:
         lines.append("#EXT-X-INDEPENDENT-SEGMENTS")
     for segment in values:

@@ -15,7 +15,7 @@
   isolation: isolate;
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
   min-width: 0;
 }
 .top-nav-link {
@@ -24,13 +24,13 @@
   flex: none;
   align-items: center;
   justify-content: center;
-  min-height: 44px;
-  padding: 10px 15px;
+  min-height: 56px;
+  padding: 14px 20px;
   border-radius: var(--radius-control);
   color: var(--ink-2);
-  font-size: 14px;
-  font-weight: 500;
-  line-height: 24px;
+  font-size: 18px;
+  font-weight: 600;
+  line-height: 28px;
   text-decoration: none;
   white-space: nowrap;
 }
@@ -51,7 +51,7 @@
 .top-nav-indicator {
   position: absolute;
   inset: auto auto 2px 0;
-  height: 2px;
+  height: 3px;
   border-radius: 999px;
   background: var(--accent);
   pointer-events: none;
@@ -62,7 +62,7 @@
   left: 0;
   display: flex;
   width: max-content;
-  gap: 4px;
+  gap: 6px;
   visibility: hidden;
   pointer-events: none;
 }
@@ -76,15 +76,15 @@
   align-items: center;
   justify-content: center;
   gap: 8px;
-  min-width: 94px;
-  min-height: 44px;
-  padding: 8px 13px;
+  min-width: 108px;
+  min-height: 52px;
+  padding: 10px 17px;
   border: 1px solid var(--island-border);
   border-radius: 999px;
   color: var(--ink-2);
   background: var(--island-background);
-  font-size: 14px;
-  font-weight: 500;
+  font-size: 16px;
+  font-weight: 600;
   cursor: pointer;
 }
 .top-nav-more-trigger.active,
@@ -93,36 +93,17 @@
   color: var(--accent);
   border-color: var(--accent);
 }
-.top-nav-badge {
-  display: inline-flex;
-  flex: none;
-  align-items: center;
-  justify-content: center;
-  min-width: 22px;
-  height: 22px;
-  padding: 0 5px;
-  border-radius: 999px;
-  color: var(--on-accent);
-  background: var(--accent);
-  font-size: 12px;
-  font-weight: 600;
-  line-height: 1;
-  font-variant-numeric: tabular-nums;
-}
 .top-nav-menu {
-  min-width: 180px;
+  min-width: 200px;
 }
 .top-nav-menu-link {
-  min-height: 44px;
-  font-size: 14px;
+  min-height: 48px;
+  font-size: 16px;
   text-decoration: none;
 }
 .top-nav-menu-link[aria-current="page"] {
   color: var(--accent);
   background: var(--accent-soft);
-}
-.top-nav-menu-link .top-nav-badge {
-  margin-left: auto;
 }
 .top-nav-utility-start {
   margin-top: 5px;

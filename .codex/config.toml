@@ -1,0 +1,5 @@
+[apps.asdk_app_6ab10dfa7ab481919caa839a15d28561]
+enabled = false
+
+[mcp_servers.'-']
+enabled = false

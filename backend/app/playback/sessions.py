@@ -73,9 +73,14 @@ class PlaybackSession:
     stopping_generations: set[int] = field(default_factory=set)
     stopping_modes: dict[int, str] = field(default_factory=dict)
     prepare_started: float = field(default_factory=time.perf_counter)
-    timings: dict[str, float | None] = field(default_factory=lambda: {
-        "stop_ms": None, "spawn_ms": None, "first_segment_ms": None, "ready_ms": None,
-    })
+    timings: dict[str, float | None] = field(
+        default_factory=lambda: {
+            "stop_ms": None,
+            "spawn_ms": None,
+            "first_segment_ms": None,
+            "ready_ms": None,
+        }
+    )
     seek_disposition: str | None = None
     needs_recovery: bool = False
     plan: PlaybackPlan | None = None
@@ -165,15 +170,24 @@ class SessionManager:
             raise MediaError("session_not_found", "播放会话不存在或已失效", 404)
         return session
 
-    def validate_progress(self, user_id: int, media_id: str, session_id: str,
-                          generation: int, seek_revision: int | None = None) -> datetime:
+    def validate_progress(
+        self,
+        user_id: int,
+        media_id: str,
+        session_id: str,
+        generation: int,
+        seek_revision: int | None = None,
+    ) -> datetime:
         session = self.get(user_id, session_id)
         if session.media.media_id != media_id or session.generation != generation:
             raise MediaError("stale_generation", "观看记录属于已失效的播放代次", 409)
         if seek_revision is not None and seek_revision != session.seek_revision:
             raise MediaError("stale_seek_revision", "观看记录属于已失效的跳转位置", 409)
-        if (session.status == "failed" or session.status == "closed"
-                and time.monotonic() - (session.closed_at or 0) > 600):
+        if (
+            session.status == "failed"
+            or session.status == "closed"
+            and time.monotonic() - (session.closed_at or 0) > 600
+        ):
             raise MediaError("session_closed", "播放会话已关闭", 410)
         return session.created_at
 
@@ -186,48 +200,75 @@ class SessionManager:
     def _position(self, session: PlaybackSession, position: float) -> float:
         if not math.isfinite(position) or position < 0 or position > session.info.duration + 1:
             raise MediaError("invalid_position", "播放位置超出影片范围", 422)
-        return min(position, max(0, session.info.duration
-                                 - max(0.1, 2 / max(1, session.info.frame_rate))))
+        return min(
+            position, max(0, session.info.duration - max(0.1, 2 / max(1, session.info.frame_rate)))
+        )
 
-    def _has_slot(self, excluding: PlaybackSession | None = None,
-                  mode: str = "transcode") -> bool:
+    def _has_slot(self, excluding: PlaybackSession | None = None, mode: str = "transcode") -> bool:
         if mode == "direct":
             return True
-        active = sum(1 for session in self.sessions.values() if session is not excluding
-                     and (mode in session.stopping_modes.values()
-                          or session.process and session.process.running
-                          and session.process_mode == mode
-                          or session.status == "preparing" and session.mode == mode))
-        limit = (settings.playback_max_remux_sessions if mode == "remux"
-                 else settings.playback_max_sessions)
+        active = sum(
+            1
+            for session in self.sessions.values()
+            if session is not excluding
+            and (
+                mode in session.stopping_modes.values()
+                or session.process
+                and session.process.running
+                and session.process_mode == mode
+                or session.status == "preparing"
+                and session.mode == mode
+            )
+        )
+        limit = (
+            settings.playback_max_remux_sessions
+            if mode == "remux"
+            else settings.playback_max_sessions
+        )
         return active < max(1, limit)
 
     def _check_space(self, session: PlaybackSession | None = None) -> None:
         self.root.mkdir(parents=True, exist_ok=True)
         reserve_bytes = cache.RESERVE_BYTES
         if session is not None and session.mode == "remux":
-            average_bitrate = (session.info.bit_rate
-                               or session.media.size * 8 / max(0.001, session.info.duration))
+            average_bitrate = session.info.bit_rate or session.media.size * 8 / max(
+                0.001, session.info.duration
+            )
             # 原码流不受转码的 6 Mbps 上限约束。为六秒片及监控间隔额外产出预留空间，
             # 平均码率再乘二覆盖常见峰值；运行中的目录配额/磁盘余量检查仍不可省略。
             reserve_bytes = max(reserve_bytes, math.ceil(average_bitrate / 8 * (6 + 2) * 2))
         session_bytes = cache.directory_bytes(session.directory) if session else 0
-        global_bytes = sum(cache.directory_bytes(item.directory)
-                           for item in self.sessions.values())
-        if (session_bytes + reserve_bytes > settings.playback_session_quota_mb * 1024**2
-                or global_bytes + reserve_bytes
-                > settings.playback_global_quota_mb * 1024**2
-                or shutil.disk_usage(self.root).free
-                < settings.playback_min_free_mb * 1024**2 + reserve_bytes):
+        global_bytes = sum(cache.directory_bytes(item.directory) for item in self.sessions.values())
+        if (
+            session_bytes + reserve_bytes > settings.playback_session_quota_mb * 1024**2
+            or global_bytes + reserve_bytes > settings.playback_global_quota_mb * 1024**2
+            or shutil.disk_usage(self.root).free
+            < settings.playback_min_free_mb * 1024**2 + reserve_bytes
+        ):
             raise MediaError("cache_limit", "播放缓存或磁盘空间不足，请稍后重试", 507)
 
-    async def create(self, user_id: int, media: ResolvedMedia, info: PlaybackInfo,
-                     start_time: float, quality: int, audio_track: int | None,
-                     request_id: str, client_id: str | None = None,
-                     capabilities: ClientPlaybackCapabilities | None = None,
-                     force_transcode: bool = False, max_bitrate: int | None = None) -> dict:
-        plan = plan_playback(info, quality, audio_track, capabilities,
-                             force_transcode=force_transcode, max_bitrate=max_bitrate)
+    async def create(
+        self,
+        user_id: int,
+        media: ResolvedMedia,
+        info: PlaybackInfo,
+        start_time: float,
+        quality: int,
+        audio_track: int | None,
+        request_id: str,
+        client_id: str | None = None,
+        capabilities: ClientPlaybackCapabilities | None = None,
+        force_transcode: bool = False,
+        max_bitrate: int | None = None,
+    ) -> dict:
+        plan = plan_playback(
+            info,
+            quality,
+            audio_track,
+            capabilities,
+            force_transcode=force_transcode,
+            max_bitrate=max_bitrate,
+        )
         # 同一标签页刷新先标记旧会话关闭；等进程回收时不持有全局控制锁。
         closing = []
         async with self.lock:
@@ -236,9 +277,11 @@ class SessionManager:
                 return self.snapshot(self.get(user_id, previous))
             if client_id is not None:
                 for previous_session in self.sessions.values():
-                    if (previous_session.user_id == user_id
-                            and previous_session.client_id == client_id
-                            and previous_session.status != "closed"):
+                    if (
+                        previous_session.user_id == user_id
+                        and previous_session.client_id == client_id
+                        and previous_session.status != "closed"
+                    ):
                         await self._close(previous_session)
                         if previous_session.stop_task:
                             closing.append(previous_session.stop_task)
@@ -253,8 +296,9 @@ class SessionManager:
             if self.stopping:
                 raise MediaError("service_stopping", "播放服务正在停止", 503)
             if not info.supported:
-                raise MediaError("unsupported_media",
-                                 info.unsupported_reason or "媒体不受支持", 422)
+                raise MediaError(
+                    "unsupported_media", info.unsupported_reason or "媒体不受支持", 422
+                )
             if not self._has_slot(mode=plan.mode):
                 raise MediaError("transcode_busy", "服务端转码名额已满，请先关闭其他播放", 429)
             ensure_current(media)
@@ -270,16 +314,32 @@ class SessionManager:
                     raise MediaError("session_limit", "暂存播放会话过多，请稍后重试", 429)
             session_id = uuid.uuid4().hex
             session = PlaybackSession(
-                session_id, user_id, media, info, self.root / f"session-{session_id}",
-                start_time, quality, audio_track, client_id=client_id,
-                plan=plan, capabilities=capabilities,
-                force_transcode=force_transcode, max_bitrate=max_bitrate,
+                session_id,
+                user_id,
+                media,
+                info,
+                self.root / f"session-{session_id}",
+                start_time,
+                quality,
+                audio_track,
+                client_id=client_id,
+                plan=plan,
+                capabilities=capabilities,
+                force_transcode=force_transcode,
+                max_bitrate=max_bitrate,
             )
             session.position = self._position(session, start_time)
             session.clock_position = session.position
             if plan.mode != "direct":
-                transcode.command(media, info, session.generation_directory,
-                                  session.position, plan.output_quality, audio_track, plan=plan)
+                transcode.command(
+                    media,
+                    info,
+                    session.generation_directory,
+                    session.position,
+                    plan.output_quality,
+                    audio_track,
+                    plan=plan,
+                )
             leases.acquire_source(media.source_id)
             session.leased = True
             try:
@@ -295,9 +355,7 @@ class SessionManager:
             if plan.mode == "direct":
                 session.status, session.process_state = "ready", "not-needed"
                 session.source_anchor, session.media_anchor = 0, 0
-                session.timings["ready_ms"] = (
-                    time.perf_counter() - session.prepare_started
-                ) * 1000
+                session.timings["ready_ms"] = (time.perf_counter() - session.prepare_started) * 1000
             else:
                 session.task = self._task(self._prepare(session, session.generation))
             if self.monitor is None or self.monitor.done():
@@ -312,40 +370,67 @@ class SessionManager:
         if session.mode == "transcode":
             requested = session.plan.output_quality if session.plan else session.quality
             output_height = max(2, min(output_height, requested) // 2 * 2)
-            output_width = max(2, min(round(output_height * session.info.video_width
-                                            / session.info.video_height), output_width) // 2 * 2)
+            output_width = max(
+                2,
+                min(
+                    round(output_height * session.info.video_width / session.info.video_height),
+                    output_width,
+                )
+                // 2
+                * 2,
+            )
         return {
-            "id": session.id, "media_id": session.media.media_id,
-            "generation": session.generation, "status": session.status,
-            "revision": session.revision, "seek_revision": session.seek_revision,
+            "id": session.id,
+            "media_id": session.media.media_id,
+            "generation": session.generation,
+            "status": session.status,
+            "revision": session.revision,
+            "seek_revision": session.seek_revision,
             "position": session.position,
             "seek_disposition": session.seek_disposition,
             "requires_reload": session.seek_disposition == "restart",
             "needs_recovery": session.needs_recovery,
             "timings": dict(session.timings),
             "playback_mode": session.mode,
-            "output_height": output_height, "output_width": output_width,
+            "output_height": output_height,
+            "output_width": output_width,
             "mode_reason": session.plan.reason if session.plan else "按客户端能力转码",
-            "mime_type": (session.plan.mime_type if session.plan
-                          else "application/vnd.apple.mpegurl"),
+            "mime_type": (
+                session.plan.mime_type if session.plan else "application/vnd.apple.mpegurl"
+            ),
             "timeline_mode": "source" if session.mode == "direct" else "anchored",
-            "stream_url": f"{prefix}/stream" if session.mode == "direct"
-                          else f"{prefix}/index.m3u8",
-            "duration": session.info.duration, "source_anchor": session.source_anchor,
+            "stream_url": f"{prefix}/stream"
+            if session.mode == "direct"
+            else f"{prefix}/index.m3u8",
+            "duration": session.info.duration,
+            "source_anchor": session.source_anchor,
             "media_anchor": session.media_anchor,
             "playlist_url": f"{prefix}/index.m3u8",
-            "cached_ranges": [[values[0].source_start,
-                               min(session.info.duration,
-                                   values[-1].source_start + values[-1].duration)]]
-                             if values else [],
-            "segments": [{"sequence": segment.sequence, "source_start": segment.source_start,
-                          "duration": segment.duration} for segment in values],
-            "quality": session.quality, "audio_track": session.audio_track,
-            "error": session.error, "process_state": session.process_state,
+            "cached_ranges": [
+                [
+                    values[0].source_start,
+                    min(session.info.duration, values[-1].source_start + values[-1].duration),
+                ]
+            ]
+            if values
+            else [],
+            "segments": [
+                {
+                    "sequence": segment.sequence,
+                    "source_start": segment.source_start,
+                    "duration": segment.duration,
+                }
+                for segment in values
+            ],
+            "quality": session.quality,
+            "audio_track": session.audio_track,
+            "error": session.error,
+            "process_state": session.process_state,
         }
 
-    async def status(self, user_id: int, session_id: str,
-                     after_revision: int | None = None, wait_ms: int = 0) -> dict:
+    async def status(
+        self, user_id: int, session_id: str, after_revision: int | None = None, wait_ms: int = 0
+    ) -> dict:
         async with self.lock:
             session = self.get(user_id, session_id)
             if after_revision is None or session.revision != after_revision or wait_ms <= 0:
@@ -411,7 +496,10 @@ class SessionManager:
                     directory = session.generation_directory
                     directory.mkdir(exist_ok=True)
                     arguments = transcode.command(
-                        session.media, session.info, directory, session.position,
+                        session.media,
+                        session.info,
+                        directory,
+                        session.position,
                         session.plan.output_quality if session.plan else session.quality,
                         session.audio_track,
                         "libx264" if session.fallback_used else None,
@@ -441,8 +529,9 @@ class SessionManager:
             except (OSError, ValueError, subprocess.SubprocessError, psutil.Error) as exc:
                 async with self.lock:
                     if generation == session.generation and session.status == "preparing":
-                        await self._fail(session, "encoder_failed",
-                                         f"转码进程无法启动：{type(exc).__name__}")
+                        await self._fail(
+                            session, "encoder_failed", f"转码进程无法启动：{type(exc).__name__}"
+                        )
 
     async def _stop_process(self, session: PlaybackSession) -> None:
         """供维护/测试显式等待；生产控制通过 _queue_stop 在全局锁外回收。"""
@@ -467,10 +556,12 @@ class SessionManager:
             async with self.lock:
                 if generation != session.generation:
                     return
-                if ((reason == "pause" and not session.paused)
-                        or (reason == "complete" and not session.ended)
-                        or (reason == "failed" and session.status != "failed")
-                        or (reason == "closed" and session.status != "closed")):
+                if (
+                    (reason == "pause" and not session.paused)
+                    or (reason == "complete" and not session.ended)
+                    or (reason == "failed" and session.status != "failed")
+                    or (reason == "closed" and session.status != "closed")
+                ):
                     return
                 process, session.process = session.process, None
                 if process:
@@ -484,8 +575,10 @@ class SessionManager:
                 async with self.lock:
                     if generation == session.generation:
                         session.status, session.process_state = "failed", "stop-failed"
-                        session.error = {"code": "process_stop_failed",
-                                         "message": "旧转码进程尚未退出，请稍后重试"}
+                        session.error = {
+                            "code": "process_stop_failed",
+                            "message": "旧转码进程尚未退出，请稍后重试",
+                        }
             finally:
                 async with self.lock:
                     alive = process is not None and process.running
@@ -508,20 +601,31 @@ class SessionManager:
         self._queue_stop(session, "failed")
         self._notify(session)
 
-    async def seek(self, user_id: int, session_id: str, generation: int, position: float,
-                   request_id: str, quality: int | None = None,
-                   audio_track: int | None = None, change_audio: bool = False,
-                   client_buffered: bool = False,
-                   capabilities: ClientPlaybackCapabilities | None = None,
-                   force_transcode: bool | None = None, max_bitrate: int | None = None,
-                   change_max_bitrate: bool = False) -> dict:
+    async def seek(
+        self,
+        user_id: int,
+        session_id: str,
+        generation: int,
+        position: float,
+        request_id: str,
+        quality: int | None = None,
+        audio_track: int | None = None,
+        change_audio: bool = False,
+        client_buffered: bool = False,
+        capabilities: ClientPlaybackCapabilities | None = None,
+        force_transcode: bool | None = None,
+        max_bitrate: int | None = None,
+        change_max_bitrate: bool = False,
+    ) -> dict:
         async with self.lock:
             session = self.get(user_id, session_id)
             if request_id in session.request_ids:
                 return self.snapshot(session)
             # 同一旧代次的连续拖动在准备期间合并，只有最后一次准备任务能启动。
-            if not (session.status == "preparing"
-                    and session.last_ready_generation <= generation < session.generation):
+            if not (
+                session.status == "preparing"
+                and session.last_ready_generation <= generation < session.generation
+            ):
                 self._check_generation(session, generation)
             next_quality = quality if quality is not None else session.quality
             next_audio = audio_track if change_audio else session.audio_track
@@ -529,24 +633,45 @@ class SessionManager:
             next_caps = capabilities if capabilities is not None else session.capabilities
             next_force = session.force_transcode if force_transcode is None else force_transcode
             next_max = max_bitrate if change_max_bitrate else session.max_bitrate
-            next_plan = plan_playback(session.info, next_quality, next_audio, next_caps,
-                                      force_transcode=next_force, max_bitrate=next_max)
+            next_plan = plan_playback(
+                session.info,
+                next_quality,
+                next_audio,
+                next_caps,
+                force_transcode=next_force,
+                max_bitrate=next_max,
+            )
             if next_plan.mode != "direct":
-                transcode.command(session.media, session.info, session.generation_directory,
-                                  target, next_plan.output_quality, next_audio, plan=next_plan)
+                transcode.command(
+                    session.media,
+                    session.info,
+                    session.generation_directory,
+                    target,
+                    next_plan.output_quality,
+                    next_audio,
+                    plan=next_plan,
+                )
             values = cache.playable_segments(session.segments)
-            cached = (values
-                    and (session.process and session.process.running or session.ended)
-                    and min(segment.source_start for segment in values) <= target
-                    < max(segment.source_start + segment.duration for segment in values))
+            cached = (
+                values
+                and (session.process and session.process.running or session.ended)
+                and min(segment.source_start for segment in values)
+                <= target
+                < max(segment.source_start + segment.duration for segment in values)
+            )
             session.seek_revision += 1
-            same_output = (next_quality == session.quality and next_audio == session.audio_track
-                           and next_plan == session.plan)
+            same_output = (
+                next_quality == session.quality
+                and next_audio == session.audio_track
+                and next_plan == session.plan
+            )
             direct = session.mode == next_plan.mode == "direct"
-            buffered = client_buffered and any(start <= target < end
-                                               for start, end in session.produced_ranges)
-            if (session.status in {"ready", "paused"}
-                    and (direct or same_output and (buffered or cached))):
+            buffered = client_buffered and any(
+                start <= target < end for start, end in session.produced_ranges
+            )
+            if session.status in {"ready", "paused"} and (
+                direct or same_output and (buffered or cached)
+            ):
                 session.position = target
                 session.quality, session.audio_track = next_quality, next_audio
                 session.plan, session.capabilities = next_plan, next_caps
@@ -590,9 +715,16 @@ class SessionManager:
         session.task = self._task(self._prepare(session, session.generation))
         self._notify(session)
 
-    async def heartbeat(self, user_id: int, session_id: str, generation: int,
-                        position: float, paused: bool, playback_rate: float,
-                        seek_revision: int | None = None) -> dict:
+    async def heartbeat(
+        self,
+        user_id: int,
+        session_id: str,
+        generation: int,
+        position: float,
+        paused: bool,
+        playback_rate: float,
+        seek_revision: int | None = None,
+    ) -> dict:
         async with self.lock:
             session = self.get(user_id, session_id)
             previous_status = session.status, session.process_state, session.paused
@@ -602,8 +734,11 @@ class SessionManager:
             now = time.monotonic()
             position = self._position(session, position)
             # 心跳不能伪装远距离 seek，突破领先水位继续无限产出。
-            expected = session.clock_position + ((now - session.clock_started) * session.clock_rate
-                                                 if not session.clock_paused else 0)
+            expected = session.clock_position + (
+                (now - session.clock_started) * session.clock_rate
+                if not session.clock_paused
+                else 0
+            )
             if position > expected + 15 or position < session.position - 15:
                 raise MediaError("position_discontinuity", "请通过跳转接口更新播放位置", 409)
             session.clock_position, session.clock_started = expected, now
@@ -613,8 +748,7 @@ class SessionManager:
             session.paused = paused
             if paused:
                 session.paused_since = session.paused_since or now
-                if (session.process and session.process.running
-                        and self._target_available(session)):
+                if session.process and session.process.running and self._target_available(session):
                     session.process.suspend()
                     session.process_state = "user_paused"
                 if session.status == "ready":
@@ -667,12 +801,14 @@ class SessionManager:
             session = self.get(user_id, session_id)
             self._check_generation(session, generation)
             session.last_active = time.monotonic()
-            return cache.make_playlist(session.segments, session.ended,
-                                       target_duration=6 if session.mode == "remux" else None,
-                                       independent=session.mode != "remux")
+            return cache.make_playlist(
+                session.segments,
+                session.ended,
+                target_duration=6 if session.mode == "remux" else None,
+                independent=session.mode != "remux",
+            )
 
-    async def open_direct(self, user_id: int, session_id: str,
-                          generation: int) -> ResolvedMedia:
+    async def open_direct(self, user_id: int, session_id: str, generation: int) -> ResolvedMedia:
         async with self.lock:
             session = self.get(user_id, session_id)
             self._check_generation(session, generation)
@@ -686,8 +822,9 @@ class SessionManager:
             session.last_active = time.monotonic()
             return session.media
 
-    async def open_segment(self, user_id: int, session_id: str, generation: int,
-                           name: str) -> cache.Segment:
+    async def open_segment(
+        self, user_id: int, session_id: str, generation: int, name: str
+    ) -> cache.Segment:
         async with self.lock:
             session = self.get(user_id, session_id)
             self._check_generation(session, generation)
@@ -705,8 +842,10 @@ class SessionManager:
             segment.last_access = time.monotonic()
 
     def _produced_end(self, session: PlaybackSession) -> float:
-        return max((segment.source_start + segment.duration
-                    for segment in session.segments.values()), default=session.position)
+        return max(
+            (segment.source_start + segment.duration for segment in session.segments.values()),
+            default=session.position,
+        )
 
     def _target_available(self, session: PlaybackSession) -> bool:
         """暂停跳转也必须先生产到目标帧，不能在回退预读的第一个分片就挂起。"""
@@ -731,15 +870,22 @@ class SessionManager:
 
     async def _refresh_state(self, session: PlaybackSession) -> None:
         if session.mode == "direct":
-            if (session.status == "paused" and session.leased and session.paused_since
-                    and time.monotonic() - session.paused_since >= 60):
+            if (
+                session.status == "paused"
+                and session.leased
+                and session.paused_since
+                and time.monotonic() - session.paused_since >= 60
+            ):
                 leases.release_source(session.media.source_id)
                 session.leased = False
                 session.process_state = "released"
             return
         process = session.process
-        if (process is None or session.process_generation != session.generation
-                or session.status in {"closed", "failed"}):
+        if (
+            process is None
+            or session.process_generation != session.generation
+            or session.status in {"closed", "failed"}
+        ):
             return
         # 先检查产出与空间，探测在独立任务中执行，不能阻塞控制和引用释放。
         if process.running:
@@ -765,9 +911,11 @@ class SessionManager:
             if generation != session.generation:
                 continue
             source_start = max(0, task.result() - transcode.TIMESTAMP_OFFSET)
-            if (not session.segments
-                    and source_start > session.position + max(0.01, 2 / session.info.frame_rate)
-                    and sequence == 0):
+            if (
+                not session.segments
+                and source_start > session.position + max(0.01, 2 / session.info.frame_rate)
+                and sequence == 0
+            ):
                 if session.seek_preroll < transcode.MAX_SEEK_PREROLL:
                     # 仅向目标前有限回退一次；禁止静默从片头解码到任意远目标。
                     session.seek_preroll = transcode.MAX_SEEK_PREROLL
@@ -776,11 +924,18 @@ class SessionManager:
                     if session.mode == "remux":
                         self._fallback_transcode(session, "源视频索引无法准确定位，已回退到转码")
                     else:
-                        await self._fail(session, "seek_index_unavailable",
-                                         "片源无法在目标前定位关键帧，请尝试附近位置或更换片源")
+                        await self._fail(
+                            session,
+                            "seek_index_unavailable",
+                            "片源无法在目标前定位关键帧，请尝试附近位置或更换片源",
+                        )
                 return
             session.segments[sequence] = cache.Segment(
-                sequence, path, source_start, duration, time.monotonic(),
+                sequence,
+                path,
+                source_start,
+                duration,
+                time.monotonic(),
             )
             published = sorted([*session.produced_ranges, (source_start, source_start + duration)])
             session.produced_ranges = []
@@ -818,15 +973,19 @@ class SessionManager:
             sequence not in session.segments and (session.generation_directory / name).is_file()
             for sequence, name, _ in entries
         )
-        session.ended = (ended and process.returncode == 0
-                         and not session.pending_probes and not unregistered)
+        session.ended = (
+            ended and process.returncode == 0 and not session.pending_probes and not unregistered
+        )
         if process.returncode is not None:
             if process.returncode != 0:
                 if session.mode == "remux" and not session.segments:
                     self._fallback_transcode(session, "源文件无法直接串流，已回退到转码")
-                elif (session.mode == "transcode" and settings.playback_encoder != "libx264"
-                        and not session.fallback_used
-                        and not session.segments):
+                elif (
+                    session.mode == "transcode"
+                    and settings.playback_encoder != "libx264"
+                    and not session.fallback_used
+                    and not session.segments
+                ):
                     session.fallback_used = True
                     self._restart(session)
                 else:
@@ -861,8 +1020,10 @@ class SessionManager:
             else:
                 return
             process.suspend()
-            session.process_state, session.error = "cache_paused", {"code": exc.code,
-                                                                     "message": exc.message}
+            session.process_state, session.error = (
+                "cache_paused",
+                {"code": exc.code, "message": exc.message},
+            )
             return
         ahead = max(self._produced_end(session), process.out_time) - session.position
         if ahead >= 90:
@@ -876,10 +1037,17 @@ class SessionManager:
 
     def _fallback_transcode(self, session: PlaybackSession, reason: str) -> None:
         session.force_transcode = True
-        session.plan = replace(plan_playback(
-            session.info, session.quality, session.audio_track, session.capabilities,
-            force_transcode=True, max_bitrate=session.max_bitrate,
-        ), reason=reason)
+        session.plan = replace(
+            plan_playback(
+                session.info,
+                session.quality,
+                session.audio_track,
+                session.capabilities,
+                force_transcode=True,
+                max_bitrate=session.max_bitrate,
+            ),
+            reason=reason,
+        )
         self._restart(session)
 
     async def _probe_segment(self, path: Path) -> float:
@@ -898,11 +1066,16 @@ class SessionManager:
         session.pending_probes.clear()
 
     async def _cleanup(self, session: PlaybackSession) -> None:
-        if (session.process_lock.locked() or session.process
-                or session.stop_task and not session.stop_task.done()):
+        if (
+            session.process_lock.locked()
+            or session.process
+            or session.stop_task
+            and not session.stop_task.done()
+        ):
             return
-        if any(segment.readers for segment in [*session.segments.values(),
-                                              *session.retired_segments]):
+        if any(
+            segment.readers for segment in [*session.segments.values(), *session.retired_segments]
+        ):
             return
         await asyncio.to_thread(cache.remove_owned, self.root, session.directory)
         self.sessions.pop(session.id, None)
@@ -917,20 +1090,30 @@ class SessionManager:
 
     def _cleanup_retired(self, session: PlaybackSession) -> None:
         for directory, retired_at in list(session.retired_directories):
-            related = [segment for segment in session.retired_segments
-                       if segment.path.parent == directory]
-            if (time.monotonic() - retired_at < 15 or any(segment.readers for segment in related)
-                    or int(directory.name.partition("-")[2]) in session.stopping_generations
-                    or session.process and session.process.running
-                    and session.process_generation == int(directory.name.partition("-")[2])):
+            related = [
+                segment for segment in session.retired_segments if segment.path.parent == directory
+            ]
+            if (
+                time.monotonic() - retired_at < 15
+                or any(segment.readers for segment in related)
+                or int(directory.name.partition("-")[2]) in session.stopping_generations
+                or session.process
+                and session.process.running
+                and session.process_generation == int(directory.name.partition("-")[2])
+            ):
                 continue
-            if (directory.resolve().parent == session.directory.resolve()
-                    and not directory.is_symlink() and not directory.is_junction()
-                    and directory.name.startswith("generation-") and directory.exists()):
+            if (
+                directory.resolve().parent == session.directory.resolve()
+                and not directory.is_symlink()
+                and not directory.is_junction()
+                and directory.name.startswith("generation-")
+                and directory.exists()
+            ):
                 shutil.rmtree(directory)
             session.retired_directories.remove((directory, retired_at))
-            session.retired_segments = [segment for segment in session.retired_segments
-                                        if segment.path.parent != directory]
+            session.retired_segments = [
+                segment for segment in session.retired_segments if segment.path.parent != directory
+            ]
 
     async def _monitor(self) -> None:
         while True:
@@ -953,5 +1136,6 @@ class SessionManager:
                         await self._fail(session, exc.code, exc.message)
                     except (OSError, psutil.Error):
                         await self._fail(session, "process_error", "播放进程或缓存暂时不可用")
+
 
 manager = SessionManager()

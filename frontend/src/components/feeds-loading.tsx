@@ -2,6 +2,7 @@ import type { ReactNode } from "react"
 import { AddSubscriptionButton } from "@/components/add-subscription-button"
 import { PageHeading } from "@/components/page-heading"
 import { CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Masonry } from "@/components/ui/masonry"
 import { Skeleton } from "@/components/ui/skeleton"
 import "@/pages/feeds.css"
 
@@ -41,26 +42,30 @@ export function FeedsLoading({ count }: { count?: number }) {
       <FeedsSection count={count}>
         <div role="status" aria-label="正在加载订阅与合集" aria-busy="true">
           <span className="sr-only">正在读取订阅与合集…</span>
-          <div className="feed-list" aria-hidden="true">
-            {Array.from({ length: count ?? 6 }, (_, index) => (
-              <div key={index} className="feed-card flex flex-col gap-4 p-5">
-                <Skeleton className={`h-6 ${index % 2 ? "w-1/2" : "w-3/4"}`} />
-                <div className="feed-card-clearlogo">
-                  <Skeleton className="h-full w-full" />
-                </div>
-                <div className="feed-card-status">
-                  <div className="feed-card-labels">
-                    <Skeleton className="h-6 w-11" />
-                    <Skeleton className="h-6 w-14" />
+          <div aria-hidden="true">
+            <Masonry className="feed-list" columns="auto-fit" columnWidth={400} animate={false}>
+              {Array.from({ length: count ?? 6 }, (_, index) => (
+                <div key={index} className="feed-card flex flex-col">
+                  <div className="feed-card-title">
+                    <Skeleton className={`h-5 ${index % 2 ? "w-1/2" : "w-3/4"}`} />
                   </div>
-                  <div className="feed-card-actions">
-                    <Skeleton className="h-8 w-20" />
-                    <Skeleton className="h-8 w-20" />
-                    <Skeleton className="size-8" />
+                  <div className="feed-card-clearlogo">
+                    <Skeleton className="h-full w-full" />
+                  </div>
+                  <div className="feed-card-status">
+                    <div className="feed-card-labels">
+                      <Skeleton className="h-7 w-14" />
+                      <Skeleton className="h-7 w-20" />
+                    </div>
+                    <div className="feed-card-actions">
+                      <Skeleton className="size-9" />
+                      <Skeleton className="size-9" />
+                      <Skeleton className="size-9" />
+                    </div>
                   </div>
                 </div>
-              </div>
-            ))}
+              ))}
+            </Masonry>
           </div>
         </div>
       </FeedsSection>

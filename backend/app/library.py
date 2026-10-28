@@ -58,9 +58,13 @@ def list_directories(path: str | None = None) -> dict:
                         children.append({"name": entry.name, "path": str(directory / entry.name)})
                 except OSError:
                     continue
-        return {"path": str(directory), "children": sorted(
-            children, key=lambda item: item["name"].casefold(),
-        )}
+        return {
+            "path": str(directory),
+            "children": sorted(
+                children,
+                key=lambda item: item["name"].casefold(),
+            ),
+        }
     except PermissionError as exc:
         raise HTTPException(403, "没有权限读取此文件夹") from exc
     except OSError as exc:
@@ -74,7 +78,8 @@ async def read_library(session: AsyncSession = Depends(get_session)) -> LibraryP
 
 @router.patch("/settings/library", response_model=LibraryPath)
 async def save_library(
-    data: LibraryPath, session: AsyncSession = Depends(get_session),
+    data: LibraryPath,
+    session: AsyncSession = Depends(get_session),
 ) -> LibraryPath:
     path = await run_in_threadpool(existing_directory, data.library_root)
     # 验证可以读取目录后才保存，失效路径不会覆盖已有设置。

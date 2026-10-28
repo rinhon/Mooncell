@@ -12,7 +12,7 @@ export function TodaySchedule({ query, now }: { query: ModuleQuery<SeasonCalenda
     .sort((a, b) => Number(b.liked) - Number(a.liked) || a.broadcast_time.localeCompare(b.broadcast_time))
   const date = now.toLocaleDateString("zh-CN", { month: "long", day: "numeric", weekday: "long" })
   return (
-    <section className="dashboard-panel" aria-labelledby="dashboard-today-title">
+    <section className="dashboard-panel dashboard-today" aria-labelledby="dashboard-today-title">
       <header className="dashboard-panel-heading">
         <div>
           <h2 id="dashboard-today-title">今日放送</h2>
@@ -28,7 +28,7 @@ export function TodaySchedule({ query, now }: { query: ModuleQuery<SeasonCalenda
         (items.length ? (
           <>
             <ul className="dashboard-schedule-list">
-              {items.slice(0, 4).map((item) => (
+              {items.map((item) => (
                 <li key={item.id}>
                   <Link
                     to={href}

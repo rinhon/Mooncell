@@ -38,8 +38,13 @@ ARTWORK_NAMES = {
     "clearlogo": ("clearlogo", "logo"),
 }
 scan_state = {
-    "running": False, "started_at": None, "finished_at": None,
-    "scanned": 0, "changed": 0, "thumbnails": 0, "errors": 0,
+    "running": False,
+    "started_at": None,
+    "finished_at": None,
+    "scanned": 0,
+    "changed": 0,
+    "thumbnails": 0,
+    "errors": 0,
 }
 
 
@@ -64,17 +69,21 @@ class LibraryImages:
 
     @property
     def version(self) -> str:
-        return hashlib.sha256(json.dumps(
-            {kind: image.version if image else None for kind, image in self.artwork.items()},
-            sort_keys=True,
-        ).encode()).hexdigest()[:24]
+        return hashlib.sha256(
+            json.dumps(
+                {kind: image.version if image else None for kind, image in self.artwork.items()},
+                sort_keys=True,
+            ).encode()
+        ).hexdigest()[:24]
 
 
 def local_image(directory: Path, relative: str) -> Path:
     """只允许作品目录内的普通图片，不跟随符号链接和 Windows 目录联接。"""
     path = Path(relative)
-    if path.is_absolute() or path.drive or any(
-        part in {".", ".."} or part.startswith(".") for part in path.parts
+    if (
+        path.is_absolute()
+        or path.drive
+        or any(part in {".", ".."} or part.startswith(".") for part in path.parts)
     ):
         raise ValueError("图片路径无效")
     current = directory
@@ -114,7 +123,8 @@ def scan_images(directory: Path) -> LibraryImages:
                                 if stat.st_size:
                                     images[entry.name.casefold()] = ImageFile(
                                         path.relative_to(directory).as_posix(),
-                                        stat.st_mtime_ns, stat.st_size,
+                                        stat.st_mtime_ns,
+                                        stat.st_size,
                                     )
                             elif suffix in VIDEO_EXTENSIONS:
                                 videos.append(path)
@@ -130,7 +140,8 @@ def scan_images(directory: Path) -> LibraryImages:
             stem = Path(name).stem
             previous = by_stem.get(stem)
             if previous is None or (image.modified_ns, image.path) > (
-                previous.modified_ns, previous.path,
+                previous.modified_ns,
+                previous.path,
             ):
                 by_stem[stem] = image
         if folder == directory:
@@ -156,20 +167,36 @@ def scan_images(directory: Path) -> LibraryImages:
 def binding(source: FeedSource, root: str) -> tuple:
     artwork = source.artwork
     directory = artwork.directory if artwork else str(Path(root) / safe_folder_name(source.name))
-    return (source.name, directory, artwork.scraped_at if artwork else None,
-            artwork.file_version if artwork else None,
-            tuple(getattr(artwork, f"{kind}_path") for kind in ARTWORK_NAMES) if artwork else ())
+    return (
+        source.name,
+        directory,
+        artwork.scraped_at if artwork else None,
+        artwork.file_version if artwork else None,
+        tuple(getattr(artwork, f"{kind}_path") for kind in ARTWORK_NAMES) if artwork else (),
+    )
 
 
 async def source_busy(session, source_id: int) -> bool:
-    if await session.scalar(select(BackgroundOperation.id).where(
-        BackgroundOperation.source_id == source_id,
-        BackgroundOperation.status.in_({"queued", "running"}),
-    ).limit(1)):
+    if await session.scalar(
+        select(BackgroundOperation.id)
+        .where(
+            BackgroundOperation.source_id == source_id,
+            BackgroundOperation.status.in_({"queued", "running"}),
+        )
+        .limit(1)
+    ):
         return True
-    return bool(await session.scalar(select(DownloadJob.id).join(FeedItem).where(
-        FeedItem.source_id == source_id, DownloadJob.plan.contains('"episode_rename"'),
-    ).limit(1)))
+    return bool(
+        await session.scalar(
+            select(DownloadJob.id)
+            .join(FeedItem)
+            .where(
+                FeedItem.source_id == source_id,
+                DownloadJob.plan.contains('"episode_rename"'),
+            )
+            .limit(1)
+        )
+    )
 
 
 def thumbnail_binding_image(directory: Path, item: EpisodeThumbnail) -> ImageFile | None:
@@ -196,8 +223,11 @@ async def scan_source(source_id: int) -> tuple[bool, int]:
     images = await asyncio.to_thread(scan_images, Path(before[1]))
     async with SessionFactory() as session:
         source = await session.get(FeedSource, source_id)
-        if (source is None or binding(source, await get_library_root(session)) != before
-                or await source_busy(session, source_id)):
+        if (
+            source is None
+            or binding(source, await get_library_root(session)) != before
+            or await source_busy(session, source_id)
+        ):
             return False, 0
         artwork = source.artwork
         changed = False
@@ -219,21 +249,33 @@ async def scan_source(source_id: int) -> tuple[bool, int]:
             # ready 标记检查真实文件；版本包含缺失状态，确保前端及时刷新。
             ready = sum(image is not None for image in images.artwork.values())
             status = "completed" if ready == 3 else "partial" if ready else "missing"
-            error = "本地缺少：" + "、".join(
-                kind for kind, image in images.artwork.items() if image is None
-            ) if ready != 3 else None
+            error = (
+                "本地缺少："
+                + "、".join(kind for kind, image in images.artwork.items() if image is None)
+                if ready != 3
+                else None
+            )
             if artwork.status != status or artwork.last_error != error:
                 changed = True
                 artwork.status = status
                 artwork.last_error = error
-        saved = {item.video_path: item for item in await session.scalars(
-            select(EpisodeThumbnail).where(EpisodeThumbnail.source_id == source_id),
-        )}
+        saved = {
+            item.video_path: item
+            for item in await session.scalars(
+                select(EpisodeThumbnail).where(EpisodeThumbnail.source_id == source_id),
+            )
+        }
         for video_path, image in images.thumbnails.items():
             item = saved.pop(video_path, None)
             if item is None:
-                session.add(EpisodeThumbnail(source_id=source_id, video_path=video_path,
-                                             image_path=image.path, file_version=image.version))
+                session.add(
+                    EpisodeThumbnail(
+                        source_id=source_id,
+                        video_path=video_path,
+                        image_path=image.path,
+                        file_version=image.version,
+                    )
+                )
                 changed = True
             elif item.image_path != image.path or item.file_version != image.version:
                 item.image_path, item.file_version = image.path, image.version
@@ -248,9 +290,16 @@ async def scan_source(source_id: int) -> tuple[bool, int]:
                     item.file_version = image.version
                     changed = True
         if changed:
-            record_event(session, "library.scan.changed", "feed_source", source_id, {
-                "name": source.name, "thumbnails": len(images.thumbnails),
-            })
+            record_event(
+                session,
+                "library.scan.changed",
+                "feed_source",
+                source_id,
+                {
+                    "name": source.name,
+                    "thumbnails": len(images.thumbnails),
+                },
+            )
             await commit_and_publish(session)
         return changed, len(images.thumbnails)
 
@@ -259,8 +308,15 @@ async def scan_media_library() -> None:
     if scan_lock.locked():
         return
     async with scan_lock:
-        scan_state.update(running=True, started_at=datetime.now(UTC).isoformat(),
-                          finished_at=None, scanned=0, changed=0, thumbnails=0, errors=0)
+        scan_state.update(
+            running=True,
+            started_at=datetime.now(UTC).isoformat(),
+            finished_at=None,
+            scanned=0,
+            changed=0,
+            thumbnails=0,
+            errors=0,
+        )
         try:
             async with SessionFactory() as session:
                 ids = list(await session.scalars(select(FeedSource.id)))

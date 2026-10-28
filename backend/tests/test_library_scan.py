@@ -23,13 +23,21 @@ async def bind(sessions, root):
 
 def test_names_real_video_matching_and_ignored_files(tmp_path):
     for name in [
-        "POSTER.PNG", "backdrop.webp", "logo.png",
-        "Season 01/作品 S01E01.MKV", "Season 01/作品 S01E01-thumb.JPG",
-        "Season 01/作品 S01E01.jpg", "Season 01/作品 S01E02.mp4",
-        "Season 01/作品 S01E02.webp", "Season 01/孤立-thumb.jpg",
-        "Season 01/poster.jpg", ".hidden/作品 S01E03.mkv",
-        ".hidden/作品 S01E03-thumb.jpg", "Season 01/作品 S01E04.mkv.!qB",
-        "Season 01/作品 S01E04-thumb.jpg", "Season 01/作品 S01E02-320.bif",
+        "POSTER.PNG",
+        "backdrop.webp",
+        "logo.png",
+        "Season 01/作品 S01E01.MKV",
+        "Season 01/作品 S01E01-thumb.JPG",
+        "Season 01/作品 S01E01.jpg",
+        "Season 01/作品 S01E02.mp4",
+        "Season 01/作品 S01E02.webp",
+        "Season 01/孤立-thumb.jpg",
+        "Season 01/poster.jpg",
+        ".hidden/作品 S01E03.mkv",
+        ".hidden/作品 S01E03-thumb.jpg",
+        "Season 01/作品 S01E04.mkv.!qB",
+        "Season 01/作品 S01E04-thumb.jpg",
+        "Season 01/作品 S01E02-320.bif",
     ]:
         put(tmp_path, name)
     data = scan_images(tmp_path)
@@ -45,7 +53,9 @@ def test_names_real_video_matching_and_ignored_files(tmp_path):
 
 @pytest.mark.asyncio
 async def test_scan_syncs_without_changing_confirmed_metadata_and_is_idempotent(
-    show_client, monkeypatch, tmp_path,
+    show_client,
+    monkeypatch,
+    tmp_path,
 ):
     client, sessions, _ = show_client
     monkeypatch.setattr("app.library_scan.SessionFactory", sessions)
@@ -75,7 +85,9 @@ async def test_scan_syncs_without_changing_confirmed_metadata_and_is_idempotent(
 
 @pytest.mark.asyncio
 async def test_overwrite_missing_and_reappearance_update_versions(
-    show_client, monkeypatch, tmp_path,
+    show_client,
+    monkeypatch,
+    tmp_path,
 ):
     _, sessions, _ = show_client
     monkeypatch.setattr("app.library_scan.SessionFactory", sessions)
@@ -108,7 +120,9 @@ async def test_overwrite_missing_and_reappearance_update_versions(
 
 @pytest.mark.asyncio
 async def test_renamed_video_thumbnail_overwrite_updates_url_and_scan_is_idempotent(
-    show_client, monkeypatch, tmp_path,
+    show_client,
+    monkeypatch,
+    tmp_path,
 ):
     client, sessions, _ = show_client
     monkeypatch.setattr("app.library_scan.SessionFactory", sessions)
@@ -151,7 +165,9 @@ async def test_renamed_video_thumbnail_overwrite_updates_url_and_scan_is_idempot
 
 @pytest.mark.asyncio
 async def test_unavailable_directory_preserves_records_and_other_shows_continue(
-    show_client, monkeypatch, tmp_path,
+    show_client,
+    monkeypatch,
+    tmp_path,
 ):
     _, sessions, _ = show_client
     monkeypatch.setattr("app.library_scan.SessionFactory", sessions)
@@ -169,12 +185,16 @@ async def test_unavailable_directory_preserves_records_and_other_shows_continue(
         await session.commit()
     await scan_media_library()
     async with sessions() as session:
-        assert (await session.scalar(
-            select(ShowArtwork).where(ShowArtwork.source_id == 2),
-        )).file_version == version
-        assert (await session.scalar(
-            select(ShowArtwork).where(ShowArtwork.source_id == 1),
-        )).poster_path == str(other / "poster.png")
+        assert (
+            await session.scalar(
+                select(ShowArtwork).where(ShowArtwork.source_id == 2),
+            )
+        ).file_version == version
+        assert (
+            await session.scalar(
+                select(ShowArtwork).where(ShowArtwork.source_id == 1),
+            )
+        ).poster_path == str(other / "poster.png")
         assert await session.scalar(select(func.count(EpisodeThumbnail.id))) == 1
 
 
@@ -183,8 +203,9 @@ async def test_thumbnail_endpoint_rejects_traversal_and_requires_auth(show_clien
     client, sessions, app = show_client
     await bind(sessions, tmp_path)
     async with sessions() as session:
-        image = EpisodeThumbnail(source_id=2, video_path="a.mkv", image_path="../outside.jpg",
-                                 file_version="test")
+        image = EpisodeThumbnail(
+            source_id=2, video_path="a.mkv", image_path="../outside.jpg", file_version="test"
+        )
         session.add(image)
         await session.commit()
         image_id = image.id
@@ -251,7 +272,9 @@ async def test_concurrent_rename_discards_scan(show_client, monkeypatch, tmp_pat
 
 @pytest.mark.asyncio
 async def test_active_scrape_skipped_but_interrupted_scrape_can_scan(
-    show_client, monkeypatch, tmp_path,
+    show_client,
+    monkeypatch,
+    tmp_path,
 ):
     from app.models import BackgroundOperation, User
 
@@ -263,8 +286,9 @@ async def test_active_scrape_skipped_but_interrupted_scrape_can_scan(
         session.add(User(id=1, username="test", password_hash="test"))
         source = await session.get(FeedSource, 2)
         source.artwork.status = "pending"
-        operation = BackgroundOperation(user_id=1, source_id=2, source_name="电影",
-                                        kind="artwork_scrape", status="running")
+        operation = BackgroundOperation(
+            user_id=1, source_id=2, source_name="电影", kind="artwork_scrape", status="running"
+        )
         session.add(operation)
         await session.commit()
         operation_id = operation.id
@@ -322,11 +346,14 @@ async def test_existing_database_migration_is_repeatable(monkeypatch):
 
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
     async with engine.begin() as connection:
-        await connection.execute(text(
-            "CREATE TABLE show_artwork (id INTEGER PRIMARY KEY, source_id INTEGER, directory TEXT, "
-            "poster_path TEXT, fanart_path TEXT, clearlogo_path TEXT, status TEXT, "
-            "last_error TEXT, scraped_at DATETIME)"
-        ))
+        await connection.execute(
+            text(
+                "CREATE TABLE show_artwork (id INTEGER PRIMARY KEY, source_id INTEGER, "
+                "directory TEXT, "
+                "poster_path TEXT, fanart_path TEXT, clearlogo_path TEXT, status TEXT, "
+                "last_error TEXT, scraped_at DATETIME)"
+            )
+        )
     monkeypatch.setattr("app.database.engine", engine)
     try:
         await init_database()
@@ -334,8 +361,12 @@ async def test_existing_database_migration_is_repeatable(monkeypatch):
         async with engine.begin() as connection:
             columns = await connection.execute(text("PRAGMA table_info(show_artwork)"))
             assert "file_version" in {row[1] for row in columns}
-            assert (await connection.execute(text(
-                "SELECT COUNT(*) FROM episode_thumbnails",
-            ))).scalar() == 0
+            assert (
+                await connection.execute(
+                    text(
+                        "SELECT COUNT(*) FROM episode_thumbnails",
+                    )
+                )
+            ).scalar() == 0
     finally:
         await engine.dispose()

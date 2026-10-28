@@ -32,12 +32,35 @@ def clearlogo_background(path: str) -> str:
 def _clearlogo_background(path: str, modified_ns: int, size: int) -> str:
     try:
         result = subprocess.run(
-            ["magick", "-limit", "memory", "64MiB", "-limit", "map", "128MiB",
-             f"{path}[0]", "-alpha", "on", "-thumbnail", "128x128>", "-colorspace", "RGB",
-             "-channel", "RGB", "-fx", "u*u.a", "+channel", "-format",
-             "%[fx:mean.a]|%[fx:(0.2126*mean.r+0.7152*mean.g+0.0722*mean.b)"
-             "/max(mean.a,0.000001)]", "info:"],
-            capture_output=True, text=True, timeout=5, check=False,
+            [
+                "magick",
+                "-limit",
+                "memory",
+                "64MiB",
+                "-limit",
+                "map",
+                "128MiB",
+                f"{path}[0]",
+                "-alpha",
+                "on",
+                "-thumbnail",
+                "128x128>",
+                "-colorspace",
+                "RGB",
+                "-channel",
+                "RGB",
+                "-fx",
+                "u*u.a",
+                "+channel",
+                "-format",
+                "%[fx:mean.a]|%[fx:(0.2126*mean.r+0.7152*mean.g+0.0722*mean.b)"
+                "/max(mean.a,0.000001)]",
+                "info:",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
         )
         if result.returncode:
             return "dark"
@@ -64,12 +87,33 @@ def store_uploaded_artwork(content: bytes, directory: Path, kind: str) -> Path:
         raise ValueError("仅支持 PNG、JPEG 和 WebP 图片")
     output = "png" if kind == "clearlogo" else "jpeg"
     result = subprocess.run(
-        ["magick", "-limit", "memory", "128MiB", "-limit", "map", "256MiB",
-         "-limit", "disk", "256MiB", "-limit", "width", "12000",
-         "-limit", "height", "12000", f"{encoding}:-[0]", "-auto-orient", "-strip",
-         *([] if output == "png" else ["-background", "white", "-alpha", "remove"]),
-         f"{output}:-"],
-        input=content, capture_output=True, timeout=30, check=False,
+        [
+            "magick",
+            "-limit",
+            "memory",
+            "128MiB",
+            "-limit",
+            "map",
+            "256MiB",
+            "-limit",
+            "disk",
+            "256MiB",
+            "-limit",
+            "width",
+            "12000",
+            "-limit",
+            "height",
+            "12000",
+            f"{encoding}:-[0]",
+            "-auto-orient",
+            "-strip",
+            *([] if output == "png" else ["-background", "white", "-alpha", "remove"]),
+            f"{output}:-",
+        ],
+        input=content,
+        capture_output=True,
+        timeout=30,
+        check=False,
     )
     if result.returncode or not result.stdout:
         raise ValueError("图片损坏、尺寸过大或无法解码")
@@ -83,6 +127,7 @@ def store_uploaded_artwork(content: bytes, directory: Path, kind: str) -> Path:
     finally:
         temporary_path.unlink(missing_ok=True)
     return target
+
 
 @dataclass(slots=True)
 class ArtworkResult:
@@ -124,9 +169,7 @@ async def _fill_missing_artwork(
         return urls
     candidates = await search_tmdb(show_name)
     # 精确同名候选优先，随后才使用标题包含关系的系列条目。
-    candidates.sort(
-        key=lambda item: _normalized_title(item.title) != _normalized_title(show_name)
-    )
+    candidates.sort(key=lambda item: _normalized_title(item.title) != _normalized_title(show_name))
     for candidate in candidates:
         if candidate.tmdb_id == primary_tmdb_id or not _related_title(show_name, candidate.title):
             continue

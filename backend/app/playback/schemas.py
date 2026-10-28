@@ -78,10 +78,12 @@ class ClientPlaybackCapabilities(BaseModel):
     """客户端实际检测成功的完整 MIME；缺省继续走已有转码路径。"""
 
     native_mime_types: list[Annotated[str, StringConstraints(max_length=160)]] = Field(
-        default_factory=list, max_length=16,
+        default_factory=list,
+        max_length=16,
     )
     hls_mime_types: list[Annotated[str, StringConstraints(max_length=160)]] = Field(
-        default_factory=list, max_length=16,
+        default_factory=list,
+        max_length=16,
     )
 
 

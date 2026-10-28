@@ -1,0 +1,244 @@
+name: Code quality
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: pwsh
+
+jobs:
+  python-quality:
+    name: Python lint and format
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/pyproject.toml
+      - name: Install backend development dependencies
+        run: python -m pip install -e './backend[dev]'
+      - name: Ruff lint
+        working-directory: backend
+        run: python -m ruff check app tests
+      - name: Ruff format
+        working-directory: backend
+        run: python -m ruff format --check app tests
+
+  backend-tests:
+    name: Backend tests
+    # Match the supported development platform and provide ImageMagick 7's magick command.
+    runs-on: windows-latest
+    timeout-minutes: 25
+    env:
+      MOONCELL_ENVIRONMENT: test
+      MOONCELL_DATABASE_URL: 'sqlite+aiosqlite:///:memory:'
+      MOONCELL_PLAYBACK_ENCODER: libx264
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Prepare ImageMagick 7 and FFmpeg
+        run: |
+          $packages = @()
+          if (-not (Get-Command magick -ErrorAction SilentlyContinue)) { $packages += 'imagemagick' }
+          if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue) -or
+              -not (Get-Command ffprobe -ErrorAction SilentlyContinue)) { $packages += 'ffmpeg' }
+          if ($packages.Count -gt 0) {
+            choco install @packages --yes --no-progress
+            if ($LASTEXITCODE -notin @(0, 3010)) { throw 'Media tool installation failed.' }
+            $global:LASTEXITCODE = 0
+            Import-Module "$env:ChocolateyInstall\helpers\chocolateyProfile.psm1"
+            Update-SessionEnvironment
+            $env:PATH.Split(';') | Where-Object { $_ } | Add-Content $env:GITHUB_PATH
+          }
+          Get-Command magick, ffmpeg, ffprobe -ErrorAction Stop
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/pyproject.toml
+      - name: Install backend development dependencies
+        run: python -m pip install -e './backend[dev]'
+      - name: Check installed dependencies
+        run: python -m pip check
+      - name: Pytest with coverage and JUnit reports
+        run: >-
+          python -m pytest backend/tests scripts
+          --cov --cov-config=backend/pyproject.toml
+          --cov-report=term-missing --cov-report=xml:backend/coverage.xml
+          --junitxml=backend/reports/pytest.xml
+      - name: Upload backend reports
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: backend-reports
+          path: |
+            backend/coverage.xml
+            backend/reports/pytest.xml
+          if-no-files-found: warn
+          retention-days: 14
+
+  frontend:
+    name: Frontend quality, tests and build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: pwsh
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '22'
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          package_json_file: frontend/package.json
+          cache: true
+          cache_dependency_path: frontend/pnpm-lock.yaml
+      - name: Install locked frontend dependencies
+        run: pnpm install --frozen-lockfile
+      - name: ESLint
+        run: pnpm lint
+      - name: TypeScript
+        run: pnpm typecheck
+      - name: Prettier
+        run: pnpm format:check
+      - name: Frontend tests with JUnit report
+        run: |
+          New-Item -ItemType Directory -Force reports | Out-Null
+          pnpm test:ci
+      - name: Production build
+        run: pnpm build
+      - name: Upload frontend reports and build
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: frontend-reports-and-build
+          path: |
+            frontend/reports/
+            frontend/dist/
+          if-no-files-found: warn
+          retention-days: 14
+
+  security:
+    name: Trivy security scan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/pyproject.toml
+      - name: Resolve Python dependencies for vulnerability scanning
+        run: |
+          python -m venv .ci-venv
+          ./.ci-venv/bin/python -m pip install -e './backend[dev]'
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          New-Item -ItemType Directory -Force ci-reports/python | Out-Null
+          ./.ci-venv/bin/python -m pip freeze --exclude-editable | Set-Content -Encoding utf8 ci-reports/python/requirements.txt
+      - name: Scan dependencies, secrets and configuration
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        env:
+          TRIVY_INCLUDE_DEV_DEPS: 'true'
+        with:
+          version: v0.76.1
+          timeout: 10m
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln,secret,misconfig
+          severity: HIGH,CRITICAL
+          exit-code: '1'
+          format: json
+          output: trivy-results.json
+          skip-dirs: .git,.ci-venv,.cache,.pnpm-store,backend/.venv,frontend/node_modules,data,backend/data
+          skip-files: .env,backend/.env,frontend/.env
+      - name: Upload security report and resolved Python dependencies
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: security-reports
+          path: |
+            trivy-results.json
+            ci-reports/python/requirements.txt
+          if-no-files-found: warn
+          retention-days: 14
+
+  sonar:
+    name: SonarQube Quality Gate
+    needs: [backend-tests, frontend]
+    if: >-
+      vars.SONAR_ENABLED == 'true' &&
+      ((github.event_name != 'pull_request' && github.ref_name == github.event.repository.default_branch) ||
+       (github.event_name == 'pull_request' && vars.SONAR_PR_ANALYSIS_ENABLED == 'true' &&
+        github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]'))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Validate SonarQube configuration
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ vars.SONAR_HOST_URL }}
+          SONAR_PROJECT_KEY: ${{ vars.SONAR_PROJECT_KEY }}
+        run: |
+          if (-not $env:SONAR_TOKEN -or -not $env:SONAR_HOST_URL -or -not $env:SONAR_PROJECT_KEY) {
+            throw 'SonarQube is enabled: configure SONAR_TOKEN, SONAR_HOST_URL and SONAR_PROJECT_KEY.'
+          }
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: backend-reports
+          path: backend
+      - name: Scan and wait for Quality Gate
+        uses: SonarSource/sonarqube-scan-action@d209202bc7d53ff1cc128f7f907dac145c9d6ae9 # v8.3.0
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ vars.SONAR_HOST_URL }}
+          SONAR_SCANNER_JSON_PARAMS: '{"sonar.projectKey": "${{ vars.SONAR_PROJECT_KEY }}"}'
+        with:
+          args: >-
+            -Dsonar.qualitygate.wait=true
+            -Dsonar.qualitygate.timeout=300
+
+  quality-gate:
+    name: Quality gate
+    needs: [python-quality, backend-tests, frontend, security, sonar]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Require all configured checks
+        env:
+          CHECK_RESULTS: ${{ toJSON(needs) }}
+        run: |
+          $checks = $env:CHECK_RESULTS | ConvertFrom-Json -AsHashtable
+          foreach ($name in $checks.Keys) {
+            $result = $checks[$name].result
+            if ($name -eq 'sonar' -and $result -eq 'skipped') { continue }
+            if ($result -ne 'success') { throw "Required check '$name' ended with '$result'." }
+          }

@@ -54,9 +54,9 @@ export function DropdownMenuContent({
   )
 
   return (
-    <DropdownMenuPrimitive.Portal forceMount>
-      <AnimatePresence>
-        {open && (
+    <AnimatePresence>
+      {open && (
+        <DropdownMenuPrimitive.Portal forceMount>
           <DropdownMenuPrimitive.Content {...props} sideOffset={sideOffset} forceMount asChild key="content">
             <motion.div
               className={cn(surfaceClassName, "transform-gpu data-[state=closed]:pointer-events-none")}
@@ -77,9 +77,9 @@ export function DropdownMenuContent({
               {children}
             </motion.div>
           </DropdownMenuPrimitive.Content>
-        )}
-      </AnimatePresence>
-    </DropdownMenuPrimitive.Portal>
+        </DropdownMenuPrimitive.Portal>
+      )}
+    </AnimatePresence>
   )
 }
 

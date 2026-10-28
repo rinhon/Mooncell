@@ -1,17 +1,18 @@
 import { useState } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { RadioTower } from "lucide-react"
-import { api, type Feed, type Show } from "@/lib/api"
+import { api, type Feed, type FeedBatchStopResult, type Show } from "@/lib/api"
 import { AddSubscriptionDialog } from "@/components/feeds/add-subscription-dialog"
+import { BatchStopMenu } from "@/components/feeds/batch-stop-menu"
 import { FeedCard } from "@/components/feeds/feed-card"
 import { DeleteFeedDialog } from "@/components/feeds/delete-feed-dialog"
 import { EditSubscriptionDialog } from "@/components/edit-subscription-dialog"
 import { FeedsHeading, FeedsLoading, FeedsSection } from "@/components/feeds-loading"
 import { Button } from "@/components/ui/button"
-import { BlurFade } from "@/components/ui/blur-fade"
+import { Masonry } from "@/components/ui/masonry"
 import { useToast } from "@/components/ui/toast"
 
-/** RSS 源的列表、手动刷新和删除界面。 */
+/** 订阅来源的列表、刷新、停止和删除界面。 */
 export function FeedsPage() {
   const client = useQueryClient()
   const toast = useToast()
@@ -20,6 +21,42 @@ export function FeedsPage() {
   const feeds = useQuery({ queryKey: ["feeds"], queryFn: () => api<Feed[]>("/feeds") })
   const shows = useQuery({ queryKey: ["shows"], queryFn: () => api<Show[]>("/shows") })
   const clearlogos = new Map(shows.data?.filter((show) => show.clearlogo_ready).map((show) => [show.id, show]))
+  function refreshStoppedFeeds(items: Feed[]) {
+    const updated = new Map(items.map((feed) => [feed.id, feed]))
+    client.setQueryData<Feed[]>(["feeds"], (previous) => previous?.map((feed) => updated.get(feed.id) ?? feed))
+    for (const key of ["notifications", "feeds", "dashboard", "shows", "downloads", "reviews"]) {
+      void client.invalidateQueries({ queryKey: [key] })
+    }
+  }
+  const stop = useMutation({
+    mutationFn: (id: number) => api<Feed>(`/feeds/${id}/stop`, { method: "POST" }),
+    onSuccess: (feed) => {
+      refreshStoppedFeeds([feed])
+      toast("订阅已停止", { description: feed.name })
+    },
+    onError: (error) => {
+      void client.invalidateQueries({ queryKey: ["feeds"] })
+      toast("停止订阅失败", { description: error.message, tone: "error" })
+    },
+  })
+  const batchStop = useMutation({
+    mutationFn: (sourceIds: number[]) =>
+      api<FeedBatchStopResult>("/feeds/batch-stop", {
+        method: "POST",
+        body: JSON.stringify({ source_ids: sourceIds }),
+      }),
+    onSuccess: (result) => {
+      refreshStoppedFeeds(result.items)
+      toast(result.stopped_count ? `已停止 ${result.stopped_count} 个订阅` : "所选订阅均已停止", {
+        description: result.already_stopped_count ? `${result.already_stopped_count} 个订阅此前已停止。` : undefined,
+      })
+    },
+    onError: (error) => {
+      void client.invalidateQueries({ queryKey: ["feeds"] })
+      toast("批量停止失败", { description: error.message, tone: "error" })
+    },
+  })
+  const stopping = stop.isPending || batchStop.isPending
   const remove = useMutation({
     mutationFn: (id: number) => api(`/feeds/${id}`, { method: "DELETE" }),
     onSuccess: () => {
@@ -38,7 +75,19 @@ export function FeedsPage() {
   }
   return (
     <>
-      <FeedsHeading action={<AddSubscriptionDialog />} />
+      <FeedsHeading
+        action={
+          <div className="flex flex-wrap items-center gap-3">
+            <AddSubscriptionDialog />
+            <BatchStopMenu
+              feeds={feeds.data ?? []}
+              pending={batchStop.isPending}
+              disabled={remove.isPending || stop.isPending || Boolean(editing || deleting)}
+              onStop={(ids) => batchStop.mutateAsync(ids)}
+            />
+          </div>
+        }
+      />
       <FeedsSection count={feeds.data?.length ?? 0}>
         {feeds.isError && feeds.data !== undefined && (
           <div role="alert" className="px-5 py-3 text-sm text-danger">
@@ -70,26 +119,31 @@ export function FeedsPage() {
             </div>
           </div>
         ) : (
-          <div className="feed-list">
-            {feeds.data.map((feed, index) => (
-              <BlurFade
+          <Masonry
+            className="feed-list"
+            columns="auto-fit"
+            columnWidth={400}
+            aria-label="订阅与合集"
+            hoverEffect="none"
+          >
+            {feeds.data.map((feed) => (
+              <FeedCard
                 key={feed.id}
-                className="feed-card-reveal min-w-0"
-                delay={Math.min(index, 6) * 0.06}
-                offset={8}
-                inView
-                inViewMargin="0px"
-              >
-                <FeedCard
-                  feed={feed}
-                  clearlogo={clearlogos.get(feed.id)}
-                  deleting={remove.isPending}
-                  onEdit={setEditing}
-                  onDelete={setDeleting}
-                />
-              </BlurFade>
+                feed={feed}
+                clearlogo={clearlogos.get(feed.id)}
+                deleting={remove.isPending || stopping}
+                stopping={
+                  (stop.isPending && stop.variables === feed.id) ||
+                  (batchStop.isPending && batchStop.variables.includes(feed.id))
+                }
+                onEdit={setEditing}
+                onDelete={setDeleting}
+                onStop={(selected) => {
+                  if (!remove.isPending && !stopping && selected.active) stop.mutate(selected.id)
+                }}
+              />
             ))}
-          </div>
+          </Masonry>
         )}
       </FeedsSection>
       {editing && <EditSubscriptionDialog key={editing.id} feed={editing} onClose={() => setEditing(null)} />}

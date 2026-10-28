@@ -320,7 +320,7 @@ body:has(.watch-page) {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 16px 12px;
 }
-.player-settings-fields label {
+.player-setting {
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -328,24 +328,82 @@ body:has(.watch-page) {
   color: #b3b9bb;
   font-size: 12px;
 }
-.player-settings-fields select {
+.player-select-trigger {
+  gap: 10px;
   width: 100%;
   min-width: 0;
   height: 40px;
-  padding: 4px 22px 4px 10px;
+  padding: 4px 10px;
   border: 1px solid #ffffff1c;
   border-radius: 6px;
   background: #ffffff08;
   color: #f6f7f7;
   font: inherit;
   color-scheme: dark;
+  text-align: left;
 }
-.player-settings-fields option,
+.player-select-trigger > span:first-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.player-select-trigger svg {
+  flex: none;
+  color: #b3b9bb;
+}
+.player-select-trigger:focus-visible,
+.player-select-trigger[data-state="open"] {
+  border-color: var(--player-accent);
+  outline: none;
+  box-shadow: 0 0 0 3px #8ce8ad1f;
+}
+.player-select-menu {
+  --player-select-max-height: min(280px, var(--radix-select-content-available-height));
+  z-index: 20;
+  max-width: calc(100vw - 24px);
+  max-height: var(--player-select-max-height);
+  padding: 5px;
+  border: 1px solid #ffffff26;
+  border-radius: 9px;
+  background: #191f20fa;
+  color: #f6f7f7;
+  color-scheme: dark;
+  backdrop-filter: blur(24px);
+  box-shadow: 0 12px 40px #0008;
+}
+.player-select-menu [data-radix-select-viewport] {
+  max-height: calc(var(--player-select-max-height) - 12px);
+  scrollbar-width: thin;
+  scrollbar-color: #ffffff38 transparent;
+}
+.player-select-option {
+  min-height: 36px;
+  border-radius: 5px;
+  color: #e7eaeb;
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+.player-select-option[data-state="checked"] {
+  background: #8ce8ad12;
+  color: var(--player-accent);
+}
+.player-select-option[data-highlighted] {
+  background: #8ce8ad20;
+  color: var(--player-accent);
+}
+.player-select-option[data-disabled] {
+  color: #a0a8aa;
+  opacity: 0.45;
+  pointer-events: none;
+}
 .player-episodes-season option {
   color: #f6f7f7;
   background: #1b2021;
 }
-.player-settings-fields select:disabled {
+.player-select-trigger:disabled {
   opacity: 0.5;
 }
 .player-enhancement-setting,

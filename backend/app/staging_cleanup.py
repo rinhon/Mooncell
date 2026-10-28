@@ -78,27 +78,43 @@ async def cleanup_stale_temporary_directories():
     removed = 0
     async with queue_lock:
         async with SessionFactory() as session:
-            roots = list((await session.execute(select(
-                DownloadJob.downloader_id, DownloadJob.target_root,
-            ).distinct())).all())
+            roots = list(
+                (
+                    await session.execute(
+                        select(
+                            DownloadJob.downloader_id,
+                            DownloadJob.target_root,
+                        ).distinct()
+                    )
+                ).all()
+            )
             for downloader_id in {downloader_id for downloader_id, _ in roots}:
                 config = await session.get(DownloaderConfig, downloader_id)
                 if not config or not config.active or config.kind != "qbittorrent":
                     continue
                 try:
-                    async with httpx.AsyncClient(base_url=config.base_url, timeout=10,
-                                                 verify=config.verify_tls) as client:
-                        login = await request(client, "POST", "auth/login", data={
-                            "username": config.username or "",
-                            "password": decrypt_secret(config.encrypted_secret) or "",
-                        })
+                    async with httpx.AsyncClient(
+                        base_url=config.base_url, timeout=10, verify=config.verify_tls
+                    ) as client:
+                        login = await request(
+                            client,
+                            "POST",
+                            "auth/login",
+                            data={
+                                "username": config.username or "",
+                                "password": decrypt_secret(config.encrypted_secret) or "",
+                            },
+                        )
                         if login.status_code != 204 and not login.text.startswith("Ok"):
                             continue
                         torrents = (await request(client, "GET", "torrents/info")).json()
                         for root_id, target_root in roots:
                             if root_id == downloader_id:
                                 removed += await cleanup_temporary_directories(
-                                    client, target_root, config, torrents=torrents,
+                                    client,
+                                    target_root,
+                                    config,
+                                    torrents=torrents,
                                 )
                 except (OSError, ValueError, httpx.HTTPError) as exc:
                     logger.warning("历史暂存空目录清理未完成：%s", type(exc).__name__)

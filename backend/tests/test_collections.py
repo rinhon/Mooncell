@@ -14,6 +14,7 @@ from app import collections, download_queue, subscription_settings
 from app.collection_plan import build_collection_plan, collection_title
 from app.models import BackgroundOperation, DownloaderConfig, DownloadJob, FeedItem, FeedSource
 from app.release_parser import parse_release_title
+from app.schemas import ParsedRelease
 
 HASH = "5ff6dd449f7f2a37bc763a2c995648c0dad623d8"
 MAGNET = f"magnet:?xt=urn:btih:{HASH}"
@@ -85,6 +86,110 @@ def test_dbd_layout_with_extras_and_external_subtitles():
     assert plan["skip_file_ids"] == [72, 73, 74, 75]
 
 
+def test_manual_collection_episode_and_original_subtitles_use_standardized_names():
+    files = [
+        {"name": "Original/unidentified.mkv", "index": 0},
+        {"name": "Original/unidentified.sc.ass", "index": 1},
+        {"name": "Original/Show - 02.mkv", "index": 2},
+    ]
+    release = ParsedRelease.model_validate(
+        {
+            **parse_release_title(ROOT).model_dump(),
+            "collection_file_overrides": [
+                {"path": files[0]["name"], "episode": 0},
+                {"path": files[2]["name"], "episode": 12.5},
+            ],
+        }
+    )
+    plan = build_collection_plan(files, "作品", 2, release)
+    targets = {entry["old"]: entry["new"] for entry in plan["files"]}
+    assert targets == {
+        "Season 02/unidentified.mkv": "Season 02/作品 S02E00.mkv",
+        "Season 02/unidentified.sc.ass": "Season 02/作品 S02E00.zh-Hans.ass",
+        "Season 02/Show - 02.mkv": "Season 02/作品 S02E12.5.mkv",
+    }
+    assert plan["episodes"] == [0, 12.5]
+    assert plan["skip_file_ids"] == []
+
+
+def test_manual_collection_edits_identify_the_complete_original_path():
+    files = [
+        {"name": "Original/first/Show - 01.mkv"},
+        {"name": "Original/second/Show - 01.mkv"},
+    ]
+    release = ParsedRelease.model_validate(
+        {
+            **parse_release_title(ROOT).model_dump(),
+            "collection_file_overrides": [{"path": files[1]["name"], "episode": 2}],
+        }
+    )
+    plan = build_collection_plan(files, "作品", 1, release)
+    assert {entry["new"] for entry in plan["files"]} == {
+        "Season 01/作品 S01E01.mkv",
+        "Season 01/作品 S01E02.mkv",
+    }
+
+
+def test_standardized_collection_name_cannot_overlap_another_original_name():
+    files = [
+        {"name": "Original/First - 01.mkv"},
+        {"name": "Original/作品 S01E02.mkv"},
+    ]
+    release = ParsedRelease.model_validate(
+        {
+            **parse_release_title(ROOT).model_dump(),
+            "collection_file_overrides": [
+                {"path": files[0]["name"], "episode": 2},
+                {"path": files[1]["name"], "episode": 3},
+            ],
+        }
+    )
+    with pytest.raises(ValueError, match="原始文件冲突"):
+        build_collection_plan(files, "作品", 1, release)
+
+
+def test_legacy_collection_filenames_do_not_override_standardized_names():
+    files = [
+        {"name": "Original/A - 01.mkv"},
+        {"name": "Original/B - 02.mkv"},
+    ]
+    release = ParsedRelease.model_validate(
+        {
+            **parse_release_title(ROOT).model_dump(),
+            "collection_file_overrides": [
+                {"path": files[0]["name"], "episode": 4.5, "filename": "第一视角.mkv"},
+                {"path": files[1]["name"], "filename": "第二视角.mkv"},
+            ],
+        }
+    )
+    plan = build_collection_plan(files, "作品", 1, release)
+    assert {entry["new"] for entry in plan["files"]} == {
+        "Season 01/作品 S01E4.5.mkv",
+        "Season 01/作品 S01E02.mkv",
+    }
+    assert plan["episodes"] == [4.5, 2]
+    assert plan["skip_file_ids"] == []
+
+
+def test_legacy_filename_only_edit_is_ignored_even_if_original_file_is_gone():
+    files = [{"name": "Original/A - 01.mkv"}]
+    release = ParsedRelease.model_validate(
+        {
+            **parse_release_title(ROOT).model_dump(),
+            "collection_file_overrides": [
+                {"path": "Original/missing.mkv", "filename": "旧自定义名称.mkv"},
+            ],
+        }
+    )
+    plan = build_collection_plan(files, "作品", 1, release)
+    assert plan["files"] == [
+        {
+            "old": "Season 01/A - 01.mkv",
+            "new": "Season 01/作品 S01E01.mkv",
+        }
+    ]
+
+
 @pytest.mark.parametrize(
     "names, message",
     [
@@ -141,9 +246,13 @@ async def test_create_scrapes_and_enqueues_once_without_rss_refresh(collection_a
         assert job.info_hash == HASH and job.season == 2 and job.state == "queued"
         item = await session.get(FeedItem, job.item_id)
         assert "magnet_collection" in json.loads(item.parse_data)["evidence"]
-        notices = list(await session.scalars(select(BackgroundOperation).where(
-            BackgroundOperation.kind == "download_added",
-        )))
+        notices = list(
+            await session.scalars(
+                select(BackgroundOperation).where(
+                    BackgroundOperation.kind == "download_added",
+                )
+            )
+        )
         assert len(notices) == 1 and notices[0].source_id == source_id
         assert notices[0].attention_revision > notices[0].read_revision
         source.active = True
@@ -179,7 +288,129 @@ async def test_invalid_or_unready_collection_has_no_side_effects(collection_app)
         assert await session.scalar(select(func.count(FeedSource.id))) == 0
 
 
-async def test_collection_queue_stops_selects_renames_and_resumes(collection_app, monkeypatch):
+async def test_collection_file_edits_are_persisted_with_the_original_identity(collection_app):
+    app, sessions = collection_app
+    edits = [{"path": INFO["files"][0]["path"], "episode": 0}]
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app), base_url="http://test") as c:
+        response = await c.post("/api/v1/collections", json={**VALUES, "file_overrides": edits})
+        assert response.status_code == 201, response.text
+    async with sessions() as session:
+        item = await session.scalar(select(FeedItem))
+        release = ParsedRelease.model_validate_json(item.parse_data)
+        assert release.episode_start == 0 and release.episode_end == 12
+        stored = [edit.model_dump(exclude_none=True) for edit in release.collection_file_overrides]
+        assert stored == edits
+        plan = build_collection_plan(
+            [{"name": file["path"]} for file in INFO["files"]],
+            VALUES["name"],
+            2,
+            release,
+        )
+        assert plan["files"][0]["new"] == f"Season 02/{VALUES['name']} S02E00.mkv"
+
+
+async def test_collection_api_rejects_changes_to_original_filenames(collection_app):
+    app, sessions = collection_app
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app), base_url="http://test") as c:
+        response = await c.post(
+            "/api/v1/collections",
+            json={
+                **VALUES,
+                "file_overrides": [
+                    {
+                        "path": INFO["files"][0]["path"],
+                        "episode": 4.5,
+                        "filename": "合法名称.mkv",
+                    }
+                ],
+            },
+        )
+        assert response.status_code == 422, response.text
+        assert "原文件名" in response.text
+    async with sessions() as session:
+        for model in (FeedSource, FeedItem, DownloadJob):
+            assert await session.scalar(select(func.count(model.id))) == 0
+
+
+async def test_unrecognized_collection_video_can_be_confirmed_before_saving(collection_app):
+    app, sessions = collection_app
+    info = {**deepcopy(INFO), "files": [{"path": "Original/unidentified.mkv", "length": 100}]}
+    collections.fetch_metadata.return_value = info
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app), base_url="http://test") as c:
+        assert (await c.post("/api/v1/collections", json=VALUES)).status_code == 422
+        response = await c.post(
+            "/api/v1/collections",
+            json={
+                **VALUES,
+                "file_overrides": [{"path": "Original/unidentified.mkv", "episode": 0}],
+            },
+        )
+        assert response.status_code == 201, response.text
+    async with sessions() as session:
+        item = await session.scalar(select(FeedItem))
+        release = ParsedRelease.model_validate_json(item.parse_data)
+        assert release.episode_start == release.episode_end == 0
+
+
+@pytest.mark.parametrize(
+    "edits",
+    [
+        [{"path": "unknown/Show - 01.mkv", "episode": 4}],
+        [{"path": PurePosixPath(INFO["files"][0]["path"]).name, "episode": 4}],
+        [{"path": INFO["files"][0]["path"], "episode": 3}] * 2,
+        [{"path": INFO["files"][0]["path"], "episode": -1}],
+        [
+            {"path": INFO["files"][0]["path"], "episode": 1},
+            {"path": INFO["files"][1]["path"], "episode": 1},
+        ],
+    ],
+)
+async def test_invalid_collection_file_edits_have_no_side_effects(collection_app, edits):
+    app, sessions = collection_app
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app), base_url="http://test") as c:
+        response = await c.post("/api/v1/collections", json={**VALUES, "file_overrides": edits})
+        assert response.status_code == 422, response.text
+    async with sessions() as session:
+        for model in (FeedSource, FeedItem, DownloadJob):
+            assert await session.scalar(select(func.count(model.id))) == 0
+
+
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf")])
+def test_collection_edits_reject_non_finite_episodes(value):
+    with pytest.raises(ValueError):
+        collections.CollectionCreate.model_validate(
+            {
+                **VALUES,
+                "file_overrides": [{"path": INFO["files"][0]["path"], "episode": value}],
+            }
+        )
+
+
+@pytest.mark.parametrize("path", ["Original/menu/[menu][01].mkv", "Original/readme.txt"])
+async def test_collection_edits_cannot_promote_extras_or_attachments(collection_app, path):
+    app, sessions = collection_app
+    info = deepcopy(INFO)
+    info["files"].append({"path": path, "length": 100})
+    collections.fetch_metadata.return_value = info
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app), base_url="http://test") as c:
+        response = await c.post(
+            "/api/v1/collections",
+            json={
+                **VALUES,
+                "file_overrides": [{"path": path, "episode": 13}],
+            },
+        )
+        assert response.status_code == 422, response.text
+    async with sessions() as session:
+        assert await session.scalar(select(func.count(DownloadJob.id))) == 0
+
+
+@pytest.mark.parametrize("edited", [False, True])
+async def test_collection_queue_stops_selects_renames_and_resumes(
+    collection_app,
+    monkeypatch,
+    edited,
+):
     app, sessions = collection_app
     info = deepcopy(INFO)
     info["files"] = info["files"][:2] + [
@@ -187,8 +418,13 @@ async def test_collection_queue_stops_selects_renames_and_resumes(collection_app
         {"path": info["files"][0]["path"].removesuffix(".mkv") + ".sc.ass", "length": 100},
     ]
     collections.fetch_metadata.return_value = info
+    edits = [{"path": info["files"][0]["path"], "episode": 4.5}]
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app), base_url="http://test") as c:
-        assert (await c.post("/api/v1/collections", json=VALUES)).status_code == 201
+        response = await c.post(
+            "/api/v1/collections",
+            json={**VALUES, "file_overrides": edits if edited else []},
+        )
+        assert response.status_code == 201, response.text
     state = {
         "torrent": None,
         "files": [
@@ -196,8 +432,10 @@ async def test_collection_queue_stops_selects_renames_and_resumes(collection_app
         ],
     }
     calls = []
+    failed_rename = False
 
     def handle(request):
+        nonlocal failed_rename
         endpoint = request.url.path.rsplit("/", 1)[-1]
         data = {k: v[0] for k, v in parse_qs(request.content.decode()).items()}
         calls.append(endpoint)
@@ -222,6 +460,9 @@ async def test_collection_queue_stops_selects_renames_and_resumes(collection_app
             for f in state["files"]:
                 f["name"] = f["name"].replace(data["oldPath"] + "/", data["newPath"] + "/", 1)
         if endpoint == "renameFile":
+            if edited and not failed_rename:
+                failed_rename = True
+                raise httpx.ReadTimeout("模拟整理中断", request=request)
             for f in state["files"]:
                 if f["name"] == data["oldPath"]:
                     f["name"] = data["newPath"]
@@ -229,7 +470,8 @@ async def test_collection_queue_stops_selects_renames_and_resumes(collection_app
             state["torrent"]["save_path"] = data["location"]
         if endpoint == "start":
             assert state["files"][2]["priority"] == 0
-            assert state["files"][3]["name"].endswith("S02E01.zh-Hans.ass")
+            subtitle = "S02E4.5.zh-Hans.ass" if edited else "S02E01.zh-Hans.ass"
+            assert state["files"][3]["name"].endswith(subtitle)
         return httpx.Response(200)
 
     client = httpx.AsyncClient
@@ -242,8 +484,14 @@ async def test_collection_queue_stops_selects_renames_and_resumes(collection_app
         ),
     )
     monkeypatch.setattr(download_queue, "SessionFactory", sessions)
-    for _ in range(12):
+    for _ in range(16):
         await download_queue.process_queue()
+        if edited:
+            async with sessions() as session:
+                job = await session.scalar(select(DownloadJob))
+                if job.next_retry_at is not None:
+                    job.next_retry_at = None
+                    await session.commit()
     assert calls.count("add") == calls.count("start") == 1
     async with sessions() as session:
         job = await session.scalar(select(DownloadJob))
@@ -252,6 +500,13 @@ async def test_collection_queue_stops_selects_renames_and_resumes(collection_app
             PurePosixPath(f["new"]).parent.name == "Season 02"
             for f in json.loads(job.plan)["files"]
         )
+        if edited:
+            assert failed_rename
+            assert state["files"][0]["name"] == f"Season 02/{VALUES['name']} S02E4.5.mkv"
+            item = await session.get(FeedItem, job.item_id)
+            release = ParsedRelease.model_validate_json(item.parse_data)
+            assert release.collection_file_overrides[0].episode == 4.5
+            assert release.collection_file_overrides[0].filename is None
 
 
 async def test_metadata_fetch_never_adds_torrent(monkeypatch):

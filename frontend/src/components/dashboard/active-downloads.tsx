@@ -11,7 +11,7 @@ export function ActiveDownloads({ query }: { query: ModuleQuery<DownloadCenter> 
     .filter((task) => task.status === "downloading")
     .sort((a, b) => b.download_speed - a.download_speed || b.id - a.id)
   return (
-    <section className="dashboard-panel" aria-labelledby="dashboard-download-title">
+    <section className="dashboard-panel dashboard-downloads" aria-labelledby="dashboard-download-title">
       <header className="dashboard-panel-heading">
         <div>
           <h2 id="dashboard-download-title">正在下载</h2>
@@ -71,7 +71,7 @@ export function ActiveDownloads({ query }: { query: ModuleQuery<DownloadCenter> 
             </Link>
           </div>
         ))}
-      {tasks.length > 0 && <p className="dashboard-panel-footnote">显示速度最高的前 3 项 · 页面可见时每 5 秒刷新</p>}
+      {tasks.length > 0 && <p className="dashboard-panel-footnote">速度优先 · 每 5 秒刷新</p>}
     </section>
   )
 }

@@ -18,7 +18,8 @@ from app.models import DomainEvent, FeedSource
 def png():
     return subprocess.run(
         ["magick", "-size", "12x16", "xc:none", "png:-"],
-        check=True, capture_output=True,
+        check=True,
+        capture_output=True,
     ).stdout
 
 
@@ -26,7 +27,9 @@ def test_preserve_transparency_and_invalid_upload_preserves_existing(tmp_path, p
     path = store_uploaded_artwork(png, tmp_path, "clearlogo")
     opacity = subprocess.run(
         ["magick", str(path), "-format", "%[opaque]", "info:"],
-        check=True, capture_output=True, text=True,
+        check=True,
+        capture_output=True,
+        text=True,
     ).stdout
     assert opacity == "False"
     original = path.read_bytes()
@@ -59,7 +62,8 @@ async def test_upload_routes_and_persistence(monkeypatch, tmp_path, png):
         source_id = source.id
     try:
         async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app), base_url="http://test",
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://test",
         ) as client:
             base = f"/api/v1/shows/{source_id}/artwork"
             assert (await client.post(f"{base}/poster", content=png)).status_code == 401
@@ -85,9 +89,12 @@ async def test_upload_routes_and_persistence(monkeypatch, tmp_path, png):
             assert appearance.json() == {"background": "dark"}
             assert (await client.post(f"{base}/invalid", content=png)).status_code == 422
             assert (await client.post(f"{base}/poster", content=b"bad")).status_code == 422
-            assert (await client.post(
-                f"{base}/poster", content=b"x" * (10 * 1024 * 1024 + 1),
-            )).status_code == 413
+            assert (
+                await client.post(
+                    f"{base}/poster",
+                    content=b"x" * (10 * 1024 * 1024 + 1),
+                )
+            ).status_code == 413
             async with sessions() as session:
                 events = list(await session.scalars(select(DomainEvent)))
                 assert sum(e.event_type == "artwork.upload.completed" for e in events) == 3

@@ -62,6 +62,7 @@ const SIZES: Record<RubberSegmentSize, { height: number; font: number; pad: numb
   md: { height: 36, font: 13, pad: 14, min: 44 },
   lg: { height: 44, font: 14, pad: 18, min: 48 },
 }
+const cachedEqualSlotWidths: Record<string, number> = {}
 
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value))
 const rubber = (over: number, dim: number) => (over * dim * RUBBER) / (dim + RUBBER * Math.abs(over))
@@ -144,28 +145,48 @@ const RubberSegment: React.FC<RubberSegmentProps> = ({
     edgeR.jump(s.r)
   }
 
-  const measure = () => {
+  const listKey = list.map((item) => item.value).join("|")
+  const cacheKey = `${listKey}:${size}:${inset}:${equalSlots}`
+  const measure = (knownWidth?: number) => {
     const track = trackRef.current
-    if (!track) return
-    const rect = track.getBoundingClientRect()
-    box.current = rect
-    slots.current = list.map((_, i) => {
-      const el = itemRefs.current[i]
-      if (!el) return { l: 0, r: 0 }
-      const r = el.getBoundingClientRect()
-      return { l: r.left - rect.left - inset, r: r.right - rect.left - inset }
-    })
-    innerW.set(rect.width - inset * 2)
+    if (!track && knownWidth === undefined) return
+    const width = knownWidth ?? (track ? track.clientWidth : 0)
+    if (width > 0 && equalSlots) cachedEqualSlotWidths[cacheKey] = width
+    const innerWidth = Math.max(0, width - inset * 2)
+    if (equalSlots && list.length > 0 && innerWidth > 0) {
+      const slotWidth = innerWidth / list.length
+      slots.current = list.map((_, i) => ({ l: i * slotWidth, r: (i + 1) * slotWidth }))
+    } else if (track) {
+      slots.current = list.map((_, i) => {
+        const el = itemRefs.current[i]
+        if (!el) return { l: 0, r: 0 }
+        const l = el.offsetLeft - inset
+        return { l, r: l + el.offsetWidth }
+      })
+    }
+    innerW.set(innerWidth)
     jumpTo(committed.current)
   }
 
-  const listKey = list.map((item) => item.value).join("|")
   useLayoutEffect(() => {
-    measure()
-    const observer = new ResizeObserver(measure)
+    const cached = equalSlots ? cachedEqualSlotWidths[cacheKey] : undefined
+    measure(cached)
+    const observer = new ResizeObserver((entries) => {
+      const entry = entries[0]
+      const inlineSize = entry?.borderBoxSize?.[0]?.inlineSize
+      measure(inlineSize && inlineSize > 0 ? inlineSize : undefined)
+    })
     if (trackRef.current) observer.observe(trackRef.current)
-    if (typeof document !== "undefined" && document.fonts) document.fonts.ready.then(measure)
-    return () => observer.disconnect()
+    let cancelled = false
+    if (typeof document !== "undefined" && document.fonts && document.fonts.status !== "loaded") {
+      document.fonts.ready.then(() => {
+        if (!cancelled) measure()
+      })
+    }
+    return () => {
+      cancelled = true
+      observer.disconnect()
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [listKey, size, inset, equalSlots])
 
@@ -305,6 +326,10 @@ const RubberSegment: React.FC<RubberSegmentProps> = ({
         const from = committed.current
         commit(d.slot)
         travel(from, d.slot)
+      } else if (d.onThumb) {
+        // Pressing the moving thumb pauses it even when no drag starts.
+        if (reduce) jumpTo(committed.current)
+        else land(committed.current, null, false, false)
       }
       return
     }
@@ -321,7 +346,7 @@ const RubberSegment: React.FC<RubberSegmentProps> = ({
     const d = drag.current
     if (!d || e.pointerId !== d.id) return
     release()
-    if (!d.live) return
+    if (!d.onThumb) return
     if (reduce) jumpTo(committed.current)
     else land(committed.current, null, false, false)
   }

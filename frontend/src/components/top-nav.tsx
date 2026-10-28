@@ -1,5 +1,4 @@
 import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react"
-import { useQuery } from "@tanstack/react-query"
 import { motion, useReducedMotion } from "motion/react"
 import { MoreHorizontal } from "lucide-react"
 import { NavLink, useLocation } from "react-router-dom"
@@ -7,7 +6,6 @@ import { NotificationCenter } from "@/components/notification-center"
 import { StaggeredMenu } from "@/components/staggered-menu"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { useOverflowMenu } from "@/hooks/use-overflow-menu"
-import { api, type Dashboard } from "@/lib/api"
 import { spring } from "@/lib/motion"
 import { navigation, utilityNavigation } from "@/lib/navigation"
 import { cn } from "@/lib/utils"
@@ -58,13 +56,6 @@ export function TopNav() {
   const layoutVersion = `${location.pathname}:${visibleCount}`
   const indicator = useNavigationBounds(listRef, 'a[aria-current="page"]', layoutVersion, true)
   const hover = useNavigationBounds(listRef, hovered ? `a[href="${hovered}"]` : null, layoutVersion)
-  const dashboard = useQuery({
-    queryKey: ["dashboard"],
-    queryFn: () => api<Dashboard>("/dashboard"),
-    staleTime: 60_000,
-    refetchInterval: 60_000,
-  })
-  const needsReview = dashboard.data?.needs_review ?? 0
   const visible = navigation.slice(0, visibleCount)
   const overflow = navigation.slice(visibleCount)
   const moreItems = [...overflow, ...utilityNavigation]
@@ -157,15 +148,10 @@ export function TopNav() {
               <button
                 type="button"
                 className={cn("top-nav-more-trigger", moreActive && "active")}
-                aria-label={needsReview ? `更多导航，${needsReview} 项待审核` : "更多导航"}
+                aria-label="更多导航"
               >
                 <MoreHorizontal size={18} aria-hidden="true" />
                 <span>更多</span>
-                {needsReview > 0 && (
-                  <span className="top-nav-badge" aria-hidden="true">
-                    {needsReview > 99 ? "99+" : needsReview}
-                  </span>
-                )}
               </button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="top-nav-menu" aria-label="更多导航">
@@ -181,18 +167,13 @@ export function TopNav() {
                   >
                     <Icon size={17} aria-hidden="true" />
                     <span>{label}</span>
-                    {to === "/review" && needsReview > 0 && (
-                      <span className="top-nav-badge" aria-label={`${needsReview} 项待审核`}>
-                        {needsReview > 99 ? "99+" : needsReview}
-                      </span>
-                    )}
                   </NavLink>
                 </DropdownMenuItem>
               ))}
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
-        <StaggeredMenu needsReview={needsReview} />
+        <StaggeredMenu />
       </div>
     </div>
   )

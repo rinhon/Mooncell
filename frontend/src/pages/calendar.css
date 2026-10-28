@@ -58,8 +58,7 @@
   color: var(--muted);
 }
 .calendar-items {
-  display: grid;
-  gap: 20px;
+  min-width: 0;
   padding-top: 16px;
 }
 .calendar-item {
@@ -74,7 +73,7 @@
   position: relative;
   display: grid;
   place-items: center;
-  aspect-ratio: 3 / 4;
+  aspect-ratio: var(--poster-aspect-ratio);
   background: var(--hover-background);
   color: var(--muted);
   overflow: hidden;
@@ -192,7 +191,6 @@
   gap: 4px;
   min-width: 0;
   overflow: clip;
-  border-bottom: 1px solid var(--border);
   margin-bottom: 24px;
 }
 .calendar-week-tab {
@@ -206,20 +204,22 @@
   flex: 1 0 auto;
   padding: 13px 16px;
   border: 0;
-  border-bottom: 2px solid transparent;
+  border-radius: var(--radius-control);
   background: transparent;
-  color: var(--muted);
+  color: var(--ink-2);
   cursor: pointer;
   white-space: nowrap;
 }
-.calendar-week-tab[data-state="active"] {
-  border-bottom-color: var(--accent);
+.calendar-week-tab[data-state="active"],
+.calendar-week-tab[data-active="true"] {
   color: var(--accent);
 }
-@media (hover: hover) and (pointer: fine) {
-  .calendar-week-tab:hover {
-    color: var(--ink);
-  }
+.calendar-week-tab:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.calendar-week-tab[aria-disabled="true"] {
+  cursor: wait;
 }
 .calendar-week-label {
   grid-column: 2;
@@ -284,20 +284,11 @@
   border-radius: var(--radius-inset);
 }
 .calendar-day-grid {
-  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
-  align-items: start;
   padding-top: 0;
 }
-.calendar-day-grid > .calendar-empty {
-  grid-column: 1 / -1;
+.calendar-day-panel > .calendar-empty {
   padding: 36px 0;
   text-align: center;
-}
-@media (max-width: 480px) {
-  .calendar-day-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 12px;
-  }
 }
 @media (max-width: 1200px) {
   .season-calendar {
@@ -318,39 +309,18 @@
 
 .calendar-week-hover {
   position: absolute;
-  left: 0;
-  top: 0;
-  bottom: 0;
+  inset: 4px auto 4px 0;
   z-index: 0;
+  border-radius: var(--radius-control);
   pointer-events: none;
-  background: var(--hover-background);
-  opacity: 0;
-  transition: opacity 160ms ease;
-}
-@media (hover: hover) and (pointer: fine) {
-  .calendar-week-hover[data-visible="true"] {
-    opacity: 1;
-  }
-}
-@media (prefers-reduced-motion: reduce) {
-  .calendar-week-hover {
-    transition: none;
-  }
-}
-.calendar-week-tabs-indicated .calendar-week-tab[data-state="active"] {
-  border-bottom-color: transparent;
+  background: var(--surface-raised);
 }
 .calendar-week-indicator {
   position: absolute;
-  left: 0;
-  bottom: 0;
-  height: 2px;
+  inset: auto auto 2px 0;
+  height: 3px;
   z-index: 2;
+  border-radius: 999px;
   pointer-events: none;
   background: var(--accent);
-}
-@media (prefers-reduced-motion: reduce) {
-  .calendar-week-indicator {
-    transition: none;
-  }
 }

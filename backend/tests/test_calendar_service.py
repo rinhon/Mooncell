@@ -19,22 +19,31 @@ def recorded(monkeypatch):
     return events
 
 
-@pytest.mark.parametrize(("month", "expected"), [
-    (1, "202601"), (3, "202601"), (4, "202604"), (6, "202604"),
-    (7, "202607"), (9, "202607"), (10, "202610"), (12, "202610"),
-])
+@pytest.mark.parametrize(
+    ("month", "expected"),
+    [
+        (1, "202601"),
+        (3, "202601"),
+        (4, "202604"),
+        (6, "202604"),
+        (7, "202607"),
+        (9, "202607"),
+        (10, "202610"),
+        (12, "202610"),
+    ],
+)
 def test_quarters(month, expected):
     assert service.current_season(datetime(2026, month, 1)) == expected
     assert service.current_season(datetime(2027, 1, 1)) == "202701"
 
 
 def test_parse_lazy_images_weekdays_and_extended_times():
-    html = '''<div class="post-body"><td class="date2">周日 (日)</td>
+    html = """<div class="post-body"><td class="date2">周日 (日)</td>
     <div><div class="div_date"><a href="/cover.jpg"><img data-src="//i0.hdslb.com/a.jpg"></a>
     <p class="imgtext5">25:00~</p></div><table><tr><td class="date_title_">番名<br>第2期</td>
     </tr></table></div><td class="date2">网络放送 &amp; 其他</td>
     <div><div class="div_date"><img src="/b.jpg"></div>
-    <table><tr><td>网络番剧</td></tr></table></div></div>'''
+    <table><tr><td>网络番剧</td></tr></table></div></div>"""
     items = service.parse_calendar(html, "202607")
     assert len(items) == 2
     assert items[0]["title"] == "番名 第2期"
@@ -64,7 +73,9 @@ def test_parse_other_broadcast_cards_and_dates(time_class):
     assert items[0]["weekday"] == 6
     assert items[0]["broadcast_time"] == "25:00~"
     assert items[1] == {
-        "id": 2, "title": "网络番剧 第2期", "weekday": None,
+        "id": 2,
+        "title": "网络番剧 第2期",
+        "weekday": None,
         "broadcast_time": "10/20网络放送 / 11/6追加放送",
         "cover_source": "https://i0.hdslb.com/other.jpg",
     }
@@ -73,9 +84,9 @@ def test_parse_other_broadcast_cards_and_dates(time_class):
 
 
 def test_other_card_does_not_inherit_weekday_without_heading():
-    html = '''<div class="post-body"><td class="date2">周日</td>
+    html = """<div class="post-body"><td class="date2">周日</td>
     <div><div class="div_date_"></div>
-    <table><tr><td>网络番剧</td></tr></table></div></div>'''
+    <table><tr><td>网络番剧</td></tr></table></div></div>"""
     assert service.parse_calendar(html, "202610")[0]["weekday"] is None
 
 
@@ -89,8 +100,11 @@ async def test_persisted_season_never_fetches(monkeypatch, tmp_path):
     monkeypatch.setattr(service.settings, "calendar_cache_path", str(tmp_path))
     path = tmp_path / "202601"
     path.mkdir()
-    data = {"season": "202601", "cache_version": service.CALENDAR_CACHE_VERSION,
-            "items": [{"title": "已缓存"}]}
+    data = {
+        "season": "202601",
+        "cache_version": service.CALENDAR_CACHE_VERSION,
+        "items": [{"title": "已缓存"}],
+    }
     (path / "season.json").write_text(json.dumps(data), encoding="utf-8")
 
     def no_network(*args, **kwargs):
@@ -101,32 +115,45 @@ async def test_persisted_season_never_fetches(monkeypatch, tmp_path):
 
 
 async def test_legacy_cache_supplements_others_once_preserving_ids_and_covers(
-    monkeypatch, tmp_path, recorded,
+    monkeypatch,
+    tmp_path,
+    recorded,
 ):
     monkeypatch.setattr(service.settings, "calendar_cache_path", str(tmp_path))
     monkeypatch.setattr(service, "_failures", {})
     folder = tmp_path / "202601"
     folder.mkdir()
     original = {
-        "season": "202601", "fetched_at": "2026-01-01T00:00:00+00:00",
+        "season": "202601",
+        "fetched_at": "2026-01-01T00:00:00+00:00",
         "items": [
-            {"id": 11, "title": "原有周日番剧", "weekday": 6,
-             "broadcast_time": "25:00~", "cover_source": "https://i0.hdslb.com/old.jpg"},
-            {"id": 42, "title": "已收录网络番剧", "weekday": None,
-             "broadcast_time": "时间待定", "cover_source": None},
+            {
+                "id": 11,
+                "title": "原有周日番剧",
+                "weekday": 6,
+                "broadcast_time": "25:00~",
+                "cover_source": "https://i0.hdslb.com/old.jpg",
+            },
+            {
+                "id": 42,
+                "title": "已收录网络番剧",
+                "weekday": None,
+                "broadcast_time": "时间待定",
+                "cover_source": None,
+            },
         ],
     }
     path = folder / "season.json"
     path.write_text(json.dumps(original), encoding="utf-8")
     (folder / "11.img").write_bytes(b"original-cover")
-    html = '''<div class="post-body"><td class="date2">周一</td>
+    html = """<div class="post-body"><td class="date2">周一</td>
     <div><div class="div_date"></div><table><tr><td>源站新增周番</td></tr></table></div>
     <td class="date2">网络放送 &amp; 其他</td>
     <div><div class="div_date_"></div><table><tr><td>已收录网络番剧</td></tr>
     <tr><td><p class="pmfs">1/20网络放送</p></td></tr></table></div>
     <div><div class="div_date_"><img src="https://i0.hdslb.com/new.jpg"></div>
     <table><tr><td>新增网络番剧</td></tr>
-    <tr><td><p class="pmfs2">2/20网络放送</p></td></tr></table></div></div>'''
+    <tr><td><p class="pmfs2">2/20网络放送</p></td></tr></table></div></div>"""
     original_client = httpx.AsyncClient
     requests = []
 
@@ -136,15 +163,22 @@ async def test_legacy_cache_supplements_others_once_preserving_ids_and_covers(
             return httpx.Response(200, text=html)
         return httpx.Response(200, content=b"new-cover", headers={"content-type": "image/jpeg"})
 
-    monkeypatch.setattr(service.httpx, "AsyncClient", lambda **kwargs: original_client(
-        transport=httpx.MockTransport(respond), **kwargs,
-    ))
+    monkeypatch.setattr(
+        service.httpx,
+        "AsyncClient",
+        lambda **kwargs: original_client(
+            transport=httpx.MockTransport(respond),
+            **kwargs,
+        ),
+    )
     result = await service.ensure_season("202601")
     assert result["cache_version"] == service.CALENDAR_CACHE_VERSION
     assert result["fetched_at"] == original["fetched_at"]
     assert result["items"][0] == original["items"][0]
     assert [(item["id"], item["title"]) for item in result["items"]] == [
-        (11, "原有周日番剧"), (42, "已收录网络番剧"), (43, "新增网络番剧"),
+        (11, "原有周日番剧"),
+        (42, "已收录网络番剧"),
+        (43, "新增网络番剧"),
     ]
     assert result["items"][1]["broadcast_time"] == "1/20网络放送"
     assert result["items"][2]["broadcast_time"] == "2/20网络放送"
@@ -204,9 +238,9 @@ async def test_certificate_failure_retries_direct_and_persists(monkeypatch, tmp_
     original_client = httpx.AsyncClient
     options = []
     requests = []
-    html = '''<div class="post-body"><td class="date2">周一</td>
+    html = """<div class="post-body"><td class="date2">周一</td>
     <div><div class="div_date"><img src="https://i0.hdslb.com/a.jpg"></div>
-    <table><tr><td>测试番剧</td></tr></table></div></div>'''
+    <table><tr><td>测试番剧</td></tr></table></div></div>"""
 
     def make_client(**kwargs):
         options.append(kwargs)
@@ -231,8 +265,10 @@ async def test_certificate_failure_retries_direct_and_persists(monkeypatch, tmp_
     assert (tmp_path / "202601" / "season.json").exists()
     assert (tmp_path / "202601" / "1.img").read_bytes() == b"cover"
     assert requests == [
-        ("https://yuc.wiki/202601/", False), ("https://yuc.wiki/202601/", True),
-        ("https://i0.hdslb.com/a.jpg", False), ("https://i0.hdslb.com/a.jpg", True),
+        ("https://yuc.wiki/202601/", False),
+        ("https://yuc.wiki/202601/", True),
+        ("https://i0.hdslb.com/a.jpg", False),
+        ("https://i0.hdslb.com/a.jpg", True),
     ]
     assert all(option.get("verify", True) is True for option in options)
     assert all(option["follow_redirects"] is True for option in options)
@@ -277,18 +313,26 @@ async def test_cover_failure_emits_warning(monkeypatch, tmp_path, recorded):
         return httpx.Response(403)
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(fail)) as client:
-        await service.download_covers(client, "202601", [
-            {"id": 1, "title": "测试番剧", "cover_source": "https://i0.hdslb.com/a.jpg"},
-        ])
+        await service.download_covers(
+            client,
+            "202601",
+            [
+                {"id": 1, "title": "测试番剧", "cover_source": "https://i0.hdslb.com/a.jpg"},
+            ],
+        )
     assert recorded[0][0] == "calendar.covers.partial"
     assert recorded[0][2]["count"] == 1
     assert "403" in recorded[0][2]["error"]
 
 
-@pytest.mark.parametrize("source", [
-    "http://i0.hdslb.com/cover.jpg", "http://yuc.wiki/cover.jpg",
-    "https://i.imgs.ovh/2026/cover.jpg",
-])
+@pytest.mark.parametrize(
+    "source",
+    [
+        "http://i0.hdslb.com/cover.jpg",
+        "http://yuc.wiki/cover.jpg",
+        "https://i.imgs.ovh/2026/cover.jpg",
+    ],
+)
 async def test_other_covers_use_https_on_trusted_hosts(monkeypatch, tmp_path, recorded, source):
     monkeypatch.setattr(service.settings, "calendar_cache_path", str(tmp_path))
     (tmp_path / "202601").mkdir()
@@ -299,18 +343,26 @@ async def test_other_covers_use_https_on_trusted_hosts(monkeypatch, tmp_path, re
         return httpx.Response(200, content=b"cover", headers={"content-type": "image/jpeg"})
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
-        await service.download_covers(client, "202601", [
-            {"id": 1, "title": "网络番剧", "cover_source": source},
-        ])
+        await service.download_covers(
+            client,
+            "202601",
+            [
+                {"id": 1, "title": "网络番剧", "cover_source": source},
+            ],
+        )
     assert requests == [source.replace("http://", "https://", 1)]
     assert (tmp_path / "202601" / "1.img").read_bytes() == b"cover"
     assert not recorded
 
 
-@pytest.mark.parametrize("source", [
-    "http://localhost/cover.jpg", "https://hdslb.com.example.org/cover.jpg",
-    "file:///cover.jpg",
-])
+@pytest.mark.parametrize(
+    "source",
+    [
+        "http://localhost/cover.jpg",
+        "https://hdslb.com.example.org/cover.jpg",
+        "file:///cover.jpg",
+    ],
+)
 async def test_untrusted_cover_urls_are_not_fetched(monkeypatch, tmp_path, recorded, source):
     monkeypatch.setattr(service.settings, "calendar_cache_path", str(tmp_path))
 
@@ -318,9 +370,13 @@ async def test_untrusted_cover_urls_are_not_fetched(monkeypatch, tmp_path, recor
         pytest.fail("untrusted cover must not access network")
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(no_network)) as client:
-        await service.download_covers(client, "202601", [
-            {"id": 1, "title": "网络番剧", "cover_source": source},
-        ])
+        await service.download_covers(
+            client,
+            "202601",
+            [
+                {"id": 1, "title": "网络番剧", "cover_source": source},
+            ],
+        )
     assert recorded[0][0] == "calendar.covers.partial"
 
 
@@ -340,7 +396,9 @@ async def test_event_persisted_and_broadcast(monkeypatch, tmp_path):
             await connection.run_sync(Base.metadata.create_all)
         async with broker.subscribe() as queue:
             await service.record_calendar_event(
-                "calendar.fetch.failed", "202601", error="ConnectError: token=private",
+                "calendar.fetch.failed",
+                "202601",
+                error="ConnectError: token=private",
             )
             live = queue.get_nowait()
         async with factory() as session:

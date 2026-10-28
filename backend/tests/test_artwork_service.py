@@ -6,7 +6,7 @@ from app.artwork_service import _related_title, clearlogo_background, safe_folde
 
 
 def test_safe_folder_name_removes_windows_invalid_characters() -> None:
-    assert safe_folder_name('死神:千年血战篇?/Season*1.') == "死神_千年血战篇__Season_1"
+    assert safe_folder_name("死神:千年血战篇?/Season*1.") == "死神_千年血战篇__Season_1"
 
 
 def test_safe_folder_name_never_returns_empty_name() -> None:
@@ -20,15 +20,31 @@ def test_related_title_accepts_exact_and_franchise_candidates() -> None:
     assert not _related_title(name, "海贼王")
 
 
-@pytest.mark.parametrize("color, expected", [
-    ("black", "light"), ("#303030", "light"), ("white", "dark"), ("#d04040", "dark"),
-])
+@pytest.mark.parametrize(
+    "color, expected",
+    [
+        ("black", "light"),
+        ("#303030", "light"),
+        ("white", "dark"),
+        ("#d04040", "dark"),
+    ],
+)
 def test_clearlogo_background_ignores_transparent_padding(tmp_path, color, expected):
     path = tmp_path / "logo.png"
-    subprocess.run([
-        "magick", "-size", "200x100", "xc:none", "-fill", color,
-        "-draw", "rectangle 80,35 120,65", str(path),
-    ], check=True)
+    subprocess.run(
+        [
+            "magick",
+            "-size",
+            "200x100",
+            "xc:none",
+            "-fill",
+            color,
+            "-draw",
+            "rectangle 80,35 120,65",
+            str(path),
+        ],
+        check=True,
+    )
     assert clearlogo_background(str(path)) == expected
 
 

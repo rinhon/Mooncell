@@ -71,41 +71,63 @@ def remote_root(root, config):
             relative = local(root).relative_to(local(config.local_download_root))
         except ValueError as exc:
             raise ValueError("媒体库不在下载器本地路径映射范围内") from exc
-        return str(path_type(config.remote_download_root)(config.remote_download_root)
-                   .joinpath(*relative.parts))
+        return str(
+            path_type(config.remote_download_root)(config.remote_download_root).joinpath(
+                *relative.parts
+            )
+        )
     return root
 
 
 async def enqueue_source(session, source):
     if not source.active:
         return
-    config = await session.scalar(select(DownloaderConfig).where(
-        DownloaderConfig.active.is_(True), DownloaderConfig.kind == "qbittorrent",
-        DownloaderConfig.organize_strategy == "downloader_managed",
-    ).order_by(DownloaderConfig.id))
+    config = await session.scalar(
+        select(DownloaderConfig)
+        .where(
+            DownloaderConfig.active.is_(True),
+            DownloaderConfig.kind == "qbittorrent",
+            DownloaderConfig.organize_strategy == "downloader_managed",
+        )
+        .order_by(DownloaderConfig.id)
+    )
     if config is None:
         return
     root = remote_root(await get_library_root(session, config.library_root), config)
     title = safe_folder_name(source.name)
-    items = list(await session.scalars(select(FeedItem).where(
-        FeedItem.source_id == source.id, FeedItem.parse_status == "parsed",
-        FeedItem.download_url.is_not(None),
-    )))
-    previous_jobs = list((await session.execute(
-        select(DownloadJob, FeedItem).join(FeedItem).where(
-            FeedItem.source_id == source.id, DownloadJob.downloader_id == config.id,
-            DownloadJob.target_root == root,
-            DownloadJob.state.not_in(["ignored", "superseded", "existing"]),
+    items = list(
+        await session.scalars(
+            select(FeedItem).where(
+                FeedItem.source_id == source.id,
+                FeedItem.parse_status == "parsed",
+                FeedItem.download_url.is_not(None),
+            )
         )
-    )).all())
+    )
+    previous_jobs = list(
+        (
+            await session.execute(
+                select(DownloadJob, FeedItem)
+                .join(FeedItem)
+                .where(
+                    FeedItem.source_id == source.id,
+                    DownloadJob.downloader_id == config.id,
+                    DownloadJob.target_root == root,
+                    DownloadJob.state.not_in(["ignored", "superseded", "existing"]),
+                )
+            )
+        ).all()
+    )
     for item in await select_revisions(session, source, items):
         info_hash = item.info_hash or extract_info_hash(item.download_url)
         if not info_hash:
             continue
         parsed = ParsedRelease.model_validate_json(item.parse_data)
         manual = "manual_review" in parsed.evidence
-        season = parsed.season if manual else (
-            source.season if source.season is not None else parsed.season
+        season = (
+            parsed.season
+            if manual
+            else (source.season if source.season is not None else parsed.season)
         )
         if season is None or parsed.episode_start is None:
             continue
@@ -114,17 +136,27 @@ async def enqueue_source(session, source):
         predecessors = [
             (old, ParsedRelease.model_validate_json(previous.parse_data).revision)
             for old, previous in previous_jobs
-            if key is not None and key == release_identity(previous, source)
+            if key is not None
+            and key == release_identity(previous, source)
             and ParsedRelease.model_validate_json(previous.parse_data).revision < parsed.revision
         ]
         if predecessors and not manual:
             # 沿用旧版实际媒体库名称，保留此前的人工修正。
             library_title = max(predecessors, key=lambda pair: pair[1])[0].title
-        job_id = await session.scalar(insert(DownloadJob).values(
-            item_id=item.id, info_hash=info_hash, downloader_id=config.id,
-            target_root=root, title=library_title,
-            season=season, state="queued",
-        ).on_conflict_do_nothing().returning(DownloadJob.id))
+        job_id = await session.scalar(
+            insert(DownloadJob)
+            .values(
+                item_id=item.id,
+                info_hash=info_hash,
+                downloader_id=config.id,
+                target_root=root,
+                title=library_title,
+                season=season,
+                state="queued",
+            )
+            .on_conflict_do_nothing()
+            .returning(DownloadJob.id)
+        )
         if job_id is not None:
             await notify_task(session, item, "download_added", source=source)
 
@@ -149,8 +181,13 @@ def language_preference(paths):
     ranks = {}
     best = {}
     for path in paths:
-        kind = ("video" if path.suffix.lower() in VIDEO_EXTENSIONS else
-                "subtitle" if path.suffix.lower() in SUBTITLE_EXTENSIONS else None)
+        kind = (
+            "video"
+            if path.suffix.lower() in VIDEO_EXTENSIONS
+            else "subtitle"
+            if path.suffix.lower() in SUBTITLE_EXTENSIONS
+            else None
+        )
         if kind is None:
             continue
         parsed = parse_release_title(path.stem)
@@ -165,8 +202,7 @@ def language_preference(paths):
             continue
         ranks[path] = 0 if languages == {"hans"} else 1 if "hans" in languages else 2
         best[keys[path]] = min(best.get(keys[path], 2), ranks[path])
-    return {path for path, key in keys.items()
-            if path in ranks and ranks[path] > best[key]}
+    return {path for path, key in keys.items() if path in ranks and ranks[path] > best[key]}
 
 
 def build_plan(files, title, season, release, overrides=None):
@@ -199,7 +235,8 @@ def build_plan(files, title, season, release, overrides=None):
             parsed = parse_release_title(p.stem)
             episode = parsed.episode_start
             manual = str(p) in overrides or (
-                len(videos) == 1 and "manual_review" in release.evidence
+                len(videos) == 1
+                and "manual_review" in release.evidence
                 and release.release_kind == "single"
             )
             if manual:
@@ -218,9 +255,14 @@ def build_plan(files, title, season, release, overrides=None):
         targets.add(target.casefold())
         renames.append({"old": old, "new": target})
     return {
-        "wrapper": wrapper, "season_folder": season_folder, "files": renames,
-        "skip_file_ids": [int(f.get("index", index)) for index, (f, p)
-                          in enumerate(zip(files, paths, strict=True)) if p in skipped],
+        "wrapper": wrapper,
+        "season_folder": season_folder,
+        "files": renames,
+        "skip_file_ids": [
+            int(f.get("index", index))
+            for index, (f, p) in enumerate(zip(files, paths, strict=True))
+            if p in skipped
+        ],
         "selection_version": 2,
     }
 
@@ -238,14 +280,19 @@ async def fetch_torrent_file(session, url):
     try:
         async with httpx.AsyncClient(
             proxy=str(options.proxy_url) if options.proxy_url else None,
-            trust_env=False, timeout=settings.rss_timeout_seconds, follow_redirects=True,
+            trust_env=False,
+            timeout=settings.rss_timeout_seconds,
+            follow_redirects=True,
             headers={"User-Agent": settings.rss_user_agent},
         ) as client:
             response = await client.get(url)
             response.raise_for_status()
     except httpx.HTTPError as exc:
-        detail = (f"HTTP {exc.response.status_code}" if isinstance(exc, httpx.HTTPStatusError)
-                  else type(exc).__name__)
+        detail = (
+            f"HTTP {exc.response.status_code}"
+            if isinstance(exc, httpx.HTTPStatusError)
+            else type(exc).__name__
+        )
         raise DownloadDeliveryError(
             f"种子文件获取失败，请检查订阅代理或种子源站连接（{detail}）"
         ) from exc
@@ -258,22 +305,36 @@ async def fetch_torrent_file(session, url):
 async def set_running(client, info_hash, running):
     """兼容 qBittorrent 5 的 start/stop 和 4 的 resume/pause。"""
     try:
-        await request(client, "POST", "torrents/start" if running else "torrents/stop",
-                      data={"hashes": info_hash})
+        await request(
+            client,
+            "POST",
+            "torrents/start" if running else "torrents/stop",
+            data={"hashes": info_hash},
+        )
     except httpx.HTTPStatusError as exc:
         if exc.response.status_code != 404:
             raise
-        await request(client, "POST", "torrents/resume" if running else "torrents/pause",
-                      data={"hashes": info_hash})
+        await request(
+            client,
+            "POST",
+            "torrents/resume" if running else "torrents/pause",
+            data={"hashes": info_hash},
+        )
 
 
 async def process_job(session, job, config, item):
-    async with httpx.AsyncClient(base_url=config.base_url, timeout=10,
-                                 verify=config.verify_tls) as client:
-        login = await request(client, "POST", "auth/login", data={
-            "username": config.username or "",
-            "password": decrypt_secret(config.encrypted_secret) or "",
-        })
+    async with httpx.AsyncClient(
+        base_url=config.base_url, timeout=10, verify=config.verify_tls
+    ) as client:
+        login = await request(
+            client,
+            "POST",
+            "auth/login",
+            data={
+                "username": config.username or "",
+                "password": decrypt_secret(config.encrypted_secret) or "",
+            },
+        )
         if login.status_code != 204 and not login.text.startswith("Ok"):
             raise DownloadDeliveryError("qBittorrent 拒绝登录，请检查凭据")
         response = await request(client, "GET", "torrents/info", params={"hashes": job.info_hash})
@@ -286,8 +347,9 @@ async def process_job(session, job, config, item):
         if job.plan and "season_change" in json.loads(job.plan):
             from .season_change import advance_season_change
 
-            await advance_season_change(session, client, job, config, item,
-                                        torrents[0] if torrents else None)
+            await advance_season_change(
+                session, client, job, config, item, torrents[0] if torrents else None
+            )
             return
         if not torrents:
             if job.state != "queued":
@@ -295,16 +357,24 @@ async def process_job(session, job, config, item):
             # 每个种子独立暂存，避免未重命名的资源互相覆盖。
             staging = str(path_type(job.target_root)(job.target_root) / ".mooncell" / job.info_hash)
             data = {
-                "savepath": staging, "autoTMM": "false",
-                "contentLayout": "Original", "paused": "false", "stopped": "false",
-                "stopCondition": "MetadataReceived", "tags": show_tag(job.title),
+                "savepath": staging,
+                "autoTMM": "false",
+                "contentLayout": "Original",
+                "paused": "false",
+                "stopped": "false",
+                "stopCondition": "MetadataReceived",
+                "tags": show_tag(job.title),
             }
             files = None
             if urlsplit(item.download_url or "").scheme.lower() in {"http", "https"}:
                 content = await fetch_torrent_file(session, item.download_url)
-                files = {"torrents": (
-                    f"{job.info_hash}.torrent", content, "application/x-bittorrent",
-                )}
+                files = {
+                    "torrents": (
+                        f"{job.info_hash}.torrent",
+                        content,
+                        "application/x-bittorrent",
+                    )
+                }
             else:
                 data["urls"] = item.download_url
             added = await request(client, "POST", "torrents/add", data=data, files=files)
@@ -334,13 +404,14 @@ async def process_job(session, job, config, item):
         if not files:
             return
         plan = json.loads(job.plan) if job.plan else {}
-        if (not plan.get("replacement")
-                and (not plan.get("files") or plan.get("selection_version"))
-                and not str(torrent.get("state", "")).startswith(("paused", "stopped"))):
+        if (
+            not plan.get("replacement")
+            and (not plan.get("files") or plan.get("selection_version"))
+            and not str(torrent.get("state", "")).startswith(("paused", "stopped"))
+        ):
             await set_running(client, job.info_hash, False)
             return  # 确认暂停后才筛选、重命名，失败时不继续下载全部版本。
-        if not await sync_show_tag(client, job.info_hash, torrent, job.title,
-                                   plan.get("show_tag")):
+        if not await sync_show_tag(client, job.info_hash, torrent, job.title, plan.get("show_tag")):
             return
         plan["show_tag"] = show_tag(job.title)
         job.plan = json.dumps(plan, ensure_ascii=False)
@@ -367,53 +438,98 @@ async def process_job(session, job, config, item):
             await session.commit()
         plan = json.loads(job.plan)
         skipped_ids = set(plan.get("skip_file_ids", []))
-        selected_ids = [int(f.get("index", index)) for index, f in enumerate(files)
-                        if int(f.get("index", index)) not in skipped_ids
-                        and PurePosixPath(f["name"]).suffix.lower()
-                        in (VIDEO_EXTENSIONS | SUBTITLE_EXTENSIONS)
-                        and f.get("priority", 1) == 0]
+        selected_ids = [
+            int(f.get("index", index))
+            for index, f in enumerate(files)
+            if int(f.get("index", index)) not in skipped_ids
+            and PurePosixPath(f["name"]).suffix.lower() in (VIDEO_EXTENSIONS | SUBTITLE_EXTENSIONS)
+            and f.get("priority", 1) == 0
+        ]
         if selected_ids:
-            await request(client, "POST", "torrents/filePrio", data={
-                "hash": job.info_hash, "id": "|".join(map(str, selected_ids)), "priority": 1,
-            })
+            await request(
+                client,
+                "POST",
+                "torrents/filePrio",
+                data={
+                    "hash": job.info_hash,
+                    "id": "|".join(map(str, selected_ids)),
+                    "priority": 1,
+                },
+            )
             return
-        pending_skip = [int(f.get("index", index)) for index, f in enumerate(files)
-                        if int(f.get("index", index)) in skipped_ids and f.get("priority") != 0]
+        pending_skip = [
+            int(f.get("index", index))
+            for index, f in enumerate(files)
+            if int(f.get("index", index)) in skipped_ids and f.get("priority") != 0
+        ]
         if pending_skip:
-            await request(client, "POST", "torrents/filePrio", data={
-                "hash": job.info_hash, "id": "|".join(map(str, pending_skip)), "priority": 0,
-            })
+            await request(
+                client,
+                "POST",
+                "torrents/filePrio",
+                data={
+                    "hash": job.info_hash,
+                    "id": "|".join(map(str, pending_skip)),
+                    "priority": 0,
+                },
+            )
             return  # 下一轮确认 priority=0 后才能继续，使用原始文件 index 防止改名后失配。
         names = {str(f["name"]).replace("\\", "/") for f in files}
         wrapper = plan["wrapper"]
-        if wrapper and wrapper != plan["season_folder"] and any(
-            name.startswith(wrapper + "/") for name in names
+        if (
+            wrapper
+            and wrapper != plan["season_folder"]
+            and any(name.startswith(wrapper + "/") for name in names)
         ):
-            await request(client, "POST", "torrents/renameFolder", data={
-                "hash": job.info_hash, "oldPath": wrapper, "newPath": plan["season_folder"],
-            })
+            await request(
+                client,
+                "POST",
+                "torrents/renameFolder",
+                data={
+                    "hash": job.info_hash,
+                    "oldPath": wrapper,
+                    "newPath": plan["season_folder"],
+                },
+            )
             return  # 下一轮从下载器重新读取，确认异步重命名已生效。
         for file in plan["files"]:
             if file["new"] in names:
                 continue
             if file["old"] not in names:
                 raise ValueError("下载器文件结构已变化，无法继续重命名")
-            await request(client, "POST", "torrents/renameFile", data={
-                "hash": job.info_hash, "oldPath": file["old"], "newPath": file["new"],
-            })
+            await request(
+                client,
+                "POST",
+                "torrents/renameFile",
+                data={
+                    "hash": job.info_hash,
+                    "oldPath": file["old"],
+                    "newPath": file["new"],
+                },
+            )
             return
         destination = path_type(job.target_root)(job.target_root) / job.title
         if not wrapper:
             destination /= plan["season_folder"]
         # 不同种子即使发布名不同，也不能写入同一最终视频路径。
-        other_jobs = list(await session.scalars(select(DownloadJob).where(
-            DownloadJob.id != job.id, DownloadJob.target_root == job.target_root,
-            DownloadJob.season == job.season,
-            DownloadJob.plan.is_not(None),
-            DownloadJob.state.in_(["moving", "done", "upgrading", "replacing", "season_changing"]),
-        )))
-        video_names = {PurePosixPath(f["new"]).name.casefold() for f in plan["files"]
-                       if PurePosixPath(f["new"]).suffix.lower() in VIDEO_EXTENSIONS}
+        other_jobs = list(
+            await session.scalars(
+                select(DownloadJob).where(
+                    DownloadJob.id != job.id,
+                    DownloadJob.target_root == job.target_root,
+                    DownloadJob.season == job.season,
+                    DownloadJob.plan.is_not(None),
+                    DownloadJob.state.in_(
+                        ["moving", "done", "upgrading", "replacing", "season_changing"]
+                    ),
+                )
+            )
+        )
+        video_names = {
+            PurePosixPath(f["new"]).name.casefold()
+            for f in plan["files"]
+            if PurePosixPath(f["new"]).suffix.lower() in VIDEO_EXTENSIONS
+        }
         source = await session.get(FeedSource, item.source_id)
         key = release_identity(item, source)
         conflicts = []
@@ -422,16 +538,20 @@ async def process_job(session, job, config, item):
             same_release = key is not None and key == release_identity(other_item, source)
             other_plan = json.loads(other.plan)
             other_plan = other_plan.get("season_change", {}).get("target_plan") or other_plan
-            if same_release or (other.title.casefold() == job.title.casefold() and any(
-                PurePosixPath(f["new"]).name.casefold() in video_names
-                for f in other_plan.get("files", [])
-            )):
+            if same_release or (
+                other.title.casefold() == job.title.casefold()
+                and any(
+                    PurePosixPath(f["new"]).name.casefold() in video_names
+                    for f in other_plan.get("files", [])
+                )
+            ):
                 conflicts.append(other)
         if conflicts:
             from .revision_upgrade import begin_upgrade
 
-            if await begin_upgrade(session, client, job, item, config, torrent,
-                                   files, conflicts, destination):
+            if await begin_upgrade(
+                session, client, job, item, config, torrent, files, conflicts, destination
+            ):
                 return
             job.state = "needs_review"
             raise ValueError("媒体库已有同集下载任务，需要审核版本冲突")
@@ -447,16 +567,23 @@ async def process_job(session, job, config, item):
                 local = Path(local_destination)
                 # 仅检查当前服务能访问的绝对目录；远程目录还需要下载器端的冲突响应。
                 if local.is_absolute():
-                    targets = [local.joinpath(*PurePosixPath(f["new"]).parts)
-                               for f in plan["files"]]
+                    targets = [
+                        local.joinpath(*PurePosixPath(f["new"]).parts) for f in plan["files"]
+                    ]
                     if await asyncio.to_thread(lambda: any(p.exists() for p in targets)):
                         job.state = "needs_review"
                         raise ValueError("目标目录已有同名文件，已停止自动整理")
             job.state = "moving"
             await session.commit()
-            await request(client, "POST", "torrents/setLocation", data={
-                "hashes": job.info_hash, "location": str(destination),
-            })
+            await request(
+                client,
+                "POST",
+                "torrents/setLocation",
+                data={
+                    "hashes": job.info_hash,
+                    "location": str(destination),
+                },
+            )
             return
         if torrent.get("state") == "moving":
             return
@@ -475,10 +602,24 @@ async def process_queue():
         async with SessionFactory() as session:
             await reconcile_migrations(session)
             await commit_and_publish(session)
-            ids = list(await session.scalars(select(DownloadJob.id).where(
-                DownloadJob.state.in_(["queued", "metadata", "organizing", "moving",
-                                       "upgrading", "season_changing"]),
-            ).order_by(DownloadJob.id)))
+            ids = list(
+                await session.scalars(
+                    select(DownloadJob.id)
+                    .where(
+                        DownloadJob.state.in_(
+                            [
+                                "queued",
+                                "metadata",
+                                "organizing",
+                                "moving",
+                                "upgrading",
+                                "season_changing",
+                            ]
+                        ),
+                    )
+                    .order_by(DownloadJob.id)
+                )
+            )
         for job_id in ids:
             async with SessionFactory() as session:
                 job = await session.get(DownloadJob, job_id)
@@ -497,8 +638,9 @@ async def process_queue():
                         await session.commit()
                     if migrating:
                         job.last_error = "请启用此任务对应的下载器，媒体库迁移将在后台继续"
-                        await update_migration(session, job, "blocked", job.last_error,
-                                               "downloader_disabled")
+                        await update_migration(
+                            session, job, "blocked", job.last_error, "downloader_disabled"
+                        )
                         await commit_and_publish(session)
                     continue
                 if renaming and config.kind != "qbittorrent":
@@ -507,33 +649,48 @@ async def process_queue():
                     continue
                 if migrating and config.kind != "qbittorrent":
                     job.last_error = "媒体库迁移需要此任务原有的 qBittorrent 下载器配置"
-                    await update_migration(session, job, "blocked", job.last_error,
-                                           "downloader_changed")
+                    await update_migration(
+                        session, job, "blocked", job.last_error, "downloader_changed"
+                    )
                     await commit_and_publish(session)
                     continue
                 if not source.active and not migrating and not renaming:
                     continue
                 if not renaming and await session.scalar(
-                    select(DownloadJob.id).join(FeedItem).where(
+                    select(DownloadJob.id)
+                    .join(FeedItem)
+                    .where(
                         FeedItem.source_id == source.id,
                         DownloadJob.plan.contains('"episode_rename"'),
-                    ).limit(1),
+                    )
+                    .limit(1),
                 ):
                     continue
-                if (migrating and not source.active
-                        and json.loads(job.plan)["season_change"]["previous_state"] == "queued"):
+                if (
+                    migrating
+                    and not source.active
+                    and json.loads(job.plan)["season_change"]["previous_state"] == "queued"
+                ):
                     job.last_error = "请启用订阅后继续尚未投递任务的季度同步"
-                    await update_migration(session, job, "blocked", job.last_error,
-                                           "source_disabled")
+                    await update_migration(
+                        session, job, "blocked", job.last_error, "source_disabled"
+                    )
                     await commit_and_publish(session)
                     continue
                 await session.commit()
                 try:
                     await process_job(session, job, config, item)
                     if job.last_error and job.retry_attempts:
-                        record_event(session, "download.recovered", "feed_item", str(item.id), {
-                            "title": item.title, "source_id": item.source_id,
-                        })
+                        record_event(
+                            session,
+                            "download.recovered",
+                            "feed_item",
+                            str(item.id),
+                            {
+                                "title": item.title,
+                                "source_id": item.source_id,
+                            },
+                        )
                     job.last_error = None
                     job.retry_attempts = 0
                     job.next_retry_at = None
@@ -541,6 +698,7 @@ async def process_queue():
                         await update_migration(session, job, "running")
                 except Exception as exc:
                     from .events import _redact, describe_download_error
+
                     error = _redact(describe_download_error(exc))[:1000]
                     delay = retry_delay(exc, job.retry_attempts + 1)
                     if delay and not isinstance(exc, MigrationBlocked):
@@ -552,20 +710,30 @@ async def process_queue():
                     operation_id = None
                     if migrating:
                         operation_id = await update_migration(
-                            session, job,
+                            session,
+                            job,
                             "blocked" if isinstance(exc, MigrationBlocked) else "running",
-                            error, exc.code if isinstance(exc, MigrationBlocked) else "retrying",
+                            error,
+                            exc.code if isinstance(exc, MigrationBlocked) else "retrying",
                         )
                     if error != job.last_error:
-                        record_event(session, "download.failed", "feed_item", str(item.id), {
-                            "error": error, "source_id": item.source_id,
-                            "operation_id": operation_id,
-                            "retry_seconds": delay,
-                        })
+                        record_event(
+                            session,
+                            "download.failed",
+                            "feed_item",
+                            str(item.id),
+                            {
+                                "error": error,
+                                "source_id": item.source_id,
+                                "operation_id": operation_id,
+                                "retry_seconds": delay,
+                            },
+                        )
                     job.last_error = error
                 if job.state == "needs_review":
-                    await notify_task(session, item, "review_required", source=source,
-                                      reason=job.last_error)
+                    await notify_task(
+                        session, item, "review_required", source=source, reason=job.last_error
+                    )
                 await commit_and_publish(session)
 
 

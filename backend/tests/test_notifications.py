@@ -455,9 +455,15 @@ async def test_metadata_failure_preserves_previously_scraped_fields(notification
 async def add_task_item(session, *, status="parsed"):
     release = parse_release_title("[Group] Example - 05 [1080p]")
     release.season = 1
-    item = FeedItem(source_id=1, title=release.raw_title, fingerprint="task",
-                    download_url=f"magnet:?xt=urn:btih:{'a' * 40}", info_hash="a" * 40,
-                    parse_status=status, parse_data=release.model_dump_json())
+    item = FeedItem(
+        source_id=1,
+        title=release.raw_title,
+        fingerprint="task",
+        download_url=f"magnet:?xt=urn:btih:{'a' * 40}",
+        info_hash="a" * 40,
+        parse_status=status,
+        parse_data=release.model_dump_json(),
+    )
     session.add(item)
     await session.flush()
     return item
@@ -485,19 +491,21 @@ async def test_new_download_notification_is_committed_once_and_owned(notificatio
 
 
 async def test_rss_creates_download_and_review_notifications_without_duplicates(
-    notification_app, monkeypatch,
+    notification_app,
+    monkeypatch,
 ):
     client, sessions, _ = notification_app
     original = httpx.AsyncClient
-    xml = f'''<rss version="2.0"><channel><title>Example</title>
+    xml = f"""<rss version="2.0"><channel><title>Example</title>
     <item><guid>parsed</guid><title>[Group] Example - 05 [1080p]</title>
-    <enclosure url="magnet:?xt=urn:btih:{'a' * 40}" type="application/x-bittorrent"/></item>
+    <enclosure url="magnet:?xt=urn:btih:{"a" * 40}" type="application/x-bittorrent"/></item>
     <item><guid>review</guid><title>无法识别的发布</title>
-    <enclosure url="magnet:?xt=urn:btih:{'b' * 40}" type="application/x-bittorrent"/></item>
-    </channel></rss>'''
+    <enclosure url="magnet:?xt=urn:btih:{"b" * 40}" type="application/x-bittorrent"/></item>
+    </channel></rss>"""
     transport = httpx.MockTransport(lambda request: httpx.Response(200, text=xml))
-    monkeypatch.setattr(rss_service.httpx, "AsyncClient", lambda **kwargs: original(
-        transport=transport, **kwargs))
+    monkeypatch.setattr(
+        rss_service.httpx, "AsyncClient", lambda **kwargs: original(transport=transport, **kwargs)
+    )
     async with sessions() as session:
         source = await session.get(FeedSource, 1)
         source.season = 1
@@ -510,7 +518,8 @@ async def test_rss_creates_download_and_review_notifications_without_duplicates(
 
 
 async def test_queue_review_notifies_once_and_survives_restart_and_rescrape(
-    notification_app, monkeypatch,
+    notification_app,
+    monkeypatch,
 ):
     client, sessions, _ = notification_app
     monkeypatch.setattr(download_queue, "SessionFactory", sessions)

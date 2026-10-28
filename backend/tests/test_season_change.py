@@ -50,14 +50,16 @@ class FakeQB:
     def handle(self, request):
         endpoint = request.url.path.rsplit("/", 1)[-1]
         data = {key: values[0] for key, values in parse_qs(request.content.decode()).items()}
-        info_hash = (data.get("hashes") or data.get("hash")
-                     or request.url.params.get("hashes"))
+        info_hash = data.get("hashes") or data.get("hash") or request.url.params.get("hashes")
         self.calls.append((endpoint, data))
         if endpoint == "login":
             return httpx.Response(200, text="Ok.")
         if endpoint == "info":
-            values = ([self.torrents[info_hash]] if info_hash in self.torrents else []) \
-                if info_hash else list(self.torrents.values())
+            values = (
+                ([self.torrents[info_hash]] if info_hash in self.torrents else [])
+                if info_hash
+                else list(self.torrents.values())
+            )
             return httpx.Response(200, json=deepcopy(values))
         if endpoint == "files":
             return httpx.Response(200, json=deepcopy(self.files[request.url.params["hash"]]))
@@ -66,8 +68,9 @@ class FakeQB:
         if endpoint in {"stop", "start"}:
             self.torrents[info_hash]["state"] = "stoppedUP" if endpoint == "stop" else "uploading"
         if endpoint == "setLocation":
-            paths = [(file["name"], self.path(info_hash, file["name"]))
-                     for file in self.files[info_hash]]
+            paths = [
+                (file["name"], self.path(info_hash, file["name"])) for file in self.files[info_hash]
+            ]
             self.torrents[info_hash]["save_path"] = data["location"]
             for name, old in paths:
                 target = self.path(info_hash, name)
@@ -101,9 +104,11 @@ class FakeQB:
 async def season_app(monkeypatch, tmp_path):
     # 此套用例推进虚拟时间以验证迁移恢复；退避边界由下载队列用例单独验证。
     ticks = count()
-    monkeypatch.setattr(download_queue, "retry_now", lambda: (
-        datetime(2026, 10, 18, tzinfo=UTC) + timedelta(minutes=16 * next(ticks))
-    ))
+    monkeypatch.setattr(
+        download_queue,
+        "retry_now",
+        lambda: datetime(2026, 10, 18, tzinfo=UTC) + timedelta(minutes=16 * next(ticks)),
+    )
     engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'app.db'}")
     async with engine.begin() as connection:
         await connection.run_sync(Base.metadata.create_all)
@@ -121,7 +126,9 @@ async def season_app(monkeypatch, tmp_path):
     app = FastAPI()
     app.include_router(router)
     app.dependency_overrides[require_user] = lambda: User(
-        id=1, username="admin", password_hash="test",
+        id=1,
+        username="admin",
+        password_hash="test",
     )
 
     async def get_test_session():
@@ -134,8 +141,18 @@ async def season_app(monkeypatch, tmp_path):
     await engine.dispose()
 
 
-async def seed(sessions, fake, root, *, wrapper=False, multi=False, running=True,
-               active=True, state="done", raw_season=1):
+async def seed(
+    sessions,
+    fake,
+    root,
+    *,
+    wrapper=False,
+    multi=False,
+    running=True,
+    active=True,
+    state="done",
+    raw_season=1,
+):
     release = parse_release_title(f"[Group] Example S{raw_season:02d}E05 [1080p]")
     release.evidence.append("manual_review")
     release.episode_start = 5.5
@@ -144,9 +161,14 @@ async def seed(sessions, fake, root, *, wrapper=False, multi=False, running=True
     if multi:
         names.append(prefix + "番名 S01E06.mp4")
     skipped = prefix + "Example - 05 [CHT].mkv"
-    plan = {"wrapper": "Pack" if wrapper else None, "season_folder": "Season 01",
-            "files": [{"old": name, "new": name} for name in names],
-            "skip_file_ids": [len(names)], "selection_version": 2, "show_tag": "番名"}
+    plan = {
+        "wrapper": "Pack" if wrapper else None,
+        "season_folder": "Season 01",
+        "files": [{"old": name, "new": name} for name in names],
+        "skip_file_ids": [len(names)],
+        "selection_version": 2,
+        "show_tag": "番名",
+    }
     location = root / "library" / "番名"
     if not wrapper:
         location /= "Season 01"
@@ -155,30 +177,60 @@ async def seed(sessions, fake, root, *, wrapper=False, multi=False, running=True
         names = ["video.mkv"]
         skipped = "video [CHT].mkv"
         plan = None
-    fake.torrents[HASH] = {"hash": HASH, "name": "原始种子名称", "save_path": str(location),
-                           "state": "uploading" if running else "stoppedUP",
-                           "auto_tmm": False, "progress": 1, "amount_left": 0,
-                           "tags": "手动收藏, 保留标签"}
-    fake.files[HASH] = [{"index": index, "name": name, "priority": 1, "progress": 1}
-                        for index, name in enumerate(names)]
+    fake.torrents[HASH] = {
+        "hash": HASH,
+        "name": "原始种子名称",
+        "save_path": str(location),
+        "state": "uploading" if running else "stoppedUP",
+        "auto_tmm": False,
+        "progress": 1,
+        "amount_left": 0,
+        "tags": "手动收藏, 保留标签",
+    }
+    fake.files[HASH] = [
+        {"index": index, "name": name, "priority": 1, "progress": 1}
+        for index, name in enumerate(names)
+    ]
     fake.files[HASH].append({"index": len(names), "name": skipped, "priority": 0, "progress": 0})
     for file in fake.files[HASH]:
         path = fake.path(HASH, file["name"])
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(f"content-{file['index']}", encoding="utf-8")
     async with sessions() as session:
-        session.add_all([
-            FeedSource(id=1, name="番名", season=1, url="https://example.test/rss", active=active),
-            DownloaderConfig(id=1, name="qB", kind="qbittorrent", base_url="http://qb.test"),
-        ])
+        session.add_all(
+            [
+                FeedSource(
+                    id=1, name="番名", season=1, url="https://example.test/rss", active=active
+                ),
+                DownloaderConfig(id=1, name="qB", kind="qbittorrent", base_url="http://qb.test"),
+            ]
+        )
         await session.flush()
-        session.add(FeedItem(id=1, source_id=1, title=release.raw_title, fingerprint="first",
-                             info_hash=HASH, download_url=f"magnet:?xt=urn:btih:{HASH}",
-                             parse_data=release.model_dump_json()))
+        session.add(
+            FeedItem(
+                id=1,
+                source_id=1,
+                title=release.raw_title,
+                fingerprint="first",
+                info_hash=HASH,
+                download_url=f"magnet:?xt=urn:btih:{HASH}",
+                parse_data=release.model_dump_json(),
+            )
+        )
         await session.flush()
-        session.add(DownloadJob(id=1, item_id=1, info_hash=HASH, downloader_id=1,
-                                target_root=str(root / "library"), title="番名", season=1,
-                                state=state, plan=json.dumps(plan) if plan else None))
+        session.add(
+            DownloadJob(
+                id=1,
+                item_id=1,
+                info_hash=HASH,
+                downloader_id=1,
+                target_root=str(root / "library"),
+                title="番名",
+                season=1,
+                state=state,
+                plan=json.dumps(plan) if plan else None,
+            )
+        )
         await session.commit()
     return location, plan
 
@@ -199,7 +251,11 @@ async def finish(sessions, iterations=35):
 @pytest.mark.parametrize("running", [False, True])
 @pytest.mark.parametrize("failure", [None, "setLocation", "renameFile", "addTags"])
 async def test_migrate_files_tags_paths_and_db_preserving_episodes(
-    season_app, wrapper, multi, running, failure,
+    season_app,
+    wrapper,
+    multi,
+    running,
+    failure,
 ):
     api, sessions, fake, root = season_app
     await seed(sessions, fake, root, wrapper=wrapper, multi=multi, running=running)
@@ -210,7 +266,8 @@ async def test_migrate_files_tags_paths_and_db_preserving_episodes(
     async with sessions() as session:
         item = await session.get(FeedItem, 1)
         operation = await session.get(
-            BackgroundOperation, response.json()["background_operation_ids"][0],
+            BackgroundOperation,
+            response.json()["background_operation_ids"][0],
         )
         assert operation.kind == "library_migration"
         assert operation.total_count == 1 and operation.completed_count == 0
@@ -247,13 +304,19 @@ async def test_migrate_files_tags_paths_and_db_preserving_episodes(
     assert not any(endpoint == "add" for endpoint, _ in fake.calls)
     async with sessions() as session:
         operation = await session.get(
-            BackgroundOperation, response.json()["background_operation_ids"][0],
+            BackgroundOperation,
+            response.json()["background_operation_ids"][0],
         )
         assert operation.status == "completed" and operation.completed_count == 1
         assert operation.attention_revision > operation.read_revision
-        assert await session.scalar(select(DomainEvent).where(
-            DomainEvent.event_type == "download.library.changed",
-        )) is not None
+        assert (
+            await session.scalar(
+                select(DomainEvent).where(
+                    DomainEvent.event_type == "download.library.changed",
+                )
+            )
+            is not None
+        )
 
 
 async def test_batch_stays_blocked_until_all_downloads_restore(season_app):
@@ -264,20 +327,45 @@ async def test_batch_stays_blocked_until_all_downloads_restore(season_app):
     fake.torrents[OTHER_HASH] = {**fake.torrents[HASH], "hash": OTHER_HASH}
     fake.files[OTHER_HASH] = [{"index": 0, "name": name, "priority": 1, "progress": 1}]
     async with sessions() as session:
-        session.add(DownloaderConfig(
-            id=2, name="暂时停用", kind="qbittorrent", base_url="http://qb.test", active=False,
-        ))
-        session.add(FeedItem(
-            id=2, source_id=1, title="Example S01E09", fingerprint="second",
-            parse_data=parse_release_title("Example S01E09").model_dump_json(),
-        ))
+        session.add(
+            DownloaderConfig(
+                id=2,
+                name="暂时停用",
+                kind="qbittorrent",
+                base_url="http://qb.test",
+                active=False,
+            )
+        )
+        session.add(
+            FeedItem(
+                id=2,
+                source_id=1,
+                title="Example S01E09",
+                fingerprint="second",
+                parse_data=parse_release_title("Example S01E09").model_dump_json(),
+            )
+        )
         await session.flush()
-        session.add(DownloadJob(
-            id=2, item_id=2, info_hash=OTHER_HASH, downloader_id=2, state="done",
-            target_root=str(root / "library"), title="番名", season=1,
-            plan=json.dumps({"wrapper": None, "season_folder": "Season 01",
-                             "files": [{"old": name, "new": name}], "show_tag": "番名"}),
-        ))
+        session.add(
+            DownloadJob(
+                id=2,
+                item_id=2,
+                info_hash=OTHER_HASH,
+                downloader_id=2,
+                state="done",
+                target_root=str(root / "library"),
+                title="番名",
+                season=1,
+                plan=json.dumps(
+                    {
+                        "wrapper": None,
+                        "season_folder": "Season 01",
+                        "files": [{"old": name, "new": name}],
+                        "show_tag": "番名",
+                    }
+                ),
+            )
+        )
         await session.commit()
     response = await api.patch("/api/v1/feeds/1", json={"season": 2})
     operation_id = response.json()["background_operation_ids"][0]
@@ -309,7 +397,8 @@ async def test_batch_stays_blocked_until_all_downloads_restore(season_app):
 
 @pytest.mark.parametrize("kind", ["local", "other_torrent", "shared_source", "manual_path"])
 async def test_conflicts_never_overwrite_or_move_shared_files(
-    season_app, kind,
+    season_app,
+    kind,
 ):
     api, sessions, fake, root = season_app
     original, _ = await seed(sessions, fake, root)
@@ -318,17 +407,23 @@ async def test_conflicts_never_overwrite_or_move_shared_files(
         conflict.parent.mkdir(parents=True, exist_ok=True)
         conflict.write_text("other-content", encoding="utf-8")
     elif kind in {"other_torrent", "shared_source"}:
-        fake.torrents[OTHER_HASH] = {"hash": OTHER_HASH, "save_path": str(
-            conflict.parent if kind == "other_torrent" else original
-        )}
-        fake.files[OTHER_HASH] = [{"name": conflict.name if kind == "other_torrent"
-                                   else fake.files[HASH][0]["name"], "priority": 1}]
+        fake.torrents[OTHER_HASH] = {
+            "hash": OTHER_HASH,
+            "save_path": str(conflict.parent if kind == "other_torrent" else original),
+        }
+        fake.files[OTHER_HASH] = [
+            {
+                "name": conflict.name if kind == "other_torrent" else fake.files[HASH][0]["name"],
+                "priority": 1,
+            }
+        ]
     else:
         fake.torrents[HASH]["save_path"] = str(root / "manually-changed")
     assert (await api.patch("/api/v1/feeds/1", json={"season": 2})).status_code == 200
     await download_queue.process_queue()
-    assert not any(endpoint in {"stop", "setLocation", "renameFile", "rename"}
-                   for endpoint, _ in fake.calls)
+    assert not any(
+        endpoint in {"stop", "setLocation", "renameFile", "rename"} for endpoint, _ in fake.calls
+    )
     assert (original / "番名 S01E05.5.mkv").read_text(encoding="utf-8") == "content-0"
     if kind == "local":
         assert conflict.read_text(encoding="utf-8") == "other-content"
@@ -452,7 +547,10 @@ async def test_second_migration_and_other_episode_in_shared_season_directory(
 @pytest.mark.parametrize("new_season", [None, 2])
 @pytest.mark.parametrize("failure", [None, "setLocation", "renameFile", "addTags", "removeTags"])
 async def test_name_is_applied_before_season_and_old_paths_remain_recoverable(
-    season_app, wrapper, new_season, failure,
+    season_app,
+    wrapper,
+    new_season,
+    failure,
 ):
     api, sessions, fake, root = season_app
     original, _ = await seed(sessions, fake, root, wrapper=wrapper, multi=True, running=False)
@@ -674,7 +772,10 @@ async def test_legacy_job_without_managed_tag_never_removes_manual_old_name_tag(
     assert (await api.patch("/api/v1/feeds/1", json={"name": "新番名"})).status_code == 200
     await finish(sessions)
     assert set(fake.torrents[HASH]["tags"].split(", ")) == {
-        "手动收藏", "保留标签", "番名", "新番名",
+        "手动收藏",
+        "保留标签",
+        "番名",
+        "新番名",
     }
     assert not any(endpoint == "removeTags" for endpoint, _ in fake.calls)
 

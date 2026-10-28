@@ -5,8 +5,7 @@ import type { ShowReturnState } from "@/lib/show-artwork"
 export type ShowDisplayProps = {
   show: Show
   index: number
-  columns: number
-  detailState: () => ShowReturnState
+  returnState: ShowReturnState
   openDetail: (event: MouseEvent<HTMLAnchorElement>, id: number) => void
   onUpload: (id: number) => void
   onRescrape: (id: number) => void

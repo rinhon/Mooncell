@@ -26,15 +26,19 @@ let logoPlayed = false
 function PageStage({
   pathname,
   detailRoute,
+  restoreShowList,
   children,
 }: {
   pathname: string
   detailRoute: boolean
+  restoreShowList: boolean
   children: ReactNode
 }) {
   const reducedMotion = useReducedMotion()
   const [firstVisit] = useState(() => !visitedRoutes.has(pathname))
   const animateEntry = firstVisit && !detailRoute && !reducedMotion
+  // 详情只让局部内容入场，整页保持静止以保留固定背景与吸顶布局。
+  const animateCards = !restoreShowList && !reducedMotion
   useEffect(() => {
     visitedRoutes.add(pathname)
     try {
@@ -45,7 +49,7 @@ function PageStage({
   }, [pathname])
 
   return (
-    <PageMotionContext.Provider value={{ animateEntry }}>
+    <PageMotionContext.Provider value={{ animateEntry, animateCards }}>
       <motion.div
         className="page-content"
         initial={animateEntry ? { opacity: 0, y: 8 } : false}
@@ -58,7 +62,7 @@ function PageStage({
   )
 }
 
-/** 顶部导航保持 78px，页面内容在下方工作区切换。 */
+/** 顶部导航尺寸与详情页吸顶偏移共用 CSS 变量。 */
 export function AppShell({ children }: { children: ReactNode }) {
   const location = useLocation()
   const detailRoute = /^\/shows\/[^/]+\/?$/.test(location.pathname)
@@ -84,7 +88,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       <header className="top-navigation">
         <GradualBlur
           position="top"
-          height="108px"
+          height="calc(var(--navigation-height) + 30px)"
           strength={2.6}
           divCount={3}
           curve="bezier"
@@ -112,7 +116,12 @@ export function AppShell({ children }: { children: ReactNode }) {
 
       <section className="app-workspace">
         <main className="content-stage">
-          <PageStage key={location.pathname} pathname={location.pathname} detailRoute={detailRoute}>
+          <PageStage
+            key={location.pathname}
+            pathname={location.pathname}
+            detailRoute={detailRoute}
+            restoreShowList={location.pathname === "/shows" && Boolean(location.state?.restoreShowList)}
+          >
             {children}
           </PageStage>
         </main>

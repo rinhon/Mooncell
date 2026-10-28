@@ -28,10 +28,16 @@ async def context():
         source = FeedSource(name="番名", season=2, url="https://example.test/rss")
         session.add(source)
         await session.flush()
-        session.add(FeedItem(source_id=source.id, title="Example SP", fingerprint="one",
-                             download_url=f"magnet:?xt=urn:btih:{HASH}",
-                             parse_status="needs_review",
-                             parse_data=parse_release_title("Example SP").model_dump_json()))
+        session.add(
+            FeedItem(
+                source_id=source.id,
+                title="Example SP",
+                fingerprint="one",
+                download_url=f"magnet:?xt=urn:btih:{HASH}",
+                parse_status="needs_review",
+                parse_data=parse_release_title("Example SP").model_dump_json(),
+            )
+        )
         await session.commit()
 
     async def session_override():
@@ -42,8 +48,9 @@ async def context():
     app.include_router(api.router)
     app.include_router(review.router)
     app.dependency_overrides[get_session] = session_override
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app),
-                                 base_url="http://test") as client:
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
         yield app, client, sessions
     await engine.dispose()
 
@@ -60,9 +67,18 @@ async def add_downloader(sessions, job=False):
         session.add(config)
         await session.flush()
         if job:
-            session.add(DownloadJob(item_id=1, info_hash=HASH, downloader_id=config.id,
-                                    state="needs_review", target_root="/media",
-                                    title="番名", season=2, last_error="文件集数未知"))
+            session.add(
+                DownloadJob(
+                    item_id=1,
+                    info_hash=HASH,
+                    downloader_id=config.id,
+                    state="needs_review",
+                    target_root="/media",
+                    title="番名",
+                    season=2,
+                    last_error="文件集数未知",
+                )
+            )
         await session.commit()
 
 
@@ -81,8 +97,11 @@ def mock_files(monkeypatch, files, fail=False):
             return httpx.Response(200, json=files)
         return httpx.Response(200)
 
-    monkeypatch.setattr(review.httpx, "AsyncClient", lambda **kwargs: original(
-        transport=httpx.MockTransport(handle), **kwargs))
+    monkeypatch.setattr(
+        review.httpx,
+        "AsyncClient",
+        lambda **kwargs: original(transport=httpx.MockTransport(handle), **kwargs),
+    )
     return calls
 
 
@@ -91,8 +110,7 @@ async def test_authentication_required(context):
     for path in ["", "/1/files"]:
         assert (await client.get("/api/v1/review" + path)).status_code == 401
     for action in ["approve", "ignore", "reparse"]:
-        assert (await client.post(f"/api/v1/review/1/{action}",
-                                  json=CORRECTION)).status_code == 401
+        assert (await client.post(f"/api/v1/review/1/{action}", json=CORRECTION)).status_code == 401
 
 
 async def test_reparse_stays_pending_ignore_persists_and_blocks_repeat(context):
@@ -135,11 +153,16 @@ async def test_approval_persists_item_corrections_and_enqueues_later(context, co
         assert json.loads(event.payload)["before"]["episode_start"] is None
 
 
-@pytest.mark.parametrize("body", [
-    {**CORRECTION, "episode": -1}, {**CORRECTION, "season": 100},
-    {**CORRECTION, "title": "../bad"}, {**CORRECTION, "title": " "},
-    {**CORRECTION, "episode": None},
-])
+@pytest.mark.parametrize(
+    "body",
+    [
+        {**CORRECTION, "episode": -1},
+        {**CORRECTION, "season": 100},
+        {**CORRECTION, "title": "../bad"},
+        {**CORRECTION, "title": " "},
+        {**CORRECTION, "episode": None},
+    ],
+)
 async def test_invalid_approval_does_not_change_item(context, body):
     client, sessions = await authorize(context)
     assert (await client.post("/api/v1/review/1/approve", json=body)).status_code == 422
@@ -160,9 +183,16 @@ async def test_job_review_file_corrections_and_skip(context, monkeypatch):
     assert len((await client.get("/api/v1/review")).json()) == 1
     assert (await client.get("/api/v1/dashboard")).json()["needs_review"] == 1
     assert len((await client.get("/api/v1/review/1/files")).json()) == 2
-    response = await client.post("/api/v1/review/1/approve", json={**CORRECTION, "files": [
-        {"name": "Batch/a.mkv", "episode": 8}, {"name": "Batch/b.mkv", "episode": None},
-    ]})
+    response = await client.post(
+        "/api/v1/review/1/approve",
+        json={
+            **CORRECTION,
+            "files": [
+                {"name": "Batch/a.mkv", "episode": 8},
+                {"name": "Batch/b.mkv", "episode": None},
+            ],
+        },
+    )
     assert response.status_code == 200, response.text
     assert "stop" in calls
     async with sessions() as session:
@@ -178,12 +208,20 @@ async def test_file_collisions_stale_files_and_all_skipped_rejected(context, mon
     client, sessions = await authorize(context)
     await add_downloader(sessions, job=True)
     mock_files(monkeypatch, [{"name": "a.mkv"}, {"name": "b.mkv"}])
-    for names, episodes in [(["a.mkv", "b.mkv"], [1, 1]),
-                            (["a.mkv", "b.mkv"], [None, None]),
-                            (["old.mkv", "b.mkv"], [1, 2])]:
-        response = await client.post("/api/v1/review/1/approve", json={**CORRECTION,
-            "files": [{"name": name, "episode": ep}
-                      for name, ep in zip(names, episodes, strict=True)]})
+    for names, episodes in [
+        (["a.mkv", "b.mkv"], [1, 1]),
+        (["a.mkv", "b.mkv"], [None, None]),
+        (["old.mkv", "b.mkv"], [1, 2]),
+    ]:
+        response = await client.post(
+            "/api/v1/review/1/approve",
+            json={
+                **CORRECTION,
+                "files": [
+                    {"name": name, "episode": ep} for name, ep in zip(names, episodes, strict=True)
+                ],
+            },
+        )
         assert response.status_code == 422, response.text
     async with sessions() as session:
         assert (await session.scalar(select(DownloadJob))).state == "needs_review"

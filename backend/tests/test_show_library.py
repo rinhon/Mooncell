@@ -19,11 +19,17 @@ def video(root, path):
 
 def test_actual_files_group_seasons_and_sort_decimal_episodes(tmp_path):
     for name in [
-        "Season 02/作品 S02E12.mkv", "Season 02/作品 S02E02.mkv",
-        "Season 02/作品 S02E01.mkv", "Season 02/作品 S02E01.5.mkv",
-        "Season 01/作品 S01E01.mp4", "Specials/作品 S00E00.mkv",
-        "未识别视频.mkv", "Season 02/作品 S02E02.mkv.!qB",
-        "Season 02/作品 S02E01.ass", ".mooncell/作品 S02E99.mkv", "poster.jpg",
+        "Season 02/作品 S02E12.mkv",
+        "Season 02/作品 S02E02.mkv",
+        "Season 02/作品 S02E01.mkv",
+        "Season 02/作品 S02E01.5.mkv",
+        "Season 01/作品 S01E01.mp4",
+        "Specials/作品 S00E00.mkv",
+        "未识别视频.mkv",
+        "Season 02/作品 S02E02.mkv.!qB",
+        "Season 02/作品 S02E01.ass",
+        ".mooncell/作品 S02E99.mkv",
+        "poster.jpg",
     ]:
         video(tmp_path, name)
     result = scan_show_library(tmp_path, 2)
@@ -48,7 +54,9 @@ def test_no_files_are_invented_from_collection_range(tmp_path):
 
 @pytest.mark.parametrize("birthtime", [None, 1_800_000_000])
 def test_episode_added_time_prefers_creation_time_and_falls_back_to_modified(
-    tmp_path, monkeypatch, birthtime,
+    tmp_path,
+    monkeypatch,
+    birthtime,
 ):
     video(tmp_path, "作品 S01E01.mkv")
     path = tmp_path / "作品 S01E01.mkv"

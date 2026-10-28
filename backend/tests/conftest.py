@@ -29,11 +29,17 @@ async def show_client():
         movie = FeedSource(name="电影", url="https://example.com/2")
         session.add_all([source, movie])
         await session.flush()
-        movie.show_metadata = ShowMetadata(tmdb_id=12, media_type="movie", title="电影",
-                                          genres_json='["动画"]', href="https://tmdb.org/movie/12")
+        movie.show_metadata = ShowMetadata(
+            tmdb_id=12,
+            media_type="movie",
+            title="电影",
+            genres_json='["动画"]',
+            href="https://tmdb.org/movie/12",
+        )
         await session.commit()
     async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=app), base_url="http://test",
+        transport=httpx.ASGITransport(app=app),
+        base_url="http://test",
     ) as client:
         yield client, sessions, app
     await engine.dispose()

@@ -1,4 +1,4 @@
-import { useContext } from "react"
+import { memo, useContext } from "react"
 import { PageMotionContext } from "@/lib/page-motion"
 import { motion, useReducedMotion } from "motion/react"
 import { Link } from "react-router-dom"
@@ -13,8 +13,8 @@ import { DiscoveredItemsButton, TmdbLink } from "./show-metadata"
 import { ShowActionsMenu } from "./show-actions-menu"
 import type { ShowDisplayProps } from "./types"
 
-export function ShowRow(props: ShowDisplayProps) {
-  const { show, index, detailState, openDetail, onItems, onOpenFolder, openingFolder } = props
+export const ShowRow = memo(function ShowRow(props: ShowDisplayProps) {
+  const { show, index, returnState, openDetail, onItems, onOpenFolder, openingFolder } = props
   const reducedMotion = useReducedMotion()
   const { animateEntry } = useContext(PageMotionContext)
   return (
@@ -27,7 +27,7 @@ export function ShowRow(props: ShowDisplayProps) {
       <Card className="show-row-card">
         <Link
           to={`/shows/${show.id}`}
-          state={detailState()}
+          state={returnState}
           onClick={(event) => openDetail(event, show.id)}
           aria-label={`查看 ${show.name} 详情`}
           className="show-row-poster"
@@ -47,7 +47,7 @@ export function ShowRow(props: ShowDisplayProps) {
         </Link>
         <div className="min-w-0">
           <h2 className="line-clamp-2 break-words text-base font-semibold leading-snug" title={show.name}>
-            <Link to={`/shows/${show.id}`} state={detailState()} onClick={(event) => openDetail(event, show.id)}>
+            <Link to={`/shows/${show.id}`} state={returnState} onClick={(event) => openDetail(event, show.id)}>
               {show.name}
             </Link>
           </h2>
@@ -89,4 +89,4 @@ export function ShowRow(props: ShowDisplayProps) {
       </Card>
     </motion.li>
   )
-}
+})

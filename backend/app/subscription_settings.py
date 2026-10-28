@@ -1,4 +1,5 @@
 """订阅专用网络设置与自动刷新。"""
+
 import asyncio
 import logging
 from datetime import UTC, datetime, timedelta
@@ -23,10 +24,14 @@ class SubscriptionOptions(BaseModel):
 
 async def get_options(session: AsyncSession) -> SubscriptionOptions:
     saved = await session.get(SubscriptionSettings, 1)
-    return SubscriptionOptions(
-        proxy_url=saved.proxy_url,
-        refresh_interval_minutes=saved.refresh_interval_minutes,
-    ) if saved else SubscriptionOptions()
+    return (
+        SubscriptionOptions(
+            proxy_url=saved.proxy_url,
+            refresh_interval_minutes=saved.refresh_interval_minutes,
+        )
+        if saved
+        else SubscriptionOptions()
+    )
 
 
 @router.get("/subscriptions", response_model=SubscriptionOptions)
@@ -42,9 +47,11 @@ async def save_options(data: SubscriptionOptions, session: AsyncSession = Depend
         session.add(saved)
     saved.proxy_url = str(data.proxy_url) if data.proxy_url else None
     saved.refresh_interval_minutes = data.refresh_interval_minutes
-    await session.execute(update(FeedSource).values(
-        refresh_interval_minutes=data.refresh_interval_minutes,
-    ))
+    await session.execute(
+        update(FeedSource).values(
+            refresh_interval_minutes=data.refresh_interval_minutes,
+        )
+    )
     await session.commit()
     return data
 
@@ -63,20 +70,28 @@ async def refresh_due_feeds() -> None:
     from .rss_service import FeedRefreshService, describe_rss_exception
 
     async with SessionFactory() as session:
-        ids = list(await session.scalars(select(FeedSource.id).where(
-            FeedSource.active.is_(True), FeedSource.kind != "magnet",
-        )))
+        ids = list(
+            await session.scalars(
+                select(FeedSource.id).where(
+                    FeedSource.active.is_(True),
+                    FeedSource.kind != "magnet",
+                )
+            )
+        )
     for source_id in ids:
         async with SessionFactory() as session:
             source = await session.get(FeedSource, source_id)
-            if source and source.active and is_due(
-                source, source.refresh_interval_minutes, datetime.now(UTC)
+            if (
+                source
+                and source.active
+                and is_due(source, source.refresh_interval_minutes, datetime.now(UTC))
             ):
                 try:
                     await FeedRefreshService(session).refresh(source)
                 except Exception as exc:
-                    logger.warning("订阅 %s 自动刷新失败：%s", source_id,
-                                   _redact(describe_rss_exception(exc)))
+                    logger.warning(
+                        "订阅 %s 自动刷新失败：%s", source_id, _redact(describe_rss_exception(exc))
+                    )
 
 
 async def subscription_refresh_loop() -> None:

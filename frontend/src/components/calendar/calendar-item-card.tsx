@@ -1,7 +1,5 @@
 import type { MouseEvent } from "react"
-import { motion, useReducedMotion } from "motion/react"
 import { Heart, ImageOff } from "lucide-react"
-import { spring } from "@/lib/motion"
 import { mikanSearchUrl } from "@/lib/mikan"
 import { Skeleton } from "@/components/ui/skeleton"
 import { FadeInImage } from "@/components/ui/fade-in-image"
@@ -39,14 +37,8 @@ export function CalendarItemCard({
   favoriteDisabled: boolean
   onFavorite: (event: MouseEvent<HTMLButtonElement>) => void
 }) {
-  const reducedMotion = useReducedMotion()
   return (
-    <motion.article
-      layout={reducedMotion ? false : "position"}
-      transition={{ layout: spring.layout }}
-      className="calendar-item"
-      style={{ position: "relative", zIndex: item.liked ? 1 : 0 }}
-    >
+    <article className="calendar-item" style={{ position: "relative", zIndex: item.liked ? 1 : 0 }}>
       <div className="calendar-artwork">
         <a
           className="calendar-search-link"
@@ -84,6 +76,6 @@ export function CalendarItemCard({
           </a>
         </h4>
       </div>
-    </motion.article>
+    </article>
   )
 }

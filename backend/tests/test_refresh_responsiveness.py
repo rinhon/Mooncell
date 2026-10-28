@@ -67,10 +67,13 @@ async def test_homepage_responds_during_refresh(monkeypatch, tmp_path, phase):
                 entered.set()
                 await asyncio.to_thread(release.wait, 5)
                 raise httpx.ReadTimeout("")
-            return httpx.Response(200, content=b"<rss><channel><title>Test</title>"
-                                  b"<item><title>Example 01</title><guid>1</guid></item>"
-                                  b"<item><title>Example 01</title><guid>1</guid></item>"
-                                  b"</channel></rss>")
+            return httpx.Response(
+                200,
+                content=b"<rss><channel><title>Test</title>"
+                b"<item><title>Example 01</title><guid>1</guid></item>"
+                b"<item><title>Example 01</title><guid>1</guid></item>"
+                b"</channel></rss>",
+            )
 
         def slow_parse(content):
             assert not session.in_transaction()
@@ -78,14 +81,18 @@ async def test_homepage_responds_during_refresh(monkeypatch, tmp_path, phase):
             assert release.wait(5), "RSS parsing blocked the event loop"
             return parse(content)
 
-        monkeypatch.setattr(rss_service.httpx, "AsyncClient", lambda **kwargs: original_client(
-            transport=httpx.MockTransport(transport)))
+        monkeypatch.setattr(
+            rss_service.httpx,
+            "AsyncClient",
+            lambda **kwargs: original_client(transport=httpx.MockTransport(transport)),
+        )
         monkeypatch.setattr(rss_service.feedparser, "parse", slow_parse)
         task = asyncio.create_task(rss_service.FeedRefreshService(session).refresh(source))
         try:
             await asyncio.wait_for(entered.wait(), 2)
-            async with original_client(transport=httpx.ASGITransport(app=app),
-                                       base_url="http://test") as client:
+            async with original_client(
+                transport=httpx.ASGITransport(app=app), base_url="http://test"
+            ) as client:
                 response = await asyncio.wait_for(client.get("/api/v1/shows"), 1)
                 assert response.status_code == 200
                 assert not task.done()

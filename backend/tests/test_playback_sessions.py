@@ -26,18 +26,57 @@ def sample(tmp_path):
     if not shutil.which(settings.playback_ffmpeg) or not shutil.which(settings.playback_ffprobe):
         pytest.skip("需要本机真实 FFmpeg/FFprobe")
     path = tmp_path / "sample.mp4"
-    subprocess.run([
-        settings.playback_ffmpeg, "-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi",
-        "-i", "testsrc2=size=320x180:rate=24", "-t", "15", "-c:v", "libx264", "-preset",
-        "ultrafast", "-threads", "2", "-g", "120", str(path),
-    ], check=True, capture_output=True, timeout=30)
+    subprocess.run(
+        [
+            settings.playback_ffmpeg,
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc2=size=320x180:rate=24",
+            "-t",
+            "15",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "ultrafast",
+            "-threads",
+            "2",
+            "-g",
+            "120",
+            str(path),
+        ],
+        check=True,
+        capture_output=True,
+        timeout=30,
+    )
     stat = path.stat()
     version = file_version(path.name, stat.st_size, stat.st_mtime_ns)
-    media = ResolvedMedia("a" * 64, 98765, path, version, stat.st_size, stat.st_mtime_ns,
-                          tmp_path, tmp_path, path.name)
-    info = PlaybackInfo(media_id=media.media_id, source_id=media.source_id, filename=path.name,
-                        version=version, duration=15, video_width=320, video_height=180,
-                        video_codec="h264", qualities=[720])
+    media = ResolvedMedia(
+        "a" * 64,
+        98765,
+        path,
+        version,
+        stat.st_size,
+        stat.st_mtime_ns,
+        tmp_path,
+        tmp_path,
+        path.name,
+    )
+    info = PlaybackInfo(
+        media_id=media.media_id,
+        source_id=media.source_id,
+        filename=path.name,
+        version=version,
+        duration=15,
+        video_width=320,
+        video_height=180,
+        video_codec="h264",
+        qualities=[720],
+    )
     return media, info
 
 
@@ -161,7 +200,9 @@ async def test_long_pause_releases_and_resume_rebuilds(session_manager, sample):
 
 @pytest.mark.asyncio
 async def test_rejects_heartbeat_jumps_and_quota_without_start(
-    session_manager, sample, monkeypatch,
+    session_manager,
+    sample,
+    monkeypatch,
 ):
     manager = session_manager
     media, info = sample
@@ -231,7 +272,9 @@ async def test_invalid_create_does_not_make_session_directory(session_manager, s
 
 @pytest.mark.asyncio
 async def test_endlist_waits_for_all_pending_probes_and_releases_source(
-    session_manager, sample, monkeypatch,
+    session_manager,
+    sample,
+    monkeypatch,
 ):
     media, info = sample
     last_probe = asyncio.Event()
@@ -268,9 +311,11 @@ async def test_endlist_waits_for_all_pending_probes_and_releases_source(
 def test_cache_root_lock_is_exclusive_across_processes(tmp_path):
     lock = cache.CacheLock(tmp_path)
     command = [
-        sys.executable, "-c",
+        sys.executable,
+        "-c",
         "from pathlib import Path; from app.playback.cache import CacheLock; "
-        "import sys; lock=CacheLock(Path(sys.argv[1])); lock.close()", str(tmp_path),
+        "import sys; lock=CacheLock(Path(sys.argv[1])); lock.close()",
+        str(tmp_path),
     ]
     try:
         rejected = subprocess.run(command, capture_output=True, timeout=30, check=False)
@@ -284,18 +329,46 @@ def test_cache_root_lock_is_exclusive_across_processes(tmp_path):
 
 @pytest.mark.asyncio
 async def test_nonzero_source_start_still_uses_zero_based_source_time(
-    session_manager, sample, tmp_path,
+    session_manager,
+    sample,
+    tmp_path,
 ):
     media, info = sample
     path = tmp_path / "nonzero.ts"
-    subprocess.run([
-        settings.playback_ffmpeg, "-hide_banner", "-loglevel", "error", "-y", "-i",
-        str(media.path), "-c", "copy", "-output_ts_offset", "5", "-muxdelay", "0", str(path),
-    ], check=True, capture_output=True, timeout=30)
+    subprocess.run(
+        [
+            settings.playback_ffmpeg,
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-i",
+            str(media.path),
+            "-c",
+            "copy",
+            "-output_ts_offset",
+            "5",
+            "-muxdelay",
+            "0",
+            str(path),
+        ],
+        check=True,
+        capture_output=True,
+        timeout=30,
+    )
     stat = path.stat()
     version = file_version(path.name, stat.st_size, stat.st_mtime_ns)
-    media = ResolvedMedia("b" * 64, media.source_id, path, version, stat.st_size,
-                          stat.st_mtime_ns, tmp_path, tmp_path, path.name)
+    media = ResolvedMedia(
+        "b" * 64,
+        media.source_id,
+        path,
+        version,
+        stat.st_size,
+        stat.st_mtime_ns,
+        tmp_path,
+        tmp_path,
+        path.name,
+    )
     info = info.model_copy(update={"media_id": media.media_id, "version": version})
     created = await session_manager.create(1, media, info, 0, 720, None, str(uuid.uuid4()))
     status = await ready(session_manager, created["id"])
@@ -335,7 +408,8 @@ async def test_repeated_heartbeat_does_not_refresh_fifteen_second_budget(session
 
 @pytest.mark.asyncio
 async def test_same_tab_refresh_replaces_own_process_without_stealing_other_clients(
-    session_manager, sample,
+    session_manager,
+    sample,
 ):
     media, info = sample
     client_id, request_id = str(uuid.uuid4()), str(uuid.uuid4())
@@ -352,12 +426,26 @@ async def test_same_tab_refresh_replaces_own_process_without_stealing_other_clie
     for user_id, other_client in ((2, client_id), (1, str(uuid.uuid4())), (1, None)):
         with pytest.raises(MediaError) as busy:
             await session_manager.create(
-                user_id, media, info, 0, 720, None, str(uuid.uuid4()), other_client,
+                user_id,
+                media,
+                info,
+                0,
+                720,
+                None,
+                str(uuid.uuid4()),
+                other_client,
             )
         assert busy.value.code == "transcode_busy"
         assert old_session.status != "closed" and old_process.running
     refreshed = await session_manager.create(
-        1, media, info, 7.3, 720, None, str(uuid.uuid4()), client_id,
+        1,
+        media,
+        info,
+        7.3,
+        720,
+        None,
+        str(uuid.uuid4()),
+        client_id,
     )
     assert old_session.status == "closed" and not old_process.running
     assert refreshed["id"] != created["id"] and refreshed["generation"] == 1
@@ -382,7 +470,8 @@ async def test_slow_segment_probe_does_not_hold_control_lock(session_manager, sa
     status = await asyncio.wait_for(session_manager.status(1, created["id"]), timeout=0.3)
     assert status["status"] == "preparing"
     await asyncio.wait_for(
-        session_manager.seek(1, created["id"], 1, 7.3, str(uuid.uuid4())), timeout=0.3,
+        session_manager.seek(1, created["id"], 1, 7.3, str(uuid.uuid4())),
+        timeout=0.3,
     )
 
 
@@ -424,11 +513,27 @@ async def test_actual_owned_process_suspend_resume_and_stop():
     if not shutil.which(settings.playback_ffmpeg):
         pytest.skip("需要真实 FFmpeg")
     process = OwnedProcess()
-    process.start([
-        settings.playback_ffmpeg, "-hide_banner", "-loglevel", "error", "-nostats", "-re",
-        "-f", "lavfi", "-i", "testsrc2=size=160x90:rate=24", "-t", "20", "-progress",
-        "pipe:1", "-f", "null", "-",
-    ])
+    process.start(
+        [
+            settings.playback_ffmpeg,
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-nostats",
+            "-re",
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc2=size=160x90:rate=24",
+            "-t",
+            "20",
+            "-progress",
+            "pipe:1",
+            "-f",
+            "null",
+            "-",
+        ]
+    )
     try:
         await asyncio.sleep(1.2)
         process.suspend()
@@ -466,7 +571,9 @@ def test_nvenc_forces_idr_for_independent_three_second_hls_segments(sample):
 
 @pytest.mark.asyncio
 async def test_revision_wait_wakes_for_seek_and_does_not_hold_control_lock(
-    session_manager, sample, monkeypatch,
+    session_manager,
+    sample,
+    monkeypatch,
 ):
     async def no_prepare(*args):
         pass
@@ -480,17 +587,32 @@ async def test_revision_wait_wakes_for_seek_and_does_not_hold_control_lock(
     waiting = asyncio.create_task(session_manager.status(1, session.id, session.revision, 1500))
     await asyncio.sleep(0)
     request_id = str(uuid.uuid4())
-    ack = await asyncio.wait_for(session_manager.seek(
-        1, session.id, 1, 7.3, request_id, client_buffered=True,
-    ), timeout=0.3)
+    ack = await asyncio.wait_for(
+        session_manager.seek(
+            1,
+            session.id,
+            1,
+            7.3,
+            request_id,
+            client_buffered=True,
+        ),
+        timeout=0.3,
+    )
     updated = await asyncio.wait_for(waiting, timeout=0.3)
     assert updated["revision"] == ack["revision"] > created["revision"]
     assert ack["generation"] == 1 and ack["seek_revision"] == 1
     assert ack["seek_disposition"] == "buffered"
     assert ack["needs_recovery"] and not ack["requires_reload"]
-    assert (await session_manager.seek(
-        1, session.id, 1, 7.3, request_id, client_buffered=True,
-    ))["revision"] == ack["revision"]
+    assert (
+        await session_manager.seek(
+            1,
+            session.id,
+            1,
+            7.3,
+            request_id,
+            client_buffered=True,
+        )
+    )["revision"] == ack["revision"]
     await session_manager.heartbeat(1, session.id, 1, 7.31, False, 1)
     recovery = await session_manager.seek(1, session.id, 1, 7.4, str(uuid.uuid4()))
     assert recovery["generation"] == 2 and recovery["requires_reload"]
@@ -499,7 +621,9 @@ async def test_revision_wait_wakes_for_seek_and_does_not_hold_control_lock(
 
 @pytest.mark.asyncio
 async def test_revision_wait_times_out_and_cancellation_keeps_session_usable(
-    session_manager, sample, monkeypatch,
+    session_manager,
+    sample,
+    monkeypatch,
 ):
     async def no_prepare(*args):
         pass
@@ -507,13 +631,24 @@ async def test_revision_wait_times_out_and_cancellation_keeps_session_usable(
     monkeypatch.setattr(session_manager, "_prepare", no_prepare)
     media, info = sample
     created = await session_manager.create(1, media, info, 0, 720, None, str(uuid.uuid4()))
-    unchanged = await asyncio.wait_for(session_manager.status(
-        1, created["id"], created["revision"], 20,
-    ), timeout=0.3)
+    unchanged = await asyncio.wait_for(
+        session_manager.status(
+            1,
+            created["id"],
+            created["revision"],
+            20,
+        ),
+        timeout=0.3,
+    )
     assert unchanged["revision"] == created["revision"]
-    waiting = asyncio.create_task(session_manager.status(
-        1, created["id"], unchanged["revision"], 1500,
-    ))
+    waiting = asyncio.create_task(
+        session_manager.status(
+            1,
+            created["id"],
+            unchanged["revision"],
+            1500,
+        )
+    )
     await asyncio.sleep(0)
     waiting.cancel()
     with pytest.raises(asyncio.CancelledError):
@@ -525,7 +660,9 @@ async def test_revision_wait_times_out_and_cancellation_keeps_session_usable(
 
 @pytest.mark.asyncio
 async def test_slow_stop_does_not_block_controls_and_only_latest_seek_starts(
-    session_manager, sample, monkeypatch,
+    session_manager,
+    sample,
+    monkeypatch,
 ):
     from app.playback import sessions
 
@@ -566,9 +703,16 @@ async def test_slow_stop_does_not_block_controls_and_only_latest_seek_starts(
         await asyncio.wait_for(entered.wait(), timeout=0.5)
         state = await asyncio.wait_for(session_manager.status(1, session.id), timeout=0.3)
         assert state["generation"] == first["generation"] == 2
-        final = await asyncio.wait_for(session_manager.seek(
-            1, session.id, 1, 11.3, str(uuid.uuid4()),
-        ), timeout=0.3)
+        final = await asyncio.wait_for(
+            session_manager.seek(
+                1,
+                session.id,
+                1,
+                11.3,
+                str(uuid.uuid4()),
+            ),
+            timeout=0.3,
+        )
         assert final["generation"] == 3 and not starts
     finally:
         release.set()
@@ -583,7 +727,9 @@ async def test_slow_stop_does_not_block_controls_and_only_latest_seek_starts(
 
 @pytest.mark.asyncio
 async def test_late_first_frame_retries_with_bounded_preroll_then_fails(
-    session_manager, sample, monkeypatch,
+    session_manager,
+    sample,
+    monkeypatch,
 ):
     async def no_prepare(*args):
         pass
@@ -606,14 +752,22 @@ async def test_late_first_frame_retries_with_bounded_preroll_then_fails(
         timestamp = asyncio.create_task(asyncio.sleep(0, result=5402 + transcode.TIMESTAMP_OFFSET))
         await timestamp
         session.pending_probes[0] = (
-            session.generation, session.generation_directory / "segment-0000000.ts", 3, timestamp,
+            session.generation,
+            session.generation_directory / "segment-0000000.ts",
+            3,
+            timestamp,
         )
         async with session_manager.lock:
             await session_manager._refresh(session)
         if attempt == 0:
             assert session.generation == 2 and session.seek_preroll == 30
             arguments = transcode.command(
-                media, info, session.generation_directory, 5400, 720, None,
+                media,
+                info,
+                session.generation_directory,
+                5400,
+                720,
+                None,
                 seek_preroll=session.seek_preroll,
             )
             assert arguments[arguments.index("-ss") + 1] == "5370.000000"
@@ -623,7 +777,9 @@ async def test_late_first_frame_retries_with_bounded_preroll_then_fails(
 
 @pytest.mark.asyncio
 async def test_close_during_spawn_reaps_unpublished_process_and_releases_source(
-    session_manager, sample, monkeypatch,
+    session_manager,
+    sample,
+    monkeypatch,
 ):
     from app.playback import sessions
 
@@ -663,7 +819,9 @@ async def test_close_during_spawn_reaps_unpublished_process_and_releases_source(
 
 @pytest.mark.asyncio
 async def test_stop_timeout_retains_process_lease_and_slot_until_reaped(
-    session_manager, sample, monkeypatch,
+    session_manager,
+    sample,
+    monkeypatch,
 ):
     async def no_prepare(*args):
         pass
@@ -703,7 +861,9 @@ async def test_stop_timeout_retains_process_lease_and_slot_until_reaped(
 
 @pytest.mark.asyncio
 async def test_old_heartbeat_and_progress_revision_cannot_undo_same_generation_seek(
-    session_manager, sample, monkeypatch,
+    session_manager,
+    sample,
+    monkeypatch,
 ):
     async def no_prepare(*args):
         pass
@@ -715,7 +875,12 @@ async def test_old_heartbeat_and_progress_revision_cannot_undo_same_generation_s
     session.status = "ready"
     session.produced_ranges = [(0, 15)]
     acknowledgment = await session_manager.seek(
-        1, session.id, 1, 10, str(uuid.uuid4()), client_buffered=True,
+        1,
+        session.id,
+        1,
+        10,
+        str(uuid.uuid4()),
+        client_buffered=True,
     )
     with pytest.raises(MediaError) as stale:
         await session_manager.heartbeat(1, session.id, 1, 1, True, 1, seek_revision=0)
@@ -725,13 +890,21 @@ async def test_old_heartbeat_and_progress_revision_cannot_undo_same_generation_s
         session_manager.validate_progress(1, media.media_id, session.id, 1, seek_revision=0)
     assert old_progress.value.code == "stale_seek_revision"
     await session_manager.heartbeat(
-        1, session.id, 1, 10.01, False, 1, seek_revision=acknowledgment["seek_revision"],
+        1,
+        session.id,
+        1,
+        10.01,
+        False,
+        1,
+        seek_revision=acknowledgment["seek_revision"],
     )
 
 
 @pytest.mark.asyncio
 async def test_client_buffer_claim_cannot_expand_producer_budget_across_unpublished_gap(
-    session_manager, sample, monkeypatch,
+    session_manager,
+    sample,
+    monkeypatch,
 ):
     async def no_prepare(*args):
         pass
@@ -743,7 +916,12 @@ async def test_client_buffer_claim_cannot_expand_producer_budget_across_unpublis
     session.status = "ready"
     session.produced_ranges = [(0, 3), (6, 9)]
     response = await session_manager.seek(
-        1, session.id, 1, 4, str(uuid.uuid4()), client_buffered=True,
+        1,
+        session.id,
+        1,
+        4,
+        str(uuid.uuid4()),
+        client_buffered=True,
     )
     assert response["generation"] == 2 and response["seek_disposition"] == "restart"
     assert session.produced_ranges == []

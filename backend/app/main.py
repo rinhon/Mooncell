@@ -92,6 +92,7 @@ if settings.frontend_dist_path:
 
     mount_frontend(app, settings.frontend_dist_path)
 else:
+
     @app.get("/")
     async def root() -> dict[str, str]:
         return {"name": "Mooncell", "docs": "/docs", "health": "/api/v1/health"}

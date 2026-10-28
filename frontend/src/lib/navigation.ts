@@ -3,7 +3,6 @@ import {
   Download,
   FileCheck2,
   LayoutDashboard,
-  ListFilter,
   RadioTower,
   Settings2,
   Tv2,
@@ -26,7 +25,6 @@ export const navigation: NavigationItem[] = [
 ]
 
 export const utilityNavigation: NavigationItem[] = [
-  { to: "/review", label: "审核", icon: ListFilter },
   { to: "/logs", label: "日志", icon: FileCheck2 },
   { to: "/settings", label: "设置", icon: Settings2 },
 ]

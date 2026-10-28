@@ -20,7 +20,8 @@ async def test_frontend_routes_and_missing_resources(tmp_path):
 
     mount_frontend(app, str(tmp_path))
     async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=app), base_url="http://test",
+        transport=httpx.ASGITransport(app=app),
+        base_url="http://test",
     ) as client:
         for path in ["/", "/shows/42", "/watch/42"]:
             response = await client.get(path)

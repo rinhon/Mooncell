@@ -128,9 +128,9 @@ export function DialogContent({
   const open = React.useContext(DialogOpenContext)
   const reducedMotion = useReducedMotion()
   return (
-    <DialogPrimitive.Portal forceMount>
-      <AnimatePresence>
-        {open && (
+    <AnimatePresence>
+      {open && (
+        <DialogPrimitive.Portal forceMount>
           <DialogPrimitive.Overlay forceMount asChild key="overlay">
             <motion.div
               className="radix-overlay fixed inset-0 z-50 bg-black/50 backdrop-blur-sm"
@@ -140,8 +140,6 @@ export function DialogContent({
               transition={reducedMotion ? { duration: 0 } : dialogSpring}
             />
           </DialogPrimitive.Overlay>
-        )}
-        {open && (
           <DialogPrimitive.Content {...props} forceMount asChild key="content">
             <DialogSurface
               animateSize={animateSize}
@@ -166,9 +164,9 @@ export function DialogContent({
               </DialogPrimitive.Close>
             </DialogSurface>
           </DialogPrimitive.Content>
-        )}
-      </AnimatePresence>
-    </DialogPrimitive.Portal>
+        </DialogPrimitive.Portal>
+      )}
+    </AnimatePresence>
   )
 }
 

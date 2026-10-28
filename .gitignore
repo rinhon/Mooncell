@@ -20,3 +20,14 @@ frontend/vite.config.d.ts
 *.log
 .DS_Store
 Thumbs.db
+
+# Local CI reports and scanner state
+.coverage
+.coverage.*
+coverage.xml
+backend/reports/
+frontend/reports/
+ci-reports/
+trivy-results.json
+.scannerwork/
+.ci-venv/

@@ -1,0 +1,29 @@
+{
+  "description": "本轮代码有未提交改动时，提醒询问是否提交。只提示，不执行提交。",
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "C:\\Python314\\python.exe \"F:\\code\\mooncell\\scripts\\codex_commit_prompt.py\"",
+            "timeout": 30,
+            "statusMessage": "记录本轮代码起始状态"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "C:\\Python314\\python.exe \"F:\\code\\mooncell\\scripts\\codex_commit_prompt.py\"",
+            "timeout": 30,
+            "statusMessage": "检查本轮代码提交提醒"
+          }
+        ]
+      }
+    ]
+  }
+}

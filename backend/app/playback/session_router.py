@@ -77,25 +77,40 @@ def error(exc: MediaError) -> HTTPException:
 
 
 @router.post("", status_code=202)
-async def create_session(body: CreateSession, user_id: int = Depends(require_playback_user),
-                         database: AsyncSession = Depends(get_session)):
+async def create_session(
+    body: CreateSession,
+    user_id: int = Depends(require_playback_user),
+    database: AsyncSession = Depends(get_session),
+):
     try:
         media = await resolve_media(database, body.media_id)
         await database.close()
         info = await probe_media(media)
         await persist_probe(database, media, info)
-        return await manager.create(user_id, media, info, body.start_time, body.quality,
-                                    body.audio_track, str(body.request_id),
-                                    str(body.client_id) if body.client_id else None,
-                                    body.capabilities, body.force_transcode, body.max_bitrate)
+        return await manager.create(
+            user_id,
+            media,
+            info,
+            body.start_time,
+            body.quality,
+            body.audio_track,
+            str(body.request_id),
+            str(body.client_id) if body.client_id else None,
+            body.capabilities,
+            body.force_transcode,
+            body.max_bitrate,
+        )
     except MediaError as exc:
         raise error(exc) from exc
 
 
 @router.get("/{session_id}")
-async def get_session_status(session_id: str, user_id: int = Depends(require_playback_user),
-                             after_revision: int | None = Query(default=None, ge=1),
-                             wait_ms: int = Query(default=0, ge=0, le=1500)):
+async def get_session_status(
+    session_id: str,
+    user_id: int = Depends(require_playback_user),
+    after_revision: int | None = Query(default=None, ge=1),
+    wait_ms: int = Query(default=0, ge=0, le=1500),
+):
     try:
         return await manager.status(user_id, session_id, after_revision, wait_ms)
     except MediaError as exc:
@@ -103,24 +118,40 @@ async def get_session_status(session_id: str, user_id: int = Depends(require_pla
 
 
 @router.post("/{session_id}/seek", status_code=202)
-async def seek_session(session_id: str, body: SeekSession,
-                       user_id: int = Depends(require_playback_user)):
+async def seek_session(
+    session_id: str, body: SeekSession, user_id: int = Depends(require_playback_user)
+):
     try:
-        return await manager.seek(user_id, session_id, body.generation, body.position,
-                                  str(body.request_id), client_buffered=body.client_buffered)
+        return await manager.seek(
+            user_id,
+            session_id,
+            body.generation,
+            body.position,
+            str(body.request_id),
+            client_buffered=body.client_buffered,
+        )
     except MediaError as exc:
         raise error(exc) from exc
 
 
 @router.patch("/{session_id}/options", status_code=202)
-async def update_session(session_id: str, body: SessionOptions,
-                         user_id: int = Depends(require_playback_user)):
+async def update_session(
+    session_id: str, body: SessionOptions, user_id: int = Depends(require_playback_user)
+):
     try:
         return await manager.seek(
-            user_id, session_id, body.generation, body.position, str(body.request_id),
-            body.quality, body.audio_track, "audio_track" in body.model_fields_set,
-            client_buffered=body.client_buffered, capabilities=body.capabilities,
-            force_transcode=body.force_transcode, max_bitrate=body.max_bitrate,
+            user_id,
+            session_id,
+            body.generation,
+            body.position,
+            str(body.request_id),
+            body.quality,
+            body.audio_track,
+            "audio_track" in body.model_fields_set,
+            client_buffered=body.client_buffered,
+            capabilities=body.capabilities,
+            force_transcode=body.force_transcode,
+            max_bitrate=body.max_bitrate,
             change_max_bitrate="max_bitrate" in body.model_fields_set,
         )
     except MediaError as exc:
@@ -128,11 +159,19 @@ async def update_session(session_id: str, body: SessionOptions,
 
 
 @router.post("/{session_id}/heartbeat")
-async def heartbeat(session_id: str, body: Heartbeat,
-                    user_id: int = Depends(require_playback_user)):
+async def heartbeat(
+    session_id: str, body: Heartbeat, user_id: int = Depends(require_playback_user)
+):
     try:
-        return await manager.heartbeat(user_id, session_id, body.generation, body.position,
-                                       body.paused, body.playback_rate, body.seek_revision)
+        return await manager.heartbeat(
+            user_id,
+            session_id,
+            body.generation,
+            body.position,
+            body.paused,
+            body.playback_rate,
+            body.seek_revision,
+        )
     except MediaError as exc:
         raise error(exc) from exc
 
@@ -147,19 +186,22 @@ async def delete_session(session_id: str, user_id: int = Depends(require_playbac
 
 
 @router.get("/{session_id}/{generation}/index.m3u8")
-async def get_playlist(session_id: str, generation: int,
-                       user_id: int = Depends(require_playback_user)):
+async def get_playlist(
+    session_id: str, generation: int, user_id: int = Depends(require_playback_user)
+):
     try:
         text = await manager.playlist(user_id, session_id, generation)
     except MediaError as exc:
         raise error(exc) from exc
-    return Response(text, media_type="application/vnd.apple.mpegurl",
-                    headers={"Cache-Control": "no-store"})
+    return Response(
+        text, media_type="application/vnd.apple.mpegurl", headers={"Cache-Control": "no-store"}
+    )
 
 
 @router.api_route("/{session_id}/{generation}/stream", methods=["GET", "HEAD"])
-async def get_direct_stream(session_id: str, generation: int,
-                            user_id: int = Depends(require_playback_user)):
+async def get_direct_stream(
+    session_id: str, generation: int, user_id: int = Depends(require_playback_user)
+):
     try:
         media = await manager.open_direct(user_id, session_id, generation)
     except MediaError as exc:
@@ -172,8 +214,9 @@ async def get_direct_stream(session_id: str, generation: int,
 
 
 @router.get("/{session_id}/{generation}/segments/{name}")
-async def get_segment(session_id: str, generation: int, name: str,
-                      user_id: int = Depends(require_playback_user)):
+async def get_segment(
+    session_id: str, generation: int, name: str, user_id: int = Depends(require_playback_user)
+):
     try:
         segment = await manager.open_segment(user_id, session_id, generation, name)
     except MediaError as exc:
@@ -185,9 +228,14 @@ async def get_segment(session_id: str, generation: int, name: str,
                 yield chunk
 
     try:
-        return SegmentResponse(segment, stream(), headers={
-            "Cache-Control": "no-store", "Content-Length": str(segment.path.stat().st_size),
-        })
+        return SegmentResponse(
+            segment,
+            stream(),
+            headers={
+                "Cache-Control": "no-store",
+                "Content-Length": str(segment.path.stat().st_size),
+            },
+        )
     except BaseException:
         await asyncio.shield(manager.release_segment(segment))
         raise

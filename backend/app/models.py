@@ -172,7 +172,8 @@ class EpisodeThumbnail(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     source_id: Mapped[int] = mapped_column(
-        ForeignKey("feed_sources.id", ondelete="CASCADE"), index=True,
+        ForeignKey("feed_sources.id", ondelete="CASCADE"),
+        index=True,
     )
     video_path: Mapped[str] = mapped_column(Text)
     image_path: Mapped[str] = mapped_column(Text)
@@ -185,7 +186,8 @@ class MediaFile(Base):
     __tablename__ = "media_files"
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     source_id: Mapped[int] = mapped_column(
-        ForeignKey("feed_sources.id", ondelete="CASCADE"), index=True,
+        ForeignKey("feed_sources.id", ondelete="CASCADE"),
+        index=True,
     )
     relative_path: Mapped[str] = mapped_column(Text)
     file_version: Mapped[str] = mapped_column(String(64))
@@ -198,10 +200,12 @@ class MediaFile(Base):
 class PlaybackProgress(Base):
     __tablename__ = "playback_progress"
     user_id: Mapped[int] = mapped_column(
-        ForeignKey("users.id", ondelete="CASCADE"), primary_key=True,
+        ForeignKey("users.id", ondelete="CASCADE"),
+        primary_key=True,
     )
     media_id: Mapped[str] = mapped_column(
-        ForeignKey("media_files.id", ondelete="CASCADE"), primary_key=True,
+        ForeignKey("media_files.id", ondelete="CASCADE"),
+        primary_key=True,
     )
     position: Mapped[float] = mapped_column(Float, default=0)
     duration: Mapped[float] = mapped_column(Float, default=0)
@@ -272,7 +276,8 @@ class DownloadJob(Base):
     __tablename__ = "download_jobs"
     id: Mapped[int] = mapped_column(primary_key=True)
     item_id: Mapped[int] = mapped_column(
-        ForeignKey("feed_items.id", ondelete="CASCADE"), unique=True,
+        ForeignKey("feed_items.id", ondelete="CASCADE"),
+        unique=True,
     )
     info_hash: Mapped[str] = mapped_column(String(40), unique=True)
     downloader_id: Mapped[int] = mapped_column(ForeignKey("downloader_configs.id"))
@@ -310,7 +315,9 @@ class BackgroundOperation(Base):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
     kind: Mapped[str] = mapped_column(String(32))
     source_id: Mapped[int | None] = mapped_column(
-        ForeignKey("feed_sources.id", ondelete="SET NULL"), nullable=True, index=True,
+        ForeignKey("feed_sources.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
     )
     source_name: Mapped[str] = mapped_column(String(160))
     status: Mapped[str] = mapped_column(String(24), default="queued")
@@ -335,10 +342,12 @@ class BackgroundOperationItem(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     operation_id: Mapped[str] = mapped_column(
-        ForeignKey("background_operations.id", ondelete="CASCADE"), index=True,
+        ForeignKey("background_operations.id", ondelete="CASCADE"),
+        index=True,
     )
     download_job_id: Mapped[int | None] = mapped_column(
-        ForeignKey("download_jobs.id", ondelete="SET NULL"), nullable=True,
+        ForeignKey("download_jobs.id", ondelete="SET NULL"),
+        nullable=True,
     )
     migration_token: Mapped[str] = mapped_column(String(32), unique=True)
     status: Mapped[str] = mapped_column(String(24), default="queued")

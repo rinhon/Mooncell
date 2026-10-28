@@ -35,7 +35,7 @@ from .models import (
 )
 from .notifications import notify_task
 from .release_parser import parse_release_title
-from .schemas import FeedRead, TmdbSelection
+from .schemas import CollectionFileOverride, FeedRead, TmdbSelection
 from .security import decrypt_secret
 
 router = APIRouter(prefix="/api/v1/collections", dependencies=[Depends(require_user)])
@@ -57,9 +57,7 @@ def _metadata_session(config):
     for key, state in list(_metadata_sessions.items()):
         if monotonic() - state.last_used > 3600 and not state.lock.locked():
             del _metadata_sessions[key]
-    key = (
-        config.id, config.base_url, config.username, config.encrypted_secret, config.verify_tls
-    )
+    key = (config.id, config.base_url, config.username, config.encrypted_secret, config.verify_tls)
     return _metadata_sessions.setdefault(key, _MetadataSession())
 
 
@@ -95,6 +93,14 @@ class CollectionCreate(MagnetRequest):
     name: str = Field(min_length=1, max_length=160)
     season: int = Field(ge=0, le=99)
     tmdb: TmdbSelection
+    file_overrides: list[CollectionFileOverride] = Field(default_factory=list)
+
+    @field_validator("file_overrides")
+    @classmethod
+    def validate_episode_overrides(cls, value):
+        if any(edit.filename is not None for edit in value):
+            raise ValueError("原文件名仅用于核对，不能修改；请只修改集数")
+        return value
 
     @field_validator("name")
     @classmethod
@@ -135,9 +141,15 @@ async def collection_downloader(session):
 async def fetch_metadata(config, magnet):
     state = _metadata_session(config)
     try:
-        async with state.lock, httpx.AsyncClient(
-            base_url=config.base_url, timeout=15, verify=config.verify_tls, cookies=state.cookies
-        ) as client:
+        async with (
+            state.lock,
+            httpx.AsyncClient(
+                base_url=config.base_url,
+                timeout=15,
+                verify=config.verify_tls,
+                cookies=state.cookies,
+            ) as client,
+        ):
             try:
                 if not client.cookies:
                     await _login_metadata_client(client, config)
@@ -221,15 +233,12 @@ async def create_collection(
     release.evidence.append("magnet_collection")
     release.title = data.name
     release.season = data.season
+    release.collection_file_overrides = data.file_overrides
     try:
         plan = build_collection_plan(files, safe_folder_name(data.name), data.season, release)
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
-    episodes = [
-        parse_release_title(PurePosixPath(f["new"]).stem).episode_start
-        for f in plan["files"]
-        if PurePosixPath(f["new"]).suffix.lower() in VIDEO_EXTENSIONS
-    ]
+    episodes = plan["episodes"]
     release.episode_start, release.episode_end = min(episodes), max(episodes)
     release.release_kind = "collection"
     release.warnings = []

@@ -18,7 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from .config import settings
 from .database import SessionFactory
 from .downloader_service import extract_info_hash
-from .events import EventMessage, broker, commit_and_publish
+from .events import EventMessage, broker, commit_and_publish, record_event
 from .models import DomainEvent, FeedItem, FeedSource
 from .notifications import notify_task
 from .providers.mikan import is_mikan_feed, normalize_mikan_channel_title
@@ -96,10 +96,19 @@ def describe_rss_exception(exc: Exception) -> str:
     code_match = re.search(r"\[SSL:\s*([A-Z0-9_]+)\]", details)
     tls_code = getattr(tls_error, "reason", None) or (code_match[1] if code_match else None)
     if not tls_code:
-        tls_code = next((code for code in (
-            "CERTIFICATE_VERIFY_FAILED", "TLSV1_ALERT_INTERNAL_ERROR",
-            "UNEXPECTED_EOF_WHILE_READING", "WRONG_VERSION_NUMBER",
-        ) if code in details), None)
+        tls_code = next(
+            (
+                code
+                for code in (
+                    "CERTIFICATE_VERIFY_FAILED",
+                    "TLSV1_ALERT_INTERNAL_ERROR",
+                    "UNEXPECTED_EOF_WHILE_READING",
+                    "WRONG_VERSION_NUMBER",
+                )
+                if code in details
+            ),
+            None,
+        )
 
     message = None
     if tls_error is not None or isinstance(exc, httpx.TransportError):
@@ -110,8 +119,7 @@ def describe_rss_exception(exc: Exception) -> str:
             message = "HTTPS 证书校验失败，请检查源站证书或代理证书配置"
         elif tls_code == "TLSV1_ALERT_INTERNAL_ERROR":
             message = (
-                "HTTPS 安全连接建立失败：源站或代理返回 TLS 内部错误，"
-                "请检查订阅代理及源站连接状态"
+                "HTTPS 安全连接建立失败：源站或代理返回 TLS 内部错误，请检查订阅代理及源站连接状态"
             )
         elif tls_code == "WRONG_VERSION_NUMBER":
             message = "HTTPS 协议协商失败，请检查源站 TLS 配置及代理地址的协议和端口"
@@ -201,6 +209,10 @@ async def _publish_event(event: DomainEvent) -> None:
     )
 
 
+class FeedStoppedError(ValueError):
+    """订阅已停止，丢弃在途刷新结果。"""
+
+
 class FeedRefreshService:
     """一次 RSS 刷新的完整事务边界。"""
 
@@ -209,30 +221,36 @@ class FeedRefreshService:
 
     async def refresh(self, source: FeedSource) -> FeedRefreshResult:
         """拉取订阅源，幂等保存新条目，并发布刷新事件。"""
-        if source.kind == "magnet":
-            raise ValueError("磁力合集是单次下载，无需刷新 RSS")
-        headers = {"User-Agent": settings.rss_user_agent}
-        # ETag/Last-Modified 让频繁轮询在没有更新时几乎不消耗流量。
-        if source.etag:
-            headers["If-None-Match"] = source.etag
-        if source.last_modified:
-            headers["If-Modified-Since"] = source.last_modified
+        from .download_queue import queue_lock
 
-        started = await _store_event(
-            self.session,
-            "feed.refresh.started",
-            "feed_source",
-            str(source.id),
-            {"name": source.name},
-        )
+        source_id = source.id
+        # 等待队列锁前结束调用方的读取事务，避免占用 SQLite 连接或写锁。
         await self.session.commit()
+        async with queue_lock:
+            source = await self._require_active_source(source_id)
+            if source.kind == "magnet":
+                await self.session.rollback()
+                raise ValueError("磁力合集是单次下载，无需刷新 RSS")
+            headers = {"User-Agent": settings.rss_user_agent}
+            # ETag/Last-Modified 让频繁轮询在没有更新时几乎不消耗流量。
+            if source.etag:
+                headers["If-None-Match"] = source.etag
+            if source.last_modified:
+                headers["If-Modified-Since"] = source.last_modified
+            options = await get_options(self.session)
+            source_url = source.url
+            started = await _store_event(
+                self.session,
+                "feed.refresh.started",
+                "feed_source",
+                str(source_id),
+                {"name": source.name},
+            )
+            # 网络等待和解析期间不持有锁或数据库事务。
+            await self.session.commit()
         await _publish_event(started)
 
         try:
-            options = await get_options(self.session)
-            # 结束设置查询开启的事务，网络等待和解析期间归还数据库连接。
-            source_url = source.url
-            await self.session.commit()
             async with httpx.AsyncClient(
                 proxy=str(options.proxy_url) if options.proxy_url else None,
                 trust_env=False,
@@ -242,136 +260,164 @@ class FeedRefreshService:
             ) as client:
                 response = await _get_with_retry(client, source_url)
 
-            if response.status_code == 304:
-                await self._enqueue_downloads(source)
+            parsed = None
+            if response.status_code != 304:
+                response.raise_for_status()
+                # Mikan 提供标准 RSS，因此先走通用解析器；专用适配器可在此分流。
+                parsed = await asyncio.to_thread(feedparser.parse, response.content)
+                if parsed.bozo and not parsed.entries:
+                    raise ValueError(f"RSS 解析失败：{parsed.bozo_exception}")
+
+            async with queue_lock:
+                # 在途请求可能晚于停止操作返回；入库前必须读取数据库中的最新状态。
+                source = await self._require_active_source(source_id)
+                result = await self._store_response(source, response, parsed)
+                await commit_and_publish(self.session)
+            await self._enqueue_downloads(source)
+            return result
+        except FeedStoppedError:
+            await self.session.rollback()
+            raise
+        except Exception as exc:
+            # 先回滚可能未完成的入库，再等待队列锁；停止不应被记录为源站故障。
+            await self.session.rollback()
+            async with queue_lock:
+                source = await self._require_active_source(source_id)
+                source.connection_status = "error"
                 source.last_checked_at = datetime.now(UTC)
-                source.connection_status = "healthy"
-                source.last_error = None
-                completed = await _store_event(
+                source.last_error = describe_rss_exception(exc)[:1000]
+                failed = await _store_event(
                     self.session,
-                    "feed.refresh.completed",
+                    "feed.refresh.failed",
                     "feed_source",
-                    str(source.id),
-                    {"created": 0, "notModified": True},
+                    str(source_id),
+                    {"error": source.last_error},
                 )
                 await self.session.commit()
-                await _publish_event(completed)
-                return FeedRefreshResult(
-                    source_id=source.id, fetched=0, created=0, duplicates=0, not_modified=True
-                )
+            await _publish_event(failed)
+            raise
 
-            response.raise_for_status()
-            # Mikan 提供标准 RSS，因此先走通用解析器；专用适配器可在此分流。
-            parsed = await asyncio.to_thread(feedparser.parse, response.content)
-            if parsed.bozo and not parsed.entries:
-                raise ValueError(f"RSS 解析失败：{parsed.bozo_exception}")
+    async def _require_active_source(self, source_id: int) -> FeedSource:
+        source = await self.session.get(FeedSource, source_id, populate_existing=True)
+        if source is None or not source.active:
+            await self.session.rollback()
+            raise FeedStoppedError("订阅已停止，请先恢复订阅后再刷新")
+        return source
 
-            source.last_checked_at = datetime.now(UTC)
-            source.etag = response.headers.get("etag")
-            source.last_modified = response.headers.get("last-modified")
-            source.connection_status = "healthy"
-            source.last_error = None
-
-            created = 0
-            duplicates = 0
-            review_items = []
-            excluded_keywords = [
-                value.casefold() for value in source.excluded_keywords or [] if value
-            ]
-            fingerprints = set(await self.session.scalars(
-                select(FeedItem.fingerprint).where(FeedItem.source_id == source.id)
-            ))
-            for entry in parsed.entries:
-                title = str(_entry_value(entry, "title", "")).strip()
-                if not title:
-                    continue
-                if any(keyword in title.casefold() for keyword in excluded_keywords):
-                    continue
-                guid = _entry_value(entry, "id") or _entry_value(entry, "guid")
-                detail_url = _entry_value(entry, "link")
-                download_url = _download_url(entry)
-                # GUID 并非所有源都稳定，组合关键字段生成本站内去重指纹。
-                identity = "|".join(
-                    [str(source.id), str(guid or ""), str(download_url or detail_url or ""), title]
-                )
-                fingerprint = hashlib.sha256(identity.encode("utf-8")).hexdigest()
-                if fingerprint in fingerprints:
-                    duplicates += 1
-                    continue
-                release = parse_release_title(title)
-                if source.season is not None:
-                    release.season = source.season
-                # 低置信度或带警告的结果保留人工审核。
-                item = FeedItem(
-                    source_id=source.id,
-                    guid=str(guid) if guid else None,
-                    title=title,
-                    detail_url=str(detail_url) if detail_url else None,
-                    download_url=download_url,
-                    info_hash=extract_info_hash(download_url),
-                    published_at=_published_at(entry),
-                    fingerprint=fingerprint,
-                    parse_status=(
-                        "needs_review"
-                        if release.confidence < 0.9 or release.warnings
-                        else "parsed"
-                    ),
-                    parse_data=release.model_dump_json(),
-                )
-                self.session.add(item)
-                if item.parse_status == "needs_review":
-                    review_items.append((item, "；".join(release.warnings) or
-                                         "解析置信度不足，需要确认季与集数"))
-                created += 1
-                fingerprints.add(fingerprint)
-
-            await self.session.flush()
-            for item, reason in review_items:
-                await notify_task(self.session, item, "review_required", source=source,
-                                  reason=reason)
-            await self._enqueue_downloads(source)
-            completed = await _store_event(
+    async def _store_response(self, source: FeedSource, response, parsed) -> FeedRefreshResult:
+        """调用方持有队列锁，状态和条目与停止订阅串行提交。"""
+        source.last_checked_at = datetime.now(UTC)
+        source.connection_status = "healthy"
+        source.last_error = None
+        if response.status_code == 304:
+            record_event(
                 self.session,
                 "feed.refresh.completed",
                 "feed_source",
                 str(source.id),
-                {"fetched": len(parsed.entries), "created": created, "duplicates": duplicates},
+                {"created": 0, "notModified": True},
             )
-            await commit_and_publish(self.session)
-            await _publish_event(completed)
             return FeedRefreshResult(
+                source_id=source.id, fetched=0, created=0, duplicates=0, not_modified=True
+            )
+
+        source.etag = response.headers.get("etag")
+        source.last_modified = response.headers.get("last-modified")
+        created = 0
+        duplicates = 0
+        review_items = []
+        excluded_keywords = [value.casefold() for value in source.excluded_keywords or [] if value]
+        fingerprints = set(
+            await self.session.scalars(
+                select(FeedItem.fingerprint).where(FeedItem.source_id == source.id)
+            )
+        )
+        for entry in parsed.entries:
+            title = str(_entry_value(entry, "title", "")).strip()
+            if not title:
+                continue
+            if any(keyword in title.casefold() for keyword in excluded_keywords):
+                continue
+            guid = _entry_value(entry, "id") or _entry_value(entry, "guid")
+            detail_url = _entry_value(entry, "link")
+            download_url = _download_url(entry)
+            # GUID 并非所有源都稳定，组合关键字段生成本站内去重指纹。
+            identity = "|".join(
+                [str(source.id), str(guid or ""), str(download_url or detail_url or ""), title]
+            )
+            fingerprint = hashlib.sha256(identity.encode("utf-8")).hexdigest()
+            if fingerprint in fingerprints:
+                duplicates += 1
+                continue
+            release = parse_release_title(title)
+            if source.season is not None:
+                release.season = source.season
+            # 低置信度或带警告的结果保留人工审核。
+            item = FeedItem(
                 source_id=source.id,
-                fetched=len(parsed.entries),
-                created=created,
-                duplicates=duplicates,
+                guid=str(guid) if guid else None,
+                title=title,
+                detail_url=str(detail_url) if detail_url else None,
+                download_url=download_url,
+                info_hash=extract_info_hash(download_url),
+                published_at=_published_at(entry),
+                fingerprint=fingerprint,
+                parse_status=(
+                    "needs_review" if release.confidence < 0.9 or release.warnings else "parsed"
+                ),
+                parse_data=release.model_dump_json(),
             )
-        except Exception as exc:
-            source.connection_status = "error"
-            source.last_checked_at = datetime.now(UTC)
-            source.last_error = describe_rss_exception(exc)[:1000]
-            failed = await _store_event(
-                self.session,
-                "feed.refresh.failed",
-                "feed_source",
-                str(source.id),
-                {"error": source.last_error},
-            )
-            await self.session.commit()
-            await _publish_event(failed)
-            raise
+            self.session.add(item)
+            if item.parse_status == "needs_review":
+                review_items.append(
+                    (item, "；".join(release.warnings) or "解析置信度不足，需要确认季与集数")
+                )
+            created += 1
+            fingerprints.add(fingerprint)
+
+        await self.session.flush()
+        for item, reason in review_items:
+            await notify_task(self.session, item, "review_required", source=source, reason=reason)
+        record_event(
+            self.session,
+            "feed.refresh.completed",
+            "feed_source",
+            str(source.id),
+            {"fetched": len(parsed.entries), "created": created, "duplicates": duplicates},
+        )
+        return FeedRefreshResult(
+            source_id=source.id,
+            fetched=len(parsed.entries),
+            created=created,
+            duplicates=duplicates,
+        )
 
     async def _enqueue_downloads(self, source: FeedSource) -> None:
         from .download_queue import enqueue_source, queue_lock
 
         # 先释放 RSS 入库事务，避免持有 SQLite 写锁等待下载队列。
         await commit_and_publish(self.session)
+        source_id = source.id
         try:
             async with queue_lock:
+                source = await self._require_active_source(source_id)
                 async with self.session.begin_nested():
                     await enqueue_source(self.session, source)
                 await commit_and_publish(self.session)
+        except FeedStoppedError:
+            await self.session.rollback()
+            raise
         except Exception as exc:
             from .events import _redact, describe_download_error
 
-            await _store_event(self.session, "download.failed", "feed_source", str(source.id),
-                               {"error": _redact(describe_download_error(exc))})
+            await self.session.rollback()
+            async with queue_lock:
+                await self._require_active_source(source_id)
+                record_event(
+                    self.session,
+                    "download.failed",
+                    "feed_source",
+                    str(source_id),
+                    {"error": _redact(describe_download_error(exc))},
+                )
+                await commit_and_publish(self.session)

@@ -29,27 +29,72 @@ def source_factory(tmp_path):
 
     def make(*, extension="mkv", gop=96, audio_codec="aac", audio_tracks=2):
         path = tmp_path / f"{uuid.uuid4().hex}.{extension}"
-        arguments = [settings.playback_ffmpeg, "-hide_banner", "-v", "error", "-y",
-                     "-f", "lavfi", "-i", "testsrc2=size=320x180:rate=24"]
+        arguments = [
+            settings.playback_ffmpeg,
+            "-hide_banner",
+            "-v",
+            "error",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc2=size=320x180:rate=24",
+        ]
         for frequency in (440, 880)[:audio_tracks]:
             arguments += ["-f", "lavfi", "-i", f"sine=frequency={frequency}:sample_rate=48000"]
         arguments += ["-map", "0:v:0"]
         for index in range(audio_tracks):
             arguments += ["-map", f"{index + 1}:a:0"]
-        arguments += ["-t", "16", "-c:v", "libx264", "-preset", "ultrafast", "-threads", "2",
-                      "-g", str(gop), "-keyint_min", str(gop), "-sc_threshold", "0", "-bf", "2"]
+        arguments += [
+            "-t",
+            "16",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "ultrafast",
+            "-threads",
+            "2",
+            "-g",
+            str(gop),
+            "-keyint_min",
+            str(gop),
+            "-sc_threshold",
+            "0",
+            "-bf",
+            "2",
+        ]
         if audio_tracks:
             arguments += ["-c:a", audio_codec, "-ac", "2"]
         subprocess.run([*arguments, str(path)], capture_output=True, check=True, timeout=30)
         stat = path.stat()
         version = file_version(path.name, stat.st_size, stat.st_mtime_ns)
         media_id = hashlib.sha256(path.name.encode()).hexdigest()
-        media = ResolvedMedia(media_id, 97654, path, version, stat.st_size, stat.st_mtime_ns,
-                              tmp_path, tmp_path, path.name)
-        output = subprocess.run([
-            settings.playback_ffprobe, "-v", "error", "-show_streams", "-show_format",
-            "-of", "json", str(path),
-        ], capture_output=True, check=True, timeout=20)
+        media = ResolvedMedia(
+            media_id,
+            97654,
+            path,
+            version,
+            stat.st_size,
+            stat.st_mtime_ns,
+            tmp_path,
+            tmp_path,
+            path.name,
+        )
+        output = subprocess.run(
+            [
+                settings.playback_ffprobe,
+                "-v",
+                "error",
+                "-show_streams",
+                "-show_format",
+                "-of",
+                "json",
+                str(path),
+            ],
+            capture_output=True,
+            check=True,
+            timeout=20,
+        )
         info = parse_probe(media, json.loads(output.stdout))
         return media, info
 
@@ -102,7 +147,8 @@ async def test_direct_range_head_auth_and_response_lease(manager, source_factory
     app.include_router(session_router.router, prefix="/api/v1")
     monkeypatch.setattr(session_router, "manager", manager)
     async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=app), base_url="http://test",
+        transport=httpx.ASGITransport(app=app),
+        base_url="http://test",
     ) as client:
         assert (await client.get(state["stream_url"])).status_code == 401
         app.dependency_overrides[require_playback_user] = lambda: 2
@@ -132,7 +178,9 @@ async def test_direct_range_head_auth_and_response_lease(manager, source_factory
 
 @pytest.mark.asyncio
 async def test_direct_does_not_consume_encoder_slot_or_cache_quota(
-    manager, source_factory, monkeypatch,
+    manager,
+    source_factory,
+    monkeypatch,
 ):
     async def no_prepare(*args):
         pass
@@ -151,7 +199,8 @@ async def test_direct_does_not_consume_encoder_slot_or_cache_quota(
 
 @pytest.mark.asyncio
 async def test_direct_pause_releases_source_and_resumes_without_generation_change(
-    manager, source_factory,
+    manager,
+    source_factory,
 ):
     media, info = source_factory(extension="mp4", audio_tracks=1)
     state = await create(manager, media, info, capabilities=capabilities(info))
@@ -175,7 +224,12 @@ async def test_direct_options_force_transcode_and_switch_back(manager, source_fa
     encoded = await ready(manager, state["id"])
     assert encoded["quality"] == 0 and encoded["source_anchor"] == pytest.approx(7.3333, abs=0.01)
     restored = await manager.seek(
-        1, state["id"], encoded["generation"], 9, str(uuid.uuid4()), force_transcode=False,
+        1,
+        state["id"],
+        encoded["generation"],
+        9,
+        str(uuid.uuid4()),
+        force_transcode=False,
     )
     assert restored["playback_mode"] == "direct"
     final = await ready(manager, state["id"])
@@ -186,18 +240,33 @@ async def test_direct_options_force_transcode_and_switch_back(manager, source_fa
 @pytest.mark.asyncio
 @pytest.mark.parametrize("audio_codec", ["aac", "flac"])
 async def test_real_mkv_remux_copies_video_maps_audio_and_seeks(
-    manager, source_factory, audio_codec,
+    manager,
+    source_factory,
+    audio_codec,
 ):
     media, info = source_factory(audio_codec=audio_codec)
     assert info.hls_mime_type and not info.native_mime_type
     state = await manager.create(
-        1, media, info, 0, 0, info.audio_tracks[1].id, str(uuid.uuid4()),
+        1,
+        media,
+        info,
+        0,
+        0,
+        info.audio_tracks[1].id,
+        str(uuid.uuid4()),
         capabilities=capabilities(info),
     )
     assert state["playback_mode"] == "remux"
     session = manager.get(1, state["id"])
-    arguments = transcode.command(media, info, session.generation_directory, 0, 720,
-                                  info.audio_tracks[1].id, plan=session.plan)
+    arguments = transcode.command(
+        media,
+        info,
+        session.generation_directory,
+        0,
+        720,
+        info.audio_tracks[1].id,
+        plan=session.plan,
+    )
     assert arguments[arguments.index("-c:v") + 1] == "copy"
     assert arguments[arguments.index("-c:a") + 1] == ("copy" if audio_codec == "aac" else "aac")
     assert f"0:{info.audio_tracks[1].id}" in arguments
@@ -210,10 +279,24 @@ async def test_real_mkv_remux_copies_video_maps_audio_and_seeks(
         while len(session.segments) < 2:
             await asyncio.sleep(0.05)
     for segment in list(session.segments.values())[:2]:
-        result = subprocess.run([
-            settings.playback_ffmpeg, "-hide_banner", "-v", "error", "-xerror", "-i",
-            str(segment.path), "-frames:v", "1", "-f", "null", "-",
-        ], capture_output=True, timeout=20)
+        result = subprocess.run(
+            [
+                settings.playback_ffmpeg,
+                "-hide_banner",
+                "-v",
+                "error",
+                "-xerror",
+                "-i",
+                str(segment.path),
+                "-frames:v",
+                "1",
+                "-f",
+                "null",
+                "-",
+            ],
+            capture_output=True,
+            timeout=20,
+        )
         assert result.returncode == 0, result.stderr.decode(errors="replace")
     async with manager.lock:
         session.segments = {0: session.segments[0]}
@@ -227,7 +310,8 @@ async def test_real_mkv_remux_copies_video_maps_audio_and_seeks(
 
 @pytest.mark.asyncio
 async def test_long_gop_remux_falls_back_before_publishing_invalid_playlist(
-    manager, source_factory,
+    manager,
+    source_factory,
 ):
     media, info = source_factory(gop=240, audio_tracks=1)
     state = await create(manager, media, info, capabilities=capabilities(info))
@@ -256,7 +340,8 @@ async def test_remux_limit_is_separate_from_transcode_limit(manager, source_fact
 
 @pytest.mark.asyncio
 async def test_direct_file_version_is_checked_before_acquiring_response_lease(
-    manager, source_factory,
+    manager,
+    source_factory,
 ):
     media, info = source_factory(extension="mp4", audio_tracks=1)
     state = await create(manager, media, info, capabilities=capabilities(info))
@@ -269,7 +354,9 @@ async def test_direct_file_version_is_checked_before_acquiring_response_lease(
 
 @pytest.mark.asyncio
 async def test_high_bitrate_remux_is_rejected_before_start_when_cache_budget_is_too_small(
-    manager, source_factory, monkeypatch,
+    manager,
+    source_factory,
+    monkeypatch,
 ):
     from app.playback import sessions
 
@@ -292,35 +379,61 @@ async def test_high_bitrate_remux_is_rejected_before_start_when_cache_budget_is_
 @pytest.mark.asyncio
 @pytest.mark.parametrize("bitrate", [256_000, 1_000_000])
 async def test_capped_transcode_enforces_video_budget_and_uncapped_command_is_unchanged(
-    manager, source_factory, bitrate,
+    manager,
+    source_factory,
+    bitrate,
 ):
     media, info = source_factory(extension="mp4", audio_tracks=1)
     state = await create(manager, media, info, force_transcode=True, max_bitrate=bitrate)
     session = manager.get(1, state["id"])
-    command = transcode.command(media, info, session.generation_directory, 0,
-                                session.plan.output_quality, None, plan=session.plan)
+    command = transcode.command(
+        media,
+        info,
+        session.generation_directory,
+        0,
+        session.plan.output_quality,
+        None,
+        plan=session.plan,
+    )
     video = int(command[command.index("-maxrate") + 1])
     target = int(command[command.index("-b:v") + 1])
     assert target <= video and video + 128_000 <= bitrate * 9 // 10
     assert int(command[command.index("-bufsize") + 1]) == video * 2
-    uncapped = transcode.command(media, info, session.generation_directory, 0,
-                                 session.plan.output_quality, None)
+    uncapped = transcode.command(
+        media, info, session.generation_directory, 0, session.plan.output_quality, None
+    )
     assert uncapped[uncapped.index("-b:v") + 1] == "2800k"
     assert uncapped[uncapped.index("-maxrate") + 1] == "6000k"
     assert uncapped[uncapped.index("-bufsize") + 1] == "12000k"
     playable = await ready(manager, session.id)
     assert playable["playback_mode"] == "transcode"
     segment = session.segments[0]
-    decoded = subprocess.run([
-        settings.playback_ffmpeg, "-hide_banner", "-v", "error", "-xerror", "-i",
-        str(segment.path), "-frames:v", "1", "-f", "null", "-",
-    ], capture_output=True, timeout=20)
+    decoded = subprocess.run(
+        [
+            settings.playback_ffmpeg,
+            "-hide_banner",
+            "-v",
+            "error",
+            "-xerror",
+            "-i",
+            str(segment.path),
+            "-frames:v",
+            "1",
+            "-f",
+            "null",
+            "-",
+        ],
+        capture_output=True,
+        timeout=20,
+    )
     assert decoded.returncode == 0, decoded.stderr.decode(errors="replace")
 
 
 @pytest.mark.asyncio
 async def test_paused_ts_remux_produces_through_seek_target_before_becoming_ready(
-    manager, source_factory, monkeypatch,
+    manager,
+    source_factory,
+    monkeypatch,
 ):
     media, info = source_factory(extension="ts", audio_tracks=1)
     target_ready, release_target = asyncio.Event(), asyncio.Event()
@@ -334,7 +447,14 @@ async def test_paused_ts_remux_produces_through_seek_target_before_becoming_read
 
     monkeypatch.setattr(transcode, "video_start", delay_target)
     created = await manager.create(
-        1, media, info, 11.3, 0, None, str(uuid.uuid4()), capabilities=capabilities(info),
+        1,
+        media,
+        info,
+        11.3,
+        0,
+        None,
+        str(uuid.uuid4()),
+        capabilities=capabilities(info),
     )
     session = manager.get(1, created["id"])
     assert created["playback_mode"] == "remux"
@@ -353,5 +473,6 @@ async def test_paused_ts_remux_produces_through_seek_target_before_becoming_read
     state = await ready(manager, session.id)
     assert state["status"] == "paused" and state["position"] == 11.3
     assert manager._target_available(session)
-    assert max(segment.source_start + segment.duration
-               for segment in session.segments.values()) > 11.3
+    assert (
+        max(segment.source_start + segment.duration for segment in session.segments.values()) > 11.3
+    )

@@ -16,6 +16,7 @@ import {
 } from "lucide-react"
 import type { Anime4kMode } from "@/lib/player/anime4k-types"
 import { clampTime, formatTime, type PlaybackInfo } from "@/lib/player/types"
+import { PlayerSettingSelect } from "./player-setting-select"
 
 export interface PlayerControlsProps {
   position: number
@@ -51,6 +52,7 @@ const SEEK_KEYS = new Set(["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "H
 
 export function PlayerControls(props: PlayerControlsProps) {
   const [draftPosition, setDraftPosition] = useState<number | null>(null)
+  const [selectContainer, setSelectContainer] = useState<HTMLElement | null>(null)
   const positionId = useId()
   const draftRef = useRef<number | null>(null)
   const settingsPanel = useRef<HTMLElement>(null)
@@ -70,7 +72,10 @@ export function PlayerControls(props: PlayerControlsProps) {
   }, [props.volume])
 
   useEffect(() => {
-    if (props.panel === "settings") closeSettingsButton.current?.focus()
+    if (props.panel === "settings") {
+      setSelectContainer(settingsPanel.current?.closest<HTMLElement>(".watch-page") ?? null)
+      closeSettingsButton.current?.focus()
+    }
   }, [props.panel])
 
   function commitSeek() {
@@ -301,72 +306,76 @@ export function PlayerControls(props: PlayerControlsProps) {
             </button>
           </div>
           <div className="player-settings-fields">
-            <label>
-              倍速
-              <select value={props.rate} onChange={(event) => props.onRate(Number(event.currentTarget.value))}>
-                {[0.5, 0.75, 1, 1.25, 1.5, 1.75, 2].map((rate) => (
-                  <option key={rate} value={rate}>
-                    {rate === 1 ? "正常速度" : `${rate} 倍`}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label>
-              清晰度
-              <select value={props.quality} onChange={(event) => props.onQuality(Number(event.currentTarget.value))}>
-                {qualities.map((quality) => (
-                  <option key={quality} value={quality}>
-                    {quality === 0 ? "自动（原画优先）" : `${quality}p`}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label>
-              音轨
-              <select
-                value={props.audioTrack ?? ""}
-                onChange={(event) => props.onAudioTrack(Number(event.currentTarget.value))}
-                disabled={!props.info.audio_tracks.length}
-              >
-                {!props.info.audio_tracks.length && <option value="">无音轨</option>}
-                {props.info.audio_tracks.map((track, index) => (
-                  <option key={track.id} value={track.id}>
-                    {[track.title || `音轨 ${index + 1}`, track.language, track.codec].filter(Boolean).join(" · ")}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label>
-              字幕
-              <select
-                value={props.subtitleTrack}
-                onChange={(event) => props.onSubtitleTrack(event.currentTarget.value)}
-              >
-                <option value="">关闭字幕</option>
-                {props.info.subtitle_tracks.map((track, index) => (
-                  <option key={track.id} value={track.id} disabled={!track.supported} title={track.reason ?? undefined}>
-                    {[
-                      track.title || `字幕 ${index + 1}`,
-                      track.language,
-                      !track.supported ? `不支持：${track.reason || track.codec}` : track.codec,
-                    ]
-                      .filter(Boolean)
-                      .join(" · ")}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="player-enhancement-setting">
-              Anime4K 画面增强
-              <select
-                value={props.enhancement}
-                onChange={(event) => props.onEnhancement(event.currentTarget.value as Anime4kMode)}
-              >
-                <option value="off">关闭</option>
-                <option value="light">轻量</option>
-                <option value="standard">标准</option>
-              </select>
-            </label>
+            <PlayerSettingSelect
+              label="倍速"
+              value={String(props.rate)}
+              onValueChange={(value) => props.onRate(Number(value))}
+              portalContainer={selectContainer}
+              options={[0.5, 0.75, 1, 1.25, 1.5, 1.75, 2].map((rate) => ({
+                value: String(rate),
+                label: rate === 1 ? "正常速度" : `${rate} 倍`,
+              }))}
+            />
+            <PlayerSettingSelect
+              label="清晰度"
+              value={String(props.quality)}
+              onValueChange={(value) => props.onQuality(Number(value))}
+              portalContainer={selectContainer}
+              options={qualities.map((quality) => ({
+                value: String(quality),
+                label: quality === 0 ? "自动（原画优先）" : `${quality}p`,
+              }))}
+            />
+            <PlayerSettingSelect
+              label="音轨"
+              value={String(props.audioTrack ?? props.info.audio_tracks[0]?.id ?? "none")}
+              onValueChange={(value) => props.onAudioTrack(Number(value))}
+              disabled={!props.info.audio_tracks.length}
+              portalContainer={selectContainer}
+              options={
+                props.info.audio_tracks.length
+                  ? props.info.audio_tracks.map((track, index) => ({
+                      value: String(track.id),
+                      label: [track.title || `音轨 ${index + 1}`, track.language, track.codec]
+                        .filter(Boolean)
+                        .join(" · "),
+                    }))
+                  : [{ value: "none", label: "无音轨" }]
+              }
+            />
+            <PlayerSettingSelect
+              label="字幕"
+              value={props.subtitleTrack || "off"}
+              onValueChange={(value) => props.onSubtitleTrack(value === "off" ? "" : value)}
+              portalContainer={selectContainer}
+              options={[
+                { value: "off", label: "关闭字幕" },
+                ...props.info.subtitle_tracks.map((track, index) => ({
+                  value: track.id,
+                  disabled: !track.supported,
+                  title: track.reason ?? undefined,
+                  label: [
+                    track.title || `字幕 ${index + 1}`,
+                    track.language,
+                    !track.supported ? `不支持：${track.reason || track.codec}` : track.codec,
+                  ]
+                    .filter(Boolean)
+                    .join(" · "),
+                })),
+              ]}
+            />
+            <PlayerSettingSelect
+              label="Anime4K 画面增强"
+              className="player-enhancement-setting"
+              value={props.enhancement}
+              onValueChange={(value) => props.onEnhancement(value as Anime4kMode)}
+              portalContainer={selectContainer}
+              options={[
+                { value: "off", label: "关闭" },
+                { value: "light", label: "轻量" },
+                { value: "standard", label: "标准" },
+              ]}
+            />
             {props.enhancementReason && (
               <p className="player-enhancement-reason" role="status">
                 {props.enhancementReason}

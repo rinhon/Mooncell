@@ -155,7 +155,6 @@ const SwipeToast: React.FC<SwipeToastProps> = ({
   useEffect(() => {
     if (!open) close("programmatic")
     else if (phaseRef.current !== "open") rescue()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open])
   useEffect(() => {
     if (HAS_STARTING_STYLE) return
@@ -173,14 +172,12 @@ const SwipeToast: React.FC<SwipeToastProps> = ({
       a.onfinish = null
       a.pause()
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [phase, duration])
   useEffect(() => {
     if (!pauseOnHover) {
       flags.current.hover = false
       syncFuse()
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pauseOnHover])
   useEffect(() => {
     const onVisibility = () => {
@@ -193,7 +190,6 @@ const SwipeToast: React.FC<SwipeToastProps> = ({
       document.removeEventListener("visibilitychange", onVisibility)
       anim.current?.cancel()
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   const swipeOut = (dy: number, v: number) => {

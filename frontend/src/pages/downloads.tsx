@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react"
-import { Link, useSearchParams } from "react-router-dom"
+import { useSearchParams } from "react-router-dom"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { HardDriveDownload } from "lucide-react"
 import { api, type DownloadCenter, type DownloadTask, type Show } from "@/lib/api"
 import { Badge } from "@/components/ui/badge"
 import { DownloadsHeading, DownloadsLoading, DownloadsMetrics, DownloadsRecords } from "@/components/downloads-loading"
 import { FeedClearlogo } from "@/components/feed-clearlogo"
+import { ReviewLink } from "@/components/review-link"
 import { Progress } from "@/components/ui/progress"
 import { Pagination } from "@/components/ui/pagination"
 import { Input } from "@/components/ui/input"
@@ -272,12 +273,12 @@ function DownloadRow({ task, logoShow }: { task: DownloadTask; logoShow?: Show }
       )}
       {task.review_required && (
         <div className="mt-3 flex justify-end">
-          <Link
+          <ReviewLink
             className="text-sm text-accent underline underline-offset-4"
             to={`/review?q=${encodeURIComponent(task.source_name)}`}
           >
             前往审核
-          </Link>
+          </ReviewLink>
         </div>
       )}
     </div>

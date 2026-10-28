@@ -16,13 +16,25 @@ async def sync_show_tag(client, info_hash, torrent, title, previous=None):
     desired = show_tag(title)
     tags = {tag.strip() for tag in str(torrent.get("tags", "")).split(",") if tag.strip()}
     if desired not in tags:
-        await request(client, "POST", "torrents/addTags", data={
-            "hashes": info_hash, "tags": desired,
-        })
+        await request(
+            client,
+            "POST",
+            "torrents/addTags",
+            data={
+                "hashes": info_hash,
+                "tags": desired,
+            },
+        )
         return False
     if previous and previous != desired and previous in tags and "," not in previous:
-        await request(client, "POST", "torrents/removeTags", data={
-            "hashes": info_hash, "tags": previous,
-        })
+        await request(
+            client,
+            "POST",
+            "torrents/removeTags",
+            data={
+                "hashes": info_hash,
+                "tags": previous,
+            },
+        )
         return False
     return True

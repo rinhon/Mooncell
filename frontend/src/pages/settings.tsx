@@ -13,6 +13,7 @@ import { Input } from "@/components/ui/input"
 import { FolderPicker, type LibraryPath } from "@/components/folder-picker"
 import { LibraryScan } from "@/components/library-scan"
 import { PageHeading } from "@/components/page-heading"
+import { usePageReady } from "@/components/page-load-boundary"
 import { Button } from "@/components/ui/button"
 import { useToast } from "@/components/ui/toast"
 
@@ -59,6 +60,7 @@ function DirectoryPreviewNode({
 
 /** 集中管理下载器连接，以及媒体库目录和文件命名。 */
 export function SettingsPage() {
+  const pageReady = usePageReady()
   const client = useQueryClient()
   const toast = useToast()
   const logout = useMutation({
@@ -68,8 +70,9 @@ export function SettingsPage() {
   })
   const { hash } = useLocation()
   useEffect(() => {
+    if (!pageReady) return
     if (["#appearance", "#tmdb", "#downloader"].includes(hash)) document.getElementById(hash.slice(1))?.scrollIntoView()
-  }, [hash])
+  }, [hash, pageReady])
   const library = useQuery({ queryKey: ["library-settings"], queryFn: () => api<LibraryPath>("/settings/library") })
   const root = library.data?.library_root ?? ""
   const preview = useQuery({

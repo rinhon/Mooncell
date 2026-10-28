@@ -7,10 +7,13 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
-    "lint": "tsc -b --pretty false",
+    "lint": "eslint .",
     "test:player": "node --test tests/*.test.cjs",
     "format": "prettier --write src",
-    "format:check": "prettier --check src"
+    "format:check": "prettier --check src",
+    "typecheck": "tsc -b --pretty false",
+    "test": "node --test tests/*.test.cjs",
+    "test:ci": "node --test --test-reporter=spec --test-reporter=junit --test-reporter-destination=stdout --test-reporter-destination=reports/junit.xml tests/*.test.cjs"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.90.2",
@@ -27,15 +30,20 @@
     "tailwind-merge": "^2.6.0"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@tailwindcss/vite": "^4.1.14",
     "@types/node": "^22.10.2",
     "@types/react": "^19.1.16",
     "@types/react-dom": "^19.1.9",
     "@vitejs/plugin-react": "^4.3.4",
     "@webgpu/types": "0.1.74",
+    "eslint": "^10.13.0",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "globals": "^16.5.0",
     "prettier": "^3.9.10",
     "tailwindcss": "^4.1.14",
     "typescript": "~5.7.2",
+    "typescript-eslint": "^8.72.0",
     "vite": "^6.0.5"
   }
 }

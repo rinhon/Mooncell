@@ -1,0 +1,15 @@
+[data-fade-slide="pending"] {
+  opacity: 0;
+  transform: translateY(16px);
+}
+
+[data-fade-slide] {
+  will-change: opacity, transform;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-fade-slide="pending"] {
+    opacity: 1;
+    transform: none;
+  }
+}

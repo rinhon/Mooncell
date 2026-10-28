@@ -12,7 +12,6 @@ import "./staggered-menu.css"
 
 type StaggeredMenuProps = {
   position?: "left"
-  needsReview?: number
 }
 
 export function StaggeredMenuTrigger({ open }: { open: boolean }) {
@@ -46,7 +45,7 @@ export function StaggeredMenuTrigger({ open }: { open: boolean }) {
 }
 
 /** Radix 提供模态焦点锁定、Esc、滚动锁定与关闭后焦点恢复。 */
-export function StaggeredMenu({ position = "left", needsReview = 0 }: StaggeredMenuProps) {
+export function StaggeredMenu({ position = "left" }: StaggeredMenuProps) {
   const [open, setOpen] = useState(false)
   const location = useLocation()
   const reducedMotion = useReducedMotion()
@@ -157,11 +156,6 @@ export function StaggeredMenu({ position = "left", needsReview = 0 }: StaggeredM
                             >
                               <Icon size={16} strokeWidth={1.6} aria-hidden="true" />
                               <span>{label}</span>
-                              {to === "/review" && needsReview > 0 && (
-                                <span className="sm-review-badge" aria-label={`${needsReview} 项待审核`}>
-                                  {needsReview > 99 ? "99+" : needsReview}
-                                </span>
-                              )}
                             </NavLink>
                           </div>
                         ))}

@@ -19,15 +19,21 @@ logger = logging.getLogger(__name__)
 
 async def persist_probe(database: AsyncSession, media: ResolvedMedia, info: PlaybackInfo) -> None:
     persisted = info.model_copy(deep=True)
-    persisted.subtitle_tracks = [track for track in persisted.subtitle_tracks
-                                if track.id.startswith("s:")]
+    persisted.subtitle_tracks = [
+        track for track in persisted.subtitle_tracks if track.id.startswith("s:")
+    ]
     persisted.progress = None
     payload = persisted.model_dump_json()
     if media.probe_json == payload:
         return
-    await database.execute(update(MediaFile).where(
-        MediaFile.id == media.media_id, MediaFile.file_version == media.version,
-    ).values(probe_json=payload))
+    await database.execute(
+        update(MediaFile)
+        .where(
+            MediaFile.id == media.media_id,
+            MediaFile.file_version == media.version,
+        )
+        .values(probe_json=payload)
+    )
     await database.commit()
     await database.close()
 

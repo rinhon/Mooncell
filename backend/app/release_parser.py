@@ -22,11 +22,8 @@ BRACKET_EPISODE_RE = re.compile(
 RANGE_RE = re.compile(r"\b(?:E)?(?P<start>\d{1,3})\s*[-~]\s*(?:E)?(?P<end>\d{1,3})\b")
 RESOLUTION_RE = re.compile(r"\b(2160|1440|1080|720|480)[pP]\b")
 BRACKET_RE = re.compile(r"\[[^\]]+]|【[^】]+】")
-ROMAN_SEASONS = {"II": 2, "III": 3, "IV": 4, "V": 5, "VI": 6,
-                 "VII": 7, "VIII": 8, "IX": 9, "X": 10}
-ROMAN_SEASON_RE = re.compile(
-    r"(?:\s|(?<=[\u3400-\u9fff]))(VIII|VII|III|VI|IV|IX|II|V|X)$"
-)
+ROMAN_SEASONS = {"II": 2, "III": 3, "IV": 4, "V": 5, "VI": 6, "VII": 7, "VIII": 8, "IX": 9, "X": 10}
+ROMAN_SEASON_RE = re.compile(r"(?:\s|(?<=[\u3400-\u9fff]))(VIII|VII|III|VI|IV|IX|II|V|X)$")
 
 
 def _unique_matches(raw: str, values: dict[str, tuple[str, ...]]) -> list[str]:
@@ -95,8 +92,11 @@ def parse_release_title(raw_title: str) -> ParsedRelease:
     # 范围包和合集不能安全映射成单一剧集，后续需要逐文件确认。
     range_match = RANGE_RE.search(raw)
     release_kind = "single"
-    if (range_match and (episode_match is None or range_match.start() != episode_match.start())
-            and not (episode_match and range_match.end() == episode_match.end())):
+    if (
+        range_match
+        and (episode_match is None or range_match.start() != episode_match.start())
+        and not (episode_match and range_match.end() == episode_match.end())
+    ):
         release_kind = "range"
         episode_start = float(range_match.group("start"))
         episode_end = float(range_match.group("end"))

@@ -24,7 +24,7 @@ async def test_detail_basic_movie_missing_and_auth(show_client):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("genres", ["broken", "{}", '[1]', 'null'])
+@pytest.mark.parametrize("genres", ["broken", "{}", "[1]", "null"])
 async def test_detail_tolerates_historical_genres(show_client, genres):
     client, sessions, _ = show_client
     async with sessions() as session:
@@ -34,16 +34,21 @@ async def test_detail_tolerates_historical_genres(show_client, genres):
     assert (await client.get("/api/v1/shows/2")).json()["genres"] == []
 
 
-
-
 @pytest.mark.asyncio
 async def test_detail_uses_local_artwork_and_version_without_writes(show_client, tmp_path):
     client, sessions, _ = show_client
     poster = tmp_path / "poster.jpg"
     poster.write_bytes(b"local-file")
     async with sessions() as session:
-        session.add(ShowArtwork(source_id=1, directory=str(tmp_path), status="partial",
-                                poster_path=str(poster), fanart_path=str(tmp_path / "missing.jpg")))
+        session.add(
+            ShowArtwork(
+                source_id=1,
+                directory=str(tmp_path),
+                status="partial",
+                poster_path=str(poster),
+                fanart_path=str(tmp_path / "missing.jpg"),
+            )
+        )
         await session.commit()
     data = (await client.get("/api/v1/shows/1")).json()
     assert data["poster_ready"] is True

@@ -24,22 +24,27 @@ def image_state(path: Path, version_path: str | None = None) -> ImageState:
     result = path.stat()
     if not stat.S_ISREG(result.st_mode):
         raise FileNotFoundError(str(path))
-    image = ImageFile(version_path if version_path is not None else str(path),
-                      result.st_mtime_ns, result.st_size)
+    image = ImageFile(
+        version_path if version_path is not None else str(path), result.st_mtime_ns, result.st_size
+    )
     return ImageState(result, image.version)
 
 
 def cached_image_response(
-    request: Request, path: Path, version_path: str | None = None,
+    request: Request,
+    path: Path,
+    version_path: str | None = None,
 ) -> Response:
     state = image_state(path, version_path)
     # URL 仍会读取当前文件，因此旧版本请求不能把新内容再次长期缓存。
     cache_control = (
         "private, max-age=31536000"
-        if request.query_params.get("v") == state.version else "private, no-cache"
+        if request.query_params.get("v") == state.version
+        else "private, no-cache"
     )
     response = FileResponse(
-        path, stat_result=state.stat,
+        path,
+        stat_result=state.stat,
         headers={"Cache-Control": cache_control, "ETag": f'W/"{state.version}"'},
     )
     if_none_match = request.headers.get("if-none-match")
@@ -62,7 +67,10 @@ def cached_image_response(
             except (TypeError, ValueError, OverflowError):
                 pass
     if unchanged:
-        return Response(status_code=304, headers={
-            name: response.headers[name] for name in ("cache-control", "etag", "last-modified")
-        })
+        return Response(
+            status_code=304,
+            headers={
+                name: response.headers[name] for name in ("cache-control", "etag", "last-modified")
+            },
+        )
     return response

@@ -26,14 +26,21 @@ async def feed_app(monkeypatch, tmp_path):
         await connection.run_sync(Base.metadata.create_all)
     sessions = async_sessionmaker(engine, expire_on_commit=False)
     async with sessions() as session:
-        session.add_all([
-            TmdbSettings(id=1, encrypted_api_key=encrypt_secret("test-key")),
-            DownloaderConfig(
-                id=1, name="qB", kind="qbittorrent", base_url="http://qb.test",
-                username="admin", encrypted_secret=encrypt_secret("test-password"),
-                active=True, connection_status="healthy",
-            ),
-        ])
+        session.add_all(
+            [
+                TmdbSettings(id=1, encrypted_api_key=encrypt_secret("test-key")),
+                DownloaderConfig(
+                    id=1,
+                    name="qB",
+                    kind="qbittorrent",
+                    base_url="http://qb.test",
+                    username="admin",
+                    encrypted_secret=encrypt_secret("test-password"),
+                    active=True,
+                    connection_status="healthy",
+                ),
+            ]
+        )
         await session.commit()
 
     async def session_override():
@@ -44,28 +51,58 @@ async def feed_app(monkeypatch, tmp_path):
     app.include_router(api.router)
     app.dependency_overrides[get_session] = session_override
     app.dependency_overrides[require_user] = lambda: User(
-        id=1, username="admin", password_hash="test",
+        id=1,
+        username="admin",
+        password_hash="test",
     )
     monkeypatch.setattr(api, "SessionFactory", sessions)
-    monkeypatch.setattr(api, "test_downloader", AsyncMock(return_value=DownloaderTestResult(
-        ok=True, kind="qbittorrent", message="连接正常",
-    )))
+    monkeypatch.setattr(
+        api,
+        "test_downloader",
+        AsyncMock(
+            return_value=DownloaderTestResult(
+                ok=True,
+                kind="qbittorrent",
+                message="连接正常",
+            )
+        ),
+    )
     monkeypatch.setattr(api, "get_library_root", AsyncMock(return_value=str(tmp_path)))
-    monkeypatch.setattr(api, "scrape_tmdb", AsyncMock(return_value=TmdbMetadata(
-        tmdb_id=123, media_type="tv", title="TMDB 标题", episode_count=12,
-        href="https://example.test/tv/123",
-    )))
-    monkeypatch.setattr(api, "scrape_and_store_artwork", AsyncMock(return_value=ArtworkResult(
-        directory=str(tmp_path), poster_path="poster.jpg", fanart_path="fanart.jpg",
-        clearlogo_path="clearlogo.png", status="completed", error=None,
-        scraped_at=datetime.now(UTC),
-    )))
+    monkeypatch.setattr(
+        api,
+        "scrape_tmdb",
+        AsyncMock(
+            return_value=TmdbMetadata(
+                tmdb_id=123,
+                media_type="tv",
+                title="TMDB 标题",
+                episode_count=12,
+                href="https://example.test/tv/123",
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        api,
+        "scrape_and_store_artwork",
+        AsyncMock(
+            return_value=ArtworkResult(
+                directory=str(tmp_path),
+                poster_path="poster.jpg",
+                fanart_path="fanart.jpg",
+                clearlogo_path="clearlogo.png",
+                status="completed",
+                error=None,
+                scraped_at=datetime.now(UTC),
+            )
+        ),
+    )
     yield app, sessions
     await engine.dispose()
 
 
 VALUES = {
-    "name": "测试订阅", "url": "https://example.test/rss",
+    "name": "测试订阅",
+    "url": "https://example.test/rss",
     "tmdb": {"tmdb_id": 123, "media_type": "tv"},
 }
 
@@ -90,12 +127,17 @@ async def test_response_is_sent_before_scraping_finishes(feed_app, monkeypatch, 
                 response_body.extend(message.get("body", b""))
                 sent.set()
             await send(message)
+
         await app(scope, receive, observe)
 
     monkeypatch.setattr(api, phase, slow_scrape)
-    async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(observed_app), base_url="http://test",
-    ) as client, broker.subscribe() as events:
+    async with (
+        httpx.AsyncClient(
+            transport=httpx.ASGITransport(observed_app),
+            base_url="http://test",
+        ) as client,
+        broker.subscribe() as events,
+    ):
         task = asyncio.create_task(client.post("/api/v1/feeds", json=VALUES))
         try:
             await asyncio.wait_for(entered.wait(), 2)
@@ -130,25 +172,41 @@ async def test_response_is_sent_before_scraping_finishes(feed_app, monkeypatch, 
         assert events.empty()
 
 
-@pytest.mark.parametrize("failure, expected", [
-    ("metadata", "partial"), ("artwork", "failed"), ("partial", "partial"),
-])
+@pytest.mark.parametrize(
+    "failure, expected",
+    [
+        ("metadata", "partial"),
+        ("artwork", "failed"),
+        ("partial", "partial"),
+    ],
+)
 async def test_scrape_failure_preserves_subscription_and_publishes_result(
-    feed_app, monkeypatch, failure, expected,
+    feed_app,
+    monkeypatch,
+    failure,
+    expected,
 ):
     app, sessions = feed_app
     if failure == "metadata":
         monkeypatch.setattr(api, "scrape_tmdb", AsyncMock(side_effect=httpx.ReadTimeout("")))
     elif failure == "artwork":
-        monkeypatch.setattr(api, "scrape_and_store_artwork", AsyncMock(
-            side_effect=RuntimeError("图片保存失败"),
-        ))
+        monkeypatch.setattr(
+            api,
+            "scrape_and_store_artwork",
+            AsyncMock(
+                side_effect=RuntimeError("图片保存失败"),
+            ),
+        )
     else:
         api.scrape_and_store_artwork.return_value.status = "partial"
         api.scrape_and_store_artwork.return_value.error = "缺少 clearlogo"
-    async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app), base_url="http://test",
-    ) as client, broker.subscribe() as events:
+    async with (
+        httpx.AsyncClient(
+            transport=httpx.ASGITransport(app),
+            base_url="http://test",
+        ) as client,
+        broker.subscribe() as events,
+    ):
         response = await client.post("/api/v1/feeds", json=VALUES)
         assert response.status_code == 201
         event = events.get_nowait()
@@ -162,19 +220,29 @@ async def test_scrape_failure_preserves_subscription_and_publishes_result(
             source = await session.get(FeedSource, response.json()["id"])
             assert source.artwork.status == expected
             assert source.artwork.last_error
-            stored = await session.scalar(select(DomainEvent).where(
-                DomainEvent.event_type == event.event_type,
-            ))
+            stored = await session.scalar(
+                select(DomainEvent).where(
+                    DomainEvent.event_type == event.event_type,
+                )
+            )
             assert stored.event_type == event.event_type
 
 
 @pytest.mark.parametrize("endpoint", ["/feeds/prerequisites", "/feeds"])
-@pytest.mark.parametrize("failure, section", [
-    ("no_tmdb", "tmdb"), ("no_downloader", "downloader"),
-    ("inactive_downloader", "downloader"), ("offline", "downloader"),
-])
+@pytest.mark.parametrize(
+    "failure, section",
+    [
+        ("no_tmdb", "tmdb"),
+        ("no_downloader", "downloader"),
+        ("inactive_downloader", "downloader"),
+        ("offline", "downloader"),
+    ],
+)
 async def test_prerequisites_block_creation_and_point_to_settings(
-    feed_app, endpoint, failure, section,
+    feed_app,
+    endpoint,
+    failure,
+    section,
 ):
     app, sessions = feed_app
     async with sessions() as session:
@@ -187,10 +255,13 @@ async def test_prerequisites_block_creation_and_point_to_settings(
         await session.commit()
     if failure == "offline":
         api.test_downloader.return_value = DownloaderTestResult(
-            ok=False, kind="qbittorrent", message="拒绝登录",
+            ok=False,
+            kind="qbittorrent",
+            message="拒绝登录",
         )
     async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app), base_url="http://test",
+        transport=httpx.ASGITransport(app),
+        base_url="http://test",
     ) as client:
         response = await client.post(f"/api/v1{endpoint}", json=VALUES)
     assert response.status_code == 409
@@ -219,16 +290,23 @@ async def test_either_tmdb_credential_and_live_downloader_pass(feed_app, credent
         (await session.get(DownloaderConfig, 1)).connection_status = "error"
         await session.commit()
     async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app), base_url="http://test",
+        transport=httpx.ASGITransport(app),
+        base_url="http://test",
     ) as client:
         response = await client.post("/api/v1/feeds/prerequisites")
         assert response.status_code == 200
         api.test_downloader.assert_awaited_once_with(
-            "qbittorrent", "http://qb.test", "admin", "test-password", True,
+            "qbittorrent",
+            "http://qb.test",
+            "admin",
+            "test-password",
+            True,
         )
         # 打开弹窗检查通过后，保存时仍会复核下载器，不能依赖过期的健康状态。
         api.test_downloader.return_value = DownloaderTestResult(
-            ok=False, kind="qbittorrent", message="连接中断",
+            ok=False,
+            kind="qbittorrent",
+            message="连接中断",
         )
         response = await client.post("/api/v1/feeds", json=VALUES)
         assert response.status_code == 409
@@ -240,7 +318,8 @@ async def test_prerequisites_require_authentication(feed_app):
     app, _ = feed_app
     app.dependency_overrides.pop(require_user)
     async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app), base_url="http://test",
+        transport=httpx.ASGITransport(app),
+        base_url="http://test",
     ) as client:
         response = await client.post("/api/v1/feeds/prerequisites")
         assert response.status_code == 401

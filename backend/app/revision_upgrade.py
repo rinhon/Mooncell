@@ -26,10 +26,14 @@ def complete(torrent, files, required_videos):
     # qBittorrent 的 progress 是通过 BT 分块校验的数据；同时检查所选文件。
     selected = [f for f in files if f.get("priority", 1) > 0]
     completed_names = {f["name"] for f in selected if f.get("progress", 0) >= 1}
-    return (healthy(torrent) and torrent.get("progress", 0) >= 1
-            and torrent.get("amount_left", -1) == 0 and bool(selected)
-            and required_videos.issubset(completed_names)
-            and all(f.get("progress", 0) >= 1 for f in selected))
+    return (
+        healthy(torrent)
+        and torrent.get("progress", 0) >= 1
+        and torrent.get("amount_left", -1) == 0
+        and bool(selected)
+        and required_videos.issubset(completed_names)
+        and all(f.get("progress", 0) >= 1 for f in selected)
+    )
 
 
 async def torrent_info(client, info_hash):
@@ -50,8 +54,11 @@ def destination(job, plan):
 def video_paths(plan):
     from .download_queue import VIDEO_EXTENSIONS
 
-    return {f["new"] for f in plan["files"]
-            if PurePosixPath(f["new"]).suffix.lower() in VIDEO_EXTENSIONS}
+    return {
+        f["new"]
+        for f in plan["files"]
+        if PurePosixPath(f["new"]).suffix.lower() in VIDEO_EXTENSIONS
+    }
 
 
 async def save(session, job, plan, phase):
@@ -73,15 +80,17 @@ async def begin_upgrade(session, client, job, item, config, torrent, files, conf
         for conflict in conflicts:
             previous = await session.get(FeedItem, conflict.item_id)
             parsed = ParsedRelease.model_validate_json(previous.parse_data)
-            if (conflict.downloader_id != job.downloader_id
-                    or release_identity(previous, source, parsed) != key
-                    or parsed.revision >= current.revision):
+            if (
+                conflict.downloader_id != job.downloader_id
+                or release_identity(previous, source, parsed) != key
+                or parsed.revision >= current.revision
+            ):
                 return False
-        return any(c.state in {"moving", "upgrading", "replacing", "season_changing"}
-                   for c in conflicts)
+        return any(
+            c.state in {"moving", "upgrading", "replacing", "season_changing"} for c in conflicts
+        )
     old = conflicts[0]
-    if (old.downloader_id != job.downloader_id
-            or old.info_hash == job.info_hash):
+    if old.downloader_id != job.downloader_id or old.info_hash == job.info_hash:
         return False
     previous = await session.get(FeedItem, old.item_id)
     source = await session.get(FeedSource, item.source_id)
@@ -90,8 +99,11 @@ async def begin_upgrade(session, client, job, item, config, torrent, files, conf
     new_release = ParsedRelease.model_validate_json(item.parse_data)
     old_release = ParsedRelease.model_validate_json(previous.parse_data)
     key = release_identity(item, source, new_release)
-    if (key is None or key != release_identity(previous, source, old_release)
-            or new_release.revision <= old_release.revision):
+    if (
+        key is None
+        or key != release_identity(previous, source, old_release)
+        or new_release.revision <= old_release.revision
+    ):
         return False
     if old.state in {"moving", "upgrading", "replacing", "season_changing"}:
         return True  # 等待前一个整理/替换事务结束，再读取其最终位置。
@@ -102,14 +114,21 @@ async def begin_upgrade(session, client, job, item, config, torrent, files, conf
         return False
     old_torrent = await torrent_info(client, old.info_hash)
     old_destination = destination(old, old_plan)
-    if (not old_torrent or not healthy(old_torrent)
-            or path_type(old.target_root)(old_torrent["save_path"]) != old_destination
-            or old_torrent.get("auto_tmm", False)):
+    if (
+        not old_torrent
+        or not healthy(old_torrent)
+        or path_type(old.target_root)(old_torrent["save_path"]) != old_destination
+        or old_torrent.get("auto_tmm", False)
+    ):
         return False
-    old_files = (await request(client, "GET", "torrents/files",
-                               params={"hash": old.info_hash})).json()
-    selected_videos = {f["name"] for f in old_files if f.get("priority", 1) > 0
-                       and PurePosixPath(f["name"]).suffix.lower() in VIDEO_EXTENSIONS}
+    old_files = (
+        await request(client, "GET", "torrents/files", params={"hash": old.info_hash})
+    ).json()
+    selected_videos = {
+        f["name"]
+        for f in old_files
+        if f.get("priority", 1) > 0 and PurePosixPath(f["name"]).suffix.lower() in VIDEO_EXTENSIONS
+    }
     if selected_videos != video_paths(old_plan):
         return False
     # 旧任务拥有的全部已选文件必须与计划相符，且不能与其他任务共用文件。
@@ -117,28 +136,39 @@ async def begin_upgrade(session, client, job, item, config, torrent, files, conf
     if not old_names.issubset({f["new"] for f in old_plan["files"]}):
         return False
     owned = {str(old_destination / name).casefold() for name in old_names}
-    others = await session.scalars(select(DownloadJob).where(
-        DownloadJob.id.not_in([job.id, old.id]), DownloadJob.plan.is_not(None),
-        DownloadJob.downloader_id == job.downloader_id,
-        DownloadJob.state.not_in(["superseded", "ignored"]),
-    ))
+    others = await session.scalars(
+        select(DownloadJob).where(
+            DownloadJob.id.not_in([job.id, old.id]),
+            DownloadJob.plan.is_not(None),
+            DownloadJob.downloader_id == job.downloader_id,
+            DownloadJob.state.not_in(["superseded", "ignored"]),
+        )
+    )
     for other in others:
         other_plan = json.loads(other.plan)
         if "files" not in other_plan:
             continue
         other_destination = destination(other, other_plan)
-        if any(str(other_destination / f["new"]).casefold() in owned
-               for f in other_plan["files"]):
+        if any(str(other_destination / f["new"]).casefold() in owned for f in other_plan["files"]):
             return False
     staging = path_type(job.target_root)(job.target_root) / ".mooncell" / job.info_hash
     if path_type(job.target_root)(torrent["save_path"]) != staging:
         return False
-    backup = (path_type(job.target_root)(job.target_root) / ".mooncell" / "replaced"
-              / old.info_hash / job.info_hash)
+    backup = (
+        path_type(job.target_root)(job.target_root)
+        / ".mooncell"
+        / "replaced"
+        / old.info_hash
+        / job.info_hash
+    )
     plan["replacement"] = {
-        "old_job_id": old.id, "old_destination": str(old_destination),
-        "destination": str(target), "staging": str(staging), "backup": str(backup),
-        "old_was_running": not paused(old_torrent), "old_files": sorted(old_names),
+        "old_job_id": old.id,
+        "old_destination": str(old_destination),
+        "destination": str(target),
+        "staging": str(staging),
+        "backup": str(backup),
+        "old_was_running": not paused(old_torrent),
+        "old_files": sorted(old_names),
     }
     await save(session, job, plan, "downloading")
     await set_running(client, job.info_hash, True)
@@ -213,9 +243,15 @@ async def advance_upgrade(session, client, job, config, torrent, files):
             await set_running(client, old.info_hash, False)
             return
         if old_location == original:
-            await request(client, "POST", "torrents/setLocation", data={
-                "hashes": old.info_hash, "location": str(backup),
-            })
+            await request(
+                client,
+                "POST",
+                "torrents/setLocation",
+                data={
+                    "hashes": old.info_hash,
+                    "location": str(backup),
+                },
+            )
             return
         if old_location != backup:
             job.state = "needs_review"
@@ -233,20 +269,28 @@ async def advance_upgrade(session, client, job, config, torrent, files):
             if not complete(torrent, files, video_paths(plan)):
                 raise ValueError("新版文件不完整，恢复旧版")
             expected_names = {f["new"] for f in plan["files"]}
-            if (not expected_names.issubset({f["name"] for f in files})
-                    or not {f["name"] for f in files if f.get("priority", 1) > 0}
-                    .issubset(expected_names)):
+            if not expected_names.issubset({f["name"] for f in files}) or not {
+                f["name"] for f in files if f.get("priority", 1) > 0
+            }.issubset(expected_names):
                 raise ValueError("新版文件结构已改变，恢复旧版")
             if new_location == staging:
                 local = local_path(str(target), config)
-                if local.is_absolute() and await asyncio.to_thread(lambda: any(
-                    local.joinpath(*PurePosixPath(f["new"]).parts).exists()
-                    for f in plan["files"]
-                )):
+                if local.is_absolute() and await asyncio.to_thread(
+                    lambda: any(
+                        local.joinpath(*PurePosixPath(f["new"]).parts).exists()
+                        for f in plan["files"]
+                    )
+                ):
                     raise ValueError("替换目标仍有文件占用，恢复旧版")
-                await request(client, "POST", "torrents/setLocation", data={
-                    "hashes": job.info_hash, "location": str(target),
-                })
+                await request(
+                    client,
+                    "POST",
+                    "torrents/setLocation",
+                    data={
+                        "hashes": job.info_hash,
+                        "location": str(target),
+                    },
+                )
                 return
             if new_location != target:
                 raise ValueError("新版目录已改变，停止自动替换")
@@ -264,9 +308,15 @@ async def advance_upgrade(session, client, job, config, torrent, files):
             await set_running(client, job.info_hash, False)
             return
         if new_location == target:
-            await request(client, "POST", "torrents/setLocation", data={
-                "hashes": job.info_hash, "location": str(staging),
-            })
+            await request(
+                client,
+                "POST",
+                "torrents/setLocation",
+                data={
+                    "hashes": job.info_hash,
+                    "location": str(staging),
+                },
+            )
             return
         if new_location != staging or not old_torrent:
             job.state = "needs_review"
@@ -274,9 +324,15 @@ async def advance_upgrade(session, client, job, config, torrent, files):
         if not healthy(old_torrent):
             return
         if old_location == backup:
-            await request(client, "POST", "torrents/setLocation", data={
-                "hashes": old.info_hash, "location": str(original),
-            })
+            await request(
+                client,
+                "POST",
+                "torrents/setLocation",
+                data={
+                    "hashes": old.info_hash,
+                    "location": str(original),
+                },
+            )
             return
         if old_location != original:
             job.state = "needs_review"
@@ -301,17 +357,24 @@ async def advance_upgrade(session, client, job, config, torrent, files):
             if old_location != backup or not healthy(old_torrent):
                 job.state = "needs_review"
                 raise ValueError("旧版未处于独立备份目录，禁止清理旧文件")
-            old_files = (await request(client, "GET", "torrents/files",
-                                       params={"hash": old.info_hash})).json()
+            old_files = (
+                await request(client, "GET", "torrents/files", params={"hash": old.info_hash})
+            ).json()
             if {f["name"] for f in old_files if f.get("priority", 1) > 0} != set(
                 upgrade["old_files"]
             ):
                 job.state = "needs_review"
                 raise ValueError("旧版备份文件结构已改变，禁止清理旧文件")
             # 只删除已确认移入独立备份目录的系统任务，绝不在媒体库原路径删除。
-            await request(client, "POST", "torrents/delete", data={
-                "hashes": old.info_hash, "deleteFiles": "true",
-            })
+            await request(
+                client,
+                "POST",
+                "torrents/delete",
+                data={
+                    "hashes": old.info_hash,
+                    "deleteFiles": "true",
+                },
+            )
             return
         old.state = "superseded"
         previous = await session.get(FeedItem, old.item_id)
@@ -323,9 +386,17 @@ async def advance_upgrade(session, client, job, config, torrent, files):
         if item:
             finish_mutation(item.source_id)
         job.plan = json.dumps(plan, ensure_ascii=False)
-        session.add(DomainEvent(
-            event_type="download.upgraded", resource_type="feed_item",
-            resource_id=str(job.item_id), payload=json.dumps({
-                "title": job.title, "previous_item_id": old.item_id,
-            }, ensure_ascii=False),
-        ))
+        session.add(
+            DomainEvent(
+                event_type="download.upgraded",
+                resource_type="feed_item",
+                resource_id=str(job.item_id),
+                payload=json.dumps(
+                    {
+                        "title": job.title,
+                        "previous_item_id": old.item_id,
+                    },
+                    ensure_ascii=False,
+                ),
+            )
+        )

@@ -119,3 +119,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\setup.ps1
 Mooncell 面向可信局域网内的单用户使用。不要直接暴露到公网；远程访问建议通过 VPN，或使用带 TLS 和额外认证的反向代理。
 
 本项目采用 [MIT License](LICENSE)。
+
+## 代码质量 CI
+
+代码检查、测试、构建、安全扫描以及可选 SonarQube 门禁的命令和服务配置见 [CI 说明](docs/CI.md)。

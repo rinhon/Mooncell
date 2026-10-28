@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from "react"
+import { useEffect, useId, useState, type FormEvent } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { Check, ImageOff, LoaderCircle, ScanSearch } from "lucide-react"
 import { api, type Feed, type TmdbCandidate, type TmdbMetadata } from "@/lib/api"
@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input"
 import { useToast } from "@/components/ui/toast"
 
 type CollectionFile = { name: string; size: number; episode: number | null; kind: "video" | "extra" | "attachment" }
+type FileOverride = { path: string; episode: number }
 type Preview = {
   status: "pending" | "ready"
   info_hash: string
@@ -19,15 +20,21 @@ type Preview = {
   files?: CollectionFile[]
 }
 
+function basename(path: string) {
+  return path.split(/[\\/]/).pop() ?? path
+}
+
 export function MagnetCollectionForm({ onClose, onAdded }: { onClose: () => void; onAdded: () => void }) {
   const client = useQueryClient()
   const toast = useToast()
+  const fileListId = useId()
   const [magnet, setMagnet] = useState("")
   const [requested, setRequested] = useState<{ magnet: string; started: number } | null>(null)
   const [name, setName] = useState("")
   const [season, setSeason] = useState("1")
   const [searchTerm, setSearchTerm] = useState("")
   const [selected, setSelected] = useState<TmdbCandidate | null>(null)
+  const [episodeEdits, setEpisodeEdits] = useState<Record<string, string>>({})
   const preview = useQuery({
     queryKey: ["collection-preview", requested],
     enabled: !!requested,
@@ -65,6 +72,31 @@ export function MagnetCollectionForm({ onClose, onAdded }: { onClose: () => void
     enabled: !!selected,
     queryFn: ({ signal }) => api<TmdbMetadata>(`/tmdb/tv/${selected!.tmdb_id}`, { signal }),
   })
+  const files = ready ? (preview.data?.files ?? []) : []
+  const rows = files.map((file) => {
+    const episode = episodeEdits[file.name] ?? (file.episode == null ? "" : String(file.episode))
+    const editable = file.kind === "video"
+    const episodeError = !editable
+      ? null
+      : !episode.trim()
+        ? "请确认集数"
+        : !/^(?:\d+(?:\.\d*)?|\.\d+)$/.test(episode.trim()) || !Number.isFinite(Number(episode))
+          ? "集数须为非负数字"
+          : null
+    return {
+      file,
+      episode,
+      filename: basename(file.name),
+      editable,
+      episodeError,
+    }
+  })
+  const fileOverrides: FileOverride[] = rows.flatMap((row) => {
+    if (!row.editable || row.episodeError || Number(row.episode) === row.file.episode) return []
+    return [{ path: row.file.name, episode: Number(row.episode) }]
+  })
+  const hasEpisodeErrors = rows.some((row) => row.episodeError)
+  const example = rows.find((row) => row.editable && !row.episodeError)
   const save = useMutation({
     mutationFn: () =>
       api<Feed>("/collections", {
@@ -74,6 +106,7 @@ export function MagnetCollectionForm({ onClose, onAdded }: { onClose: () => void
           name: name.trim(),
           season: Number(season),
           tmdb: { tmdb_id: selected!.tmdb_id, media_type: "tv" },
+          file_overrides: fileOverrides,
         }),
       }),
     onSuccess: () => {
@@ -86,7 +119,17 @@ export function MagnetCollectionForm({ onClose, onAdded }: { onClose: () => void
   })
   function submit(event: FormEvent) {
     event.preventDefault()
-    if (ready && selected && detail.data && name.trim() && season !== "" && !save.isPending) save.mutate()
+    if (
+      ready &&
+      selected &&
+      detail.data &&
+      !detail.isError &&
+      name.trim() &&
+      season !== "" &&
+      !hasEpisodeErrors &&
+      !save.isPending
+    )
+      save.mutate()
   }
   function resetMagnet(value: string) {
     setMagnet(value)
@@ -94,10 +137,13 @@ export function MagnetCollectionForm({ onClose, onAdded }: { onClose: () => void
     setName("")
     setSearchTerm("")
     setSelected(null)
+    setEpisodeEdits({})
     save.reset()
   }
-  const files = ready ? (preview.data?.files ?? []) : []
-  const episodes = files.filter((file) => file.kind === "video" && file.episode !== null)
+  function editEpisode(path: string, value: string) {
+    setEpisodeEdits((current) => ({ ...current, [path]: value }))
+    save.reset()
+  }
   return (
     <form onSubmit={submit} className="grid gap-4">
       <Field label="磁力链接" hint="单个磁力下载整季合集。解析原始目录后，自动搜索 TMDB。">
@@ -115,6 +161,7 @@ export function MagnetCollectionForm({ onClose, onAdded }: { onClose: () => void
             disabled={!magnet.trim() || parsing || save.isPending}
             onClick={() => {
               save.reset()
+              setEpisodeEdits({})
               setRequested({ magnet: magnet.trim(), started: Date.now() })
             }}
           >
@@ -239,31 +286,69 @@ export function MagnetCollectionForm({ onClose, onAdded }: { onClose: () => void
               disabled={save.isPending}
             />
           </Field>
-          <Field
-            label={`原始文件清单 · ${files.length} 个文件 · ${((preview.data?.size ?? 0) / 1024 ** 3).toFixed(2)} GiB`}
-            hint="按各文件集数整理正片；匹配外挂字幕随正片改名，片头片尾、菜单和特典跳过。无法识别的正片会提示确认。"
-          >
-            <div className="max-h-48 overflow-y-auto rounded-control border border-border p-3 font-mono text-xs leading-5">
-              {files.map((file) => (
-                <div key={file.name} className="mb-1 break-all">
-                  <span className="mr-2 text-muted">
-                    {file.kind === "extra"
-                      ? "跳过"
-                      : file.kind === "video"
-                        ? file.episode === null
-                          ? "待确认"
-                          : `E${String(file.episode).padStart(2, "0")}`
-                        : "附件"}
-                  </span>
-                  {file.name}
-                </div>
-              ))}
+          <div className="grid gap-1.5 text-sm">
+            <p className="font-medium">
+              原始文件清单 · {files.length} 个文件 · {((preview.data?.size ?? 0) / 1024 ** 3).toFixed(2)} GiB
+            </p>
+            <div className="max-h-48 overflow-y-auto rounded-control border border-border">
+              <table aria-label="原始文件清单" className="w-full table-fixed text-left text-xs leading-5">
+                <colgroup>
+                  <col className="w-24" />
+                  <col />
+                </colgroup>
+                <thead>
+                  <tr>
+                    <th scope="col" className="sticky top-0 bg-surface px-3 py-2 font-medium text-muted">
+                      集数
+                    </th>
+                    <th scope="col" className="sticky top-0 bg-surface px-3 py-2 font-medium text-muted">
+                      文件名
+                    </th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-border">
+                  {rows.map((row, index) => (
+                    <tr key={row.file.name}>
+                      <td className="px-3 py-2 align-top text-muted">
+                        {row.editable ? (
+                          <>
+                            <Input
+                              type="text"
+                              inputMode="decimal"
+                              required
+                              placeholder="待确认"
+                              aria-label={`第 ${index + 1} 个文件的集数`}
+                              aria-invalid={Boolean(row.episodeError)}
+                              aria-describedby={row.episodeError ? `${fileListId}-episode-${index}` : undefined}
+                              className="h-8 min-w-0 px-2 font-mono text-xs"
+                              value={row.episode}
+                              disabled={save.isPending}
+                              onChange={(event) => editEpisode(row.file.name, event.target.value)}
+                            />
+                            {row.episodeError && (
+                              <p id={`${fileListId}-episode-${index}`} className="mt-1 text-xs text-danger">
+                                {row.episodeError}
+                              </p>
+                            )}
+                          </>
+                        ) : (
+                          <span className="font-mono">{row.file.kind === "extra" ? "跳过" : "附件"}</span>
+                        )}
+                      </td>
+                      <td className="break-all px-3 py-2 align-top font-mono">{row.filename}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
-          </Field>
-          {episodes.length > 0 && name.trim() && season !== "" && (
+            <p className="text-[13px] text-muted">
+              原文件名仅供核对。修改集数后，按作品名称、季度和集数生成整理名称；匹配字幕随正片改名，片头片尾、菜单和特典跳过。
+            </p>
+          </div>
+          {example && name.trim() && season !== "" && (
             <p className="break-all text-xs leading-5 text-muted">
-              整理示例：{name} \ Season {season.padStart(2, "0")} \ {name} S{season.padStart(2, "0")}E
-              {String(episodes[0].episode).padStart(2, "0")}.mkv
+              整理示例：{name} \ Season {season.padStart(2, "0")} \{" "}
+              {`${name} S${season.padStart(2, "0")}E${String(Number(example.episode)).padStart(2, "0")}${example.filename.slice(example.filename.lastIndexOf("."))}`}
             </p>
           )}
         </>
@@ -279,7 +364,14 @@ export function MagnetCollectionForm({ onClose, onAdded }: { onClose: () => void
         </Button>
         <Button
           disabled={
-            !ready || !selected || !detail.data || detail.isError || !name.trim() || season === "" || save.isPending
+            !ready ||
+            !selected ||
+            !detail.data ||
+            detail.isError ||
+            !name.trim() ||
+            season === "" ||
+            hasEpisodeErrors ||
+            save.isPending
           }
         >
           {save.isPending ? "添加中…" : "添加合集并下载"}

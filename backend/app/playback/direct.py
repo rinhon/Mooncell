@@ -14,10 +14,15 @@ class DirectFileResponse(FileResponse):
 
     def __init__(self, media: ResolvedMedia):
         self.media = media
-        super().__init__(media.path, media_type="video/mp4", headers={
-            "Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff",
-            "ETag": f'"{media.version}"',
-        })
+        super().__init__(
+            media.path,
+            media_type="video/mp4",
+            headers={
+                "Cache-Control": "private, no-store",
+                "X-Content-Type-Options": "nosniff",
+                "ETag": f'"{media.version}"',
+            },
+        )
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         try:

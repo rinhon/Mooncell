@@ -21,6 +21,8 @@ function setup() {
   const navigator = { onLine: true };
   const equal = (left, right) => left && right && left.length === right.length && left.every((value, index) => Object.is(value, right[index]));
   const react = {
+    createContext(defaultValue) { return { defaultValue }; },
+    useContext(context) { return context.defaultValue; },
     useState(initial) {
       const runner = active, index = runner.cursor++;
       if (!runner.slots[index]) runner.slots[index] = { value: typeof initial === "function" ? initial() : initial };
@@ -52,6 +54,7 @@ function setup() {
       };
       if (name === "@/hooks/use-image-recovery") return load("hooks/use-image-recovery.ts");
       if (name === "@/lib/show-artwork") return load("lib/show-artwork.ts");
+      if (name === "@/lib/poster-hover") return load("lib/poster-hover.ts");
       if (name === "@/components/ui/fade-in-image") return load("components/ui/fade-in-image.tsx");
       if (name === "@/lib/api") return { api: path => path };
       if (name === "@/lib/motion") return { spring: { gentle: {} } };
@@ -109,7 +112,7 @@ for (const path of ["components/ui/fade-in-image.tsx", "components/ui/retry-imag
       assert.equal(image.node.props.src, src);
       assert.equal(image.node.props.loading, "eager");
       assert.equal(image.node.props.style.display, "none");
-      assert.equal(image.node.props.style.opacity, 0.32);
+      assert.equal(image.node.props.style.opacity, path.endsWith("fade-in-image.tsx") ? 0 : 0.32);
       assert.equal(image.tree.props.children[1], fallback);
       image.node.props.onError({}); env.flush();
     }
@@ -131,7 +134,8 @@ for (const path of ["components/ui/fade-in-image.tsx", "components/ui/retry-imag
     assert.equal(loads, 0); assert.equal(image.tree.props.children[1], "fallback");
     retry.props.ref({ complete: true, naturalWidth: 100 }); env.flush();
     assert.equal(image.tree.props.children[1], false);
-    assert.equal(image.node.props.style, undefined);
+    if (path.endsWith("fade-in-image.tsx")) assert.equal(image.node.props.style.opacity, 1);
+    else assert.equal(image.node.props.style, undefined);
     retry.props.onLoad({}); retry.props.onLoad({});
     assert.equal(loads, 1); assert.equal(env.timers.size, 0);
     env.window.dispatchEvent(new Event("online")); env.flush();

@@ -12,6 +12,11 @@ const compiled = ts.transpileModule(fs.readFileSync(require.resolve("../src/comp
 const metricsCompiled = ts.transpileModule(fs.readFileSync(require.resolve("../src/lib/player/playback-metrics.ts"), "utf8"), {
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
 }).outputText;
+const subtitleCompiled = ts.transpileModule(fs.readFileSync(require.resolve("../src/lib/player/subtitle-preference.ts"), "utf8"), {
+  compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+}).outputText;
+const subtitleSandbox = { exports: {} };
+vm.runInNewContext(subtitleCompiled, subtitleSandbox);
 
 function session(status = "ready", generation = 1) {
   return {
@@ -21,7 +26,7 @@ function session(status = "ready", generation = 1) {
 }
 
 function setup(options = {}) {
-  const steps = [], engines = [], nativeEngines = [], restarts = [], seeks = [], seekRequests = [], playRequests = [], fallbacks = [], timers = new Map(), videoFrames = new Map();
+  const steps = [], engines = [], nativeEngines = [], restarts = [], seeks = [], seekRequests = [], playRequests = [], fallbacks = [], optionChanges = [], timers = new Map(), videoFrames = new Map();
   let active, timerId = 0, playCalls = 0, frameId = 0, now = 0;
   const metricsSandbox = { exports: {}, window: {}, performance: { now: () => now } };
   vm.runInNewContext(metricsCompiled, metricsSandbox);
@@ -52,7 +57,7 @@ function setup(options = {}) {
       seekRequests.push({ position, settings, resolve });
       return promise;
     },
-    heartbeat() {}, save() {}, options() {},
+    heartbeat() {}, save() {}, options(quality, audioTrack) { optionChanges.push({ quality, audioTrack }); },
     fallback() {
       let resolve;
       const promise = new Promise((yes) => { resolve = yes; });
@@ -112,6 +117,7 @@ function setup(options = {}) {
     "lucide-react": { ArrowLeft: "ArrowLeft", LoaderCircle: "LoaderCircle", Play: "Play", TriangleAlert: "TriangleAlert" },
     "@/hooks/use-playback-session": { usePlaybackSession: () => playback },
     "@/lib/player/types": { clampTime: (value, duration) => Math.min(Math.max(0, value), Math.max(0, duration)) },
+    "@/lib/player/subtitle-preference": subtitleSandbox.exports,
     "@/lib/player/hls-engine": { HlsEngine },
     "@/lib/player/native-engine": { NativeEngine },
     "@/lib/player/playback-metrics": metricsSandbox.exports,
@@ -135,7 +141,7 @@ function setup(options = {}) {
   }
   const props = {
     mediaId: "a",
-    info: { media_id: "a", duration: 600, frame_rate: options.frameRate, supported: true, progress: null, qualities: [720], audio_tracks: [], subtitle_tracks: [] },
+    info: { media_id: "a", duration: 600, frame_rate: options.frameRate, supported: true, progress: null, qualities: [720], audio_tracks: [], subtitle_tracks: options.subtitleTracks ?? [] },
     showTitle: "测试番剧", episodeTitle: "第一集", backTo: "/shows/a", libraryLoading: false,
     onRetryLibrary() {}, onSelectEpisode() {}, fullscreenTarget: { current: null }, autoPlay: true,
     savedPreferences: { volume: 0.8, rate: 1 }, onPreferencesChange() {}, onStartupStepChange: (step) => steps.push(step),
@@ -153,7 +159,12 @@ function setup(options = {}) {
   };
   runner.render();
   return {
-    steps, engines, nativeEngines, restarts, seeks, seekRequests, playRequests, fallbacks, playback, video, runner,
+    steps, engines, nativeEngines, restarts, seeks, seekRequests, playRequests, fallbacks, optionChanges, playback, video, runner,
+    keyboardTarget(openSelect = false) {
+      const target = new sandbox.HTMLElement();
+      target.closest = () => openSelect ? target : null;
+      return target;
+    },
     metrics: () => metricsSandbox.exports.readPlaybackMetrics(),
     advance(milliseconds) { now += milliseconds; },
     frame(mediaTime) {
@@ -583,5 +594,63 @@ test("seeked cannot reuse a deferred frame from a superseded target", async () =
   assert.equal(env.metrics()[1].status, "pending", "Seeked alone is not video-frame evidence");
   env.frame(20); await env.settle();
   assert.equal(env.metrics()[1].status, "completed");
+  env.runner.unmount();
+});
+
+const chineseSubtitles = [
+  { id: "traditional", language: "zh-Hant", title: "繁體", supported: true, url: "/subtitles/tc" },
+  { id: "simplified", language: "zh-Hans", title: "简体", supported: true, url: "/subtitles/sc" },
+];
+
+test("a fresh video defaults to simplified Chinese and immediately supplies the subtitle overlay", async () => {
+  const env = setup({ subtitleTracks: chineseSubtitles });
+  assert.equal(env.node((node) => node.type === "PlayerControls").props.subtitleTrack, "simplified");
+  assert.equal(env.node((node) => node.type === "SubtitleOverlay").props.url, "/subtitles/sc");
+  env.runner.unmount();
+});
+
+test("manual subtitle choice survives quality and audio-track session changes", async () => {
+  const env = setup({ subtitleTracks: chineseSubtitles });
+  env.node((node) => node.type === "PlayerControls").props.onSubtitleTrack("traditional"); await env.settle();
+  env.node((node) => node.type === "PlayerControls").props.onQuality(1080);
+  env.setSession(session("preparing", 2)); await env.settle();
+  env.setSession(session("ready", 2)); await env.settle();
+  assert.equal(env.node((node) => node.type === "PlayerControls").props.subtitleTrack, "traditional");
+  env.node((node) => node.type === "PlayerControls").props.onAudioTrack(2);
+  env.setSession({ ...session("ready", 3), audio_track: 2 }); await env.settle();
+  assert.equal(env.node((node) => node.type === "PlayerControls").props.subtitleTrack, "traditional");
+  assert.equal(env.node((node) => node.type === "SubtitleOverlay").props.url, "/subtitles/tc");
+  assert.equal(env.optionChanges.length, 2);
+  env.runner.unmount();
+});
+
+test("manually disabling subtitles survives retry and a newly opened video defaults to Chinese again", async () => {
+  const env = setup({ subtitleTracks: chineseSubtitles });
+  env.node((node) => node.type === "PlayerControls").props.onSubtitleTrack(""); await env.settle();
+  env.playback.setError("连接中断"); await env.settle();
+  env.node((node) => node.props.className === "player-action-button").props.onClick(); await env.settle();
+  env.setSession(session("ready", 2)); await env.settle();
+  assert.equal(env.node((node) => node.type === "PlayerControls").props.subtitleTrack, "");
+  assert.equal(env.node((node) => node.type === "SubtitleOverlay").props.url, null);
+  env.runner.unmount();
+  const nextVideo = setup({ subtitleTracks: chineseSubtitles });
+  assert.equal(nextVideo.node((node) => node.type === "PlayerControls").props.subtitleTrack, "simplified");
+  nextVideo.runner.unmount();
+});
+
+test("Escape first leaves an open settings dropdown to Radix before closing the settings panel", async () => {
+  const env = setup();
+  env.node((node) => node.type === "PlayerControls").props.onPanelChange("settings"); await env.settle();
+  let prevented = false;
+  const escape = (target) => env.node((node) => node.props.className === "mooncell-player").props.onKeyDownCapture({
+    key: "Escape", target,
+    preventDefault() { prevented = true; }, stopPropagation() {},
+  });
+  escape(env.keyboardTarget(true)); await env.settle();
+  assert.equal(prevented, false);
+  assert.equal(env.node((node) => node.type === "PlayerControls").props.panel, "settings");
+  escape(env.keyboardTarget(false)); await env.settle();
+  assert.equal(prevented, true);
+  assert.equal(env.node((node) => node.type === "PlayerControls").props.panel, null);
   env.runner.unmount();
 });

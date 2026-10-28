@@ -1,4 +1,5 @@
 """TMDB 凭据加密持久化；读取接口仅返回配置状态。"""
+
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -63,5 +64,7 @@ async def get_credentials() -> tuple[str | None, str | None]:
         saved = await session.get(TmdbSettings, 1)
         if saved is None:
             return None, None
-        return (decrypt_secret(saved.encrypted_read_access_token),
-                decrypt_secret(saved.encrypted_api_key))
+        return (
+            decrypt_secret(saved.encrypted_read_access_token),
+            decrypt_secret(saved.encrypted_api_key),
+        )

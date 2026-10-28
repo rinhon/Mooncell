@@ -34,26 +34,55 @@ async def feed_edit_app():
     sessions = async_sessionmaker(engine, expire_on_commit=False)
     async with sessions() as session:
         source = FeedSource(
-            id=1, name="原番名", url="https://example.test/rss", kind="mikan", season=1,
-            excluded_keywords=["720"], active=True, refresh_interval_minutes=5,
-            etag="old-etag", last_modified="old-modified", last_checked_at=datetime.now(UTC),
-            connection_status="healthy", last_error="旧错误",
+            id=1,
+            name="原番名",
+            url="https://example.test/rss",
+            kind="mikan",
+            season=1,
+            excluded_keywords=["720"],
+            active=True,
+            refresh_interval_minutes=5,
+            etag="old-etag",
+            last_modified="old-modified",
+            last_checked_at=datetime.now(UTC),
+            connection_status="healthy",
+            last_error="旧错误",
         )
-        source.show_metadata = ShowMetadata(tmdb_id=123, media_type="tv", title="元数据名称",
-                                            href="https://example.test/metadata")
-        session.add_all([
-            source,
-            FeedSource(id=2, name="另一订阅", url="https://example.test/taken"),
-            DownloaderConfig(id=1, name="qB", kind="qbittorrent", base_url="http://qb.test"),
-        ])
+        source.show_metadata = ShowMetadata(
+            tmdb_id=123, media_type="tv", title="元数据名称", href="https://example.test/metadata"
+        )
+        session.add_all(
+            [
+                source,
+                FeedSource(id=2, name="另一订阅", url="https://example.test/taken"),
+                DownloaderConfig(id=1, name="qB", kind="qbittorrent", base_url="http://qb.test"),
+            ]
+        )
         await session.flush()
-        session.add(FeedItem(id=1, source_id=1, title="已入库发布", fingerprint="first",
-                             download_url="magnet:?xt=urn:btih:" + "a" * 40,
-                             parse_data="{}"))
+        session.add(
+            FeedItem(
+                id=1,
+                source_id=1,
+                title="已入库发布",
+                fingerprint="first",
+                download_url="magnet:?xt=urn:btih:" + "a" * 40,
+                parse_data="{}",
+            )
+        )
         await session.flush()
-        session.add(DownloadJob(id=1, item_id=1, info_hash="a" * 40, downloader_id=1,
-                                target_root="/library", title="原番名", season=1, state="done",
-                                plan='{"existing": true}'))
+        session.add(
+            DownloadJob(
+                id=1,
+                item_id=1,
+                info_hash="a" * 40,
+                downloader_id=1,
+                target_root="/library",
+                title="原番名",
+                season=1,
+                state="done",
+                plan='{"existing": true}',
+            )
+        )
         await session.commit()
 
     async def session_override():
@@ -64,7 +93,9 @@ async def feed_edit_app():
     app.include_router(router)
     app.dependency_overrides[get_session] = session_override
     app.dependency_overrides[require_user] = lambda: User(
-        id=1, username="admin", password_hash="test",
+        id=1,
+        username="admin",
+        password_hash="test",
     )
     yield app, sessions
     await engine.dispose()
@@ -73,9 +104,13 @@ async def feed_edit_app():
 async def test_edit_preserves_metadata_and_schedules_download_season_change(feed_edit_app):
     app, sessions = feed_edit_app
     values = {
-        "name": " 修改后的番名 ", "url": "https://example.test/new-rss", "kind": "standard",
-        "season": 0, "excluded_keywords": [" 繁 ", " RAW ", "raw", ""],
-        "active": False, "refresh_interval_minutes": 30,
+        "name": " 修改后的番名 ",
+        "url": "https://example.test/new-rss",
+        "kind": "standard",
+        "season": 0,
+        "excluded_keywords": [" 繁 ", " RAW ", "raw", ""],
+        "active": False,
+        "refresh_interval_minutes": 30,
     }
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app), base_url="http://test") as c:
         response = await c.patch("/api/v1/feeds/1", json=values)
@@ -106,9 +141,14 @@ async def test_edit_preserves_metadata_and_schedules_download_season_change(feed
         assert migration["previous_season"] == 1
         assert migration["previous_plan"] == {"existing": True}
         assert json.loads(item.parse_data)["season"] == 0
-        assert await session.scalar(select(DomainEvent).where(
-            DomainEvent.event_type == "feed.updated",
-        )) is not None
+        assert (
+            await session.scalar(
+                select(DomainEvent).where(
+                    DomainEvent.event_type == "feed.updated",
+                )
+            )
+            is not None
+        )
 
 
 async def test_partial_edit_and_clear_optional_fields(feed_edit_app):
@@ -128,18 +168,30 @@ async def test_partial_edit_and_clear_optional_fields(feed_edit_app):
             assert (await session.get(FeedSource, 1)).etag is None
 
 
-@pytest.mark.parametrize("values", [
-    {"name": None}, {"name": "   "}, {"url": None}, {"url": "ftp://example.test/rss"},
-    {"kind": None}, {"kind": "invalid"}, {"active": None}, {"excluded_keywords": None},
-    {"excluded_keywords": ["x" * 101]}, {"excluded_keywords": [str(i) for i in range(21)]},
-    {"refresh_interval_minutes": None}, {"refresh_interval_minutes": 0},
-    {"refresh_interval_minutes": 1441}, {"season": -1},
-    {"tmdb": {"tmdb_id": 0, "media_type": "tv"}},
-    {"tmdb": {"tmdb_id": -1, "media_type": "tv"}},
-    {"tmdb": {"tmdb_id": 1.5, "media_type": "tv"}},
-    {"tmdb": {"tmdb_id": 123, "media_type": "invalid"}},
-    {"tmdb": {"tmdb_id": 123}},
-])
+@pytest.mark.parametrize(
+    "values",
+    [
+        {"name": None},
+        {"name": "   "},
+        {"url": None},
+        {"url": "ftp://example.test/rss"},
+        {"kind": None},
+        {"kind": "invalid"},
+        {"active": None},
+        {"excluded_keywords": None},
+        {"excluded_keywords": ["x" * 101]},
+        {"excluded_keywords": [str(i) for i in range(21)]},
+        {"refresh_interval_minutes": None},
+        {"refresh_interval_minutes": 0},
+        {"refresh_interval_minutes": 1441},
+        {"season": -1},
+        {"tmdb": {"tmdb_id": 0, "media_type": "tv"}},
+        {"tmdb": {"tmdb_id": -1, "media_type": "tv"}},
+        {"tmdb": {"tmdb_id": 1.5, "media_type": "tv"}},
+        {"tmdb": {"tmdb_id": 123, "media_type": "invalid"}},
+        {"tmdb": {"tmdb_id": 123}},
+    ],
+)
 async def test_invalid_edit_does_not_modify_subscription(feed_edit_app, values):
     app, sessions = feed_edit_app
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app), base_url="http://test") as c:
@@ -166,8 +218,9 @@ async def test_scheduler_uses_edited_subscription_interval(feed_edit_app, monkey
     app, sessions = feed_edit_app
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app), base_url="http://test") as c:
         for source_id, interval in [(1, 2), (2, 30)]:
-            response = await c.patch(f"/api/v1/feeds/{source_id}",
-                                     json={"refresh_interval_minutes": interval})
+            response = await c.patch(
+                f"/api/v1/feeds/{source_id}", json={"refresh_interval_minutes": interval}
+            )
             assert response.status_code == 200
     async with sessions() as session:
         for source in await session.scalars(select(FeedSource)):
@@ -187,8 +240,11 @@ async def tmdb_edit_app(feed_edit_app, monkeypatch, tmp_path):
 
     async def scrape(tmdb_id, media_type):
         return TmdbMetadata(
-            tmdb_id=tmdb_id, media_type=media_type, title="更新后的 TMDB 标题",
-            episode_count=24, href=f"https://example.test/{media_type}/{tmdb_id}",
+            tmdb_id=tmdb_id,
+            media_type=media_type,
+            title="更新后的 TMDB 标题",
+            episode_count=24,
+            href=f"https://example.test/{media_type}/{tmdb_id}",
         )
 
     monkeypatch.setattr(api, "SessionFactory", sessions)
@@ -196,24 +252,46 @@ async def tmdb_edit_app(feed_edit_app, monkeypatch, tmp_path):
     monkeypatch.setattr(api, "scrape_tmdb", AsyncMock(side_effect=scrape))
     poster = tmp_path / "poster.jpg"
     poster.write_bytes(b"test-image")
-    monkeypatch.setattr(api, "scrape_and_store_artwork", AsyncMock(return_value=ArtworkResult(
-        directory=str(tmp_path), poster_path=str(poster), fanart_path=None,
-        clearlogo_path=None, status="partial", error="缺少图片", scraped_at=datetime.now(UTC),
-    )))
+    monkeypatch.setattr(
+        api,
+        "scrape_and_store_artwork",
+        AsyncMock(
+            return_value=ArtworkResult(
+                directory=str(tmp_path),
+                poster_path=str(poster),
+                fanart_path=None,
+                clearlogo_path=None,
+                status="partial",
+                error="缺少图片",
+                scraped_at=datetime.now(UTC),
+            )
+        ),
+    )
     return app, sessions
 
 
-@pytest.mark.parametrize("source_id, tmdb_id, media_type", [
-    (1, 456, "tv"), (1, 123, "movie"), (2, 789, "tv"),
-])
+@pytest.mark.parametrize(
+    "source_id, tmdb_id, media_type",
+    [
+        (1, 456, "tv"),
+        (1, 123, "movie"),
+        (2, 789, "tv"),
+    ],
+)
 async def test_edit_tmdb_updates_metadata_and_artwork(
-    tmdb_edit_app, source_id, tmdb_id, media_type,
+    tmdb_edit_app,
+    source_id,
+    tmdb_id,
+    media_type,
 ):
     app, sessions = tmdb_edit_app
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app), base_url="http://test") as c:
-        response = await c.patch(f"/api/v1/feeds/{source_id}", json={
-            "tmdb": {"tmdb_id": tmdb_id, "media_type": media_type},
-        })
+        response = await c.patch(
+            f"/api/v1/feeds/{source_id}",
+            json={
+                "tmdb": {"tmdb_id": tmdb_id, "media_type": media_type},
+            },
+        )
         assert response.status_code == 200
         assert response.json()["show_metadata"]["tmdb_id"] == tmdb_id
         assert response.json()["show_metadata"]["media_type"] == media_type
@@ -231,9 +309,13 @@ async def test_edit_tmdb_updates_metadata_and_artwork(
 async def test_same_tmdb_does_not_scrape_again(tmdb_edit_app):
     app, sessions = tmdb_edit_app
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app), base_url="http://test") as c:
-        response = await c.patch("/api/v1/feeds/1", json={
-            "tmdb": {"tmdb_id": 123, "media_type": "tv"}, "active": False,
-        })
+        response = await c.patch(
+            "/api/v1/feeds/1",
+            json={
+                "tmdb": {"tmdb_id": 123, "media_type": "tv"},
+                "active": False,
+            },
+        )
         assert response.status_code == 200
         assert response.json()["show_metadata"]["title"] == "元数据名称"
     api.scrape_tmdb.assert_not_awaited()
@@ -260,9 +342,12 @@ async def test_tmdb_failure_keeps_new_association(tmdb_edit_app, monkeypatch):
     app, sessions = tmdb_edit_app
     monkeypatch.setattr(api, "scrape_tmdb", AsyncMock(side_effect=RuntimeError("TMDB 离线")))
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app), base_url="http://test") as c:
-        response = await c.patch("/api/v1/feeds/1", json={
-            "tmdb": {"tmdb_id": 456, "media_type": "tv"},
-        })
+        response = await c.patch(
+            "/api/v1/feeds/1",
+            json={
+                "tmdb": {"tmdb_id": 456, "media_type": "tv"},
+            },
+        )
         assert response.status_code == 200
     async with sessions() as session:
         source = await session.get(FeedSource, 1)
@@ -288,9 +373,12 @@ async def test_old_scrape_does_not_overwrite_edited_tmdb(tmdb_edit_app, monkeypa
 
     monkeypatch.setattr(api, "scrape_tmdb", edit_during_scrape)
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app), base_url="http://test") as c:
-        response = await c.patch("/api/v1/feeds/1", json={
-            "tmdb": {"tmdb_id": 456, "media_type": "tv"},
-        })
+        response = await c.patch(
+            "/api/v1/feeds/1",
+            json={
+                "tmdb": {"tmdb_id": 456, "media_type": "tv"},
+            },
+        )
         assert response.status_code == 200
     async with sessions() as session:
         source = await session.get(FeedSource, 1)

@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import re
 from datetime import datetime
-from typing import Literal
+from pathlib import PureWindowsPath
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator, model_validator
 
@@ -143,8 +145,14 @@ class FeedUpdate(BaseModel):
     @classmethod
     def reject_null_fields(cls, values):
         if isinstance(values, dict):
-            for key in ("name", "url", "kind", "active", "refresh_interval_minutes",
-                        "excluded_keywords"):
+            for key in (
+                "name",
+                "url",
+                "kind",
+                "active",
+                "refresh_interval_minutes",
+                "excluded_keywords",
+            ):
                 if key in values and values[key] is None:
                     raise ValueError(f"{key} 不能为 null")
         return values
@@ -182,6 +190,16 @@ class FeedRead(BaseModel):
     show_metadata: ShowMetadataRead | None = None
 
 
+class FeedBatchStopRequest(BaseModel):
+    source_ids: list[Annotated[int, Field(gt=0, strict=True)]] = Field(min_length=1, max_length=100)
+
+
+class FeedBatchStopResult(BaseModel):
+    items: list[FeedRead]
+    stopped_count: int
+    already_stopped_count: int
+
+
 class FeedInspectRequest(BaseModel):
     url: HttpUrl
 
@@ -191,6 +209,47 @@ class FeedInspectResult(BaseModel):
     name: str
     kind: Literal["mikan", "standard"]
     entries: int
+
+
+class CollectionFileOverride(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    path: str = Field(min_length=1, max_length=4096)
+    episode: float | None = Field(default=None, ge=0, allow_inf_nan=False, strict=True)
+    # 兼容此前持久化的覆盖记录；新建合集不接受改名，整理计划也不再采用此值。
+    filename: str | None = Field(default=None, min_length=1, max_length=255)
+
+    @field_validator("path")
+    @classmethod
+    def validate_path(cls, value):
+        normalized = value.replace("\\", "/")
+        if (
+            PureWindowsPath(value).drive
+            or ":" in normalized
+            or re.search(r"[\x00-\x1f\x7f]", normalized)
+            or any(part in {"", ".", ".."} for part in normalized.split("/"))
+        ):
+            raise ValueError("文件路径无效，请重新解析磁力")
+        return normalized
+
+    @field_validator("filename")
+    @classmethod
+    def validate_filename(cls, value):
+        if value is not None and (
+            value.startswith(".")
+            or value.rstrip(" .") != value
+            or re.search(r'[\\/:<>"|?*\x00-\x1f\x7f]', value)
+            or PureWindowsPath(value).is_reserved()
+            or len(value.encode("utf-8")) > 255
+        ):
+            raise ValueError("文件名不能包含路径、保留名称或无效字符")
+        return value
+
+    @model_validator(mode="after")
+    def require_change(self):
+        if self.episode is None and self.filename is None:
+            raise ValueError("请填写要修改的集数")
+        return self
 
 
 class ParsedRelease(BaseModel):
@@ -214,6 +273,7 @@ class ParsedRelease(BaseModel):
     confidence: float = Field(ge=0, le=1)
     evidence: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
+    collection_file_overrides: list[CollectionFileOverride] = Field(default_factory=list)
 
 
 class ParseRequest(BaseModel):
@@ -331,9 +391,7 @@ class DownloaderUpdate(BaseModel):
     secret: str | None = Field(default=None, max_length=500)
     verify_tls: bool = True
     active: bool = True
-    organize_strategy: Literal["downloader_managed", "hardlink", "copy"] = (
-        "downloader_managed"
-    )
+    organize_strategy: Literal["downloader_managed", "hardlink", "copy"] = "downloader_managed"
 
     @field_validator("base_url")
     @classmethod

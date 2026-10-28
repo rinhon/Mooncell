@@ -3,6 +3,7 @@ import { ChevronLeft, ChevronRight } from "lucide-react"
 import { PageHeading } from "@/components/page-heading"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
+import { Masonry } from "@/components/ui/masonry"
 import "@/pages/calendar.css"
 
 export const calendarWeekdays = ["周一", "周二", "周三", "周四", "周五", "周六", "周日", "其他放送"]
@@ -76,7 +77,7 @@ export function CalendarSkeleton({
             ))}
           </div>
         )}
-        <div className="calendar-items calendar-day-grid">
+        <Masonry className="calendar-items calendar-day-grid" extraHeight={96} animate={false}>
           {Array.from({ length: count }, (_, index) => (
             <div className="calendar-item" key={index}>
               <div className="calendar-artwork">
@@ -92,7 +93,7 @@ export function CalendarSkeleton({
               </div>
             </div>
           ))}
-        </div>
+        </Masonry>
       </div>
     </div>
   )
@@ -103,10 +104,12 @@ export function CalendarLoading({
   now = new Date(),
   season,
   dayValue,
+  tabs,
 }: {
   now?: Date
   season?: string
   dayValue?: string
+  tabs?: ReactNode
 }) {
   return (
     <>
@@ -128,7 +131,8 @@ export function CalendarLoading({
           </>
         }
       />
-      <CalendarSkeleton dayValue={dayValue ?? String((now.getDay() + 6) % 7)} />
+      {tabs}
+      <CalendarSkeleton dayValue={dayValue ?? String((now.getDay() + 6) % 7)} showTabs={!tabs} />
     </>
   )
 }

@@ -1,4 +1,5 @@
 """通过 TMDB 官方 v3 API 搜索作品、读取元数据与图片。"""
+
 import asyncio
 from dataclasses import dataclass
 from typing import Literal
@@ -66,34 +67,42 @@ async def _get_json(path: str, params: dict | None = None) -> dict:
 
 
 async def search_tmdb(query: str) -> list[TmdbCandidate]:
-    data = await _get_json("/search/multi", {"query": query, "language": settings.tmdb_language,
-                                           "include_adult": "false"})
+    data = await _get_json(
+        "/search/multi",
+        {"query": query, "language": settings.tmdb_language, "include_adult": "false"},
+    )
     results = []
     for item in data.get("results", []):
         media_type = item.get("media_type")
         if media_type not in ("tv", "movie"):
             continue
-        results.append(TmdbCandidate(
-            tmdb_id=item["id"], media_type=media_type,
-            title=item.get("name") or item.get("title") or "",
-            original_title=item.get("original_name") or item.get("original_title"),
-            release_date=item.get("first_air_date") or item.get("release_date") or None,
-            overview=item.get("overview") or None, poster_url=image_url(item.get("poster_path")),
-            href=f"{settings.tmdb_base_url}/{media_type}/{item['id']}",
-        ))
+        results.append(
+            TmdbCandidate(
+                tmdb_id=item["id"],
+                media_type=media_type,
+                title=item.get("name") or item.get("title") or "",
+                original_title=item.get("original_name") or item.get("original_title"),
+                release_date=item.get("first_air_date") or item.get("release_date") or None,
+                overview=item.get("overview") or None,
+                poster_url=image_url(item.get("poster_path")),
+                href=f"{settings.tmdb_base_url}/{media_type}/{item['id']}",
+            )
+        )
     return results
 
 
 def parse_tmdb_detail(data: dict, tmdb_id: int, media_type: MediaType) -> TmdbMetadata:
     return TmdbMetadata(
-        tmdb_id=tmdb_id, media_type=media_type,
+        tmdb_id=tmdb_id,
+        media_type=media_type,
         title=data.get("name" if media_type == "tv" else "title") or "",
         overview=data.get("overview") or None,
         poster_url=image_url(data.get("poster_path")),
         release_date=data.get("first_air_date" if media_type == "tv" else "release_date") or None,
         genres=[item["name"] for item in data.get("genres", [])],
         episode_count=data.get("number_of_episodes") if media_type == "tv" else None,
-        rating=data.get("vote_average"), vote_count=data.get("vote_count"),
+        rating=data.get("vote_average"),
+        vote_count=data.get("vote_count"),
         href=f"{settings.tmdb_base_url}/{media_type}/{tmdb_id}",
     )
 
@@ -107,16 +116,22 @@ def select_image(images: list[dict]) -> str | None:
     language = settings.tmdb_language.split("-")[0]
     preferences = list(dict.fromkeys([language, None, "en", "ja"]))
     usable = [item for item in images if item.get("file_path")]
-    usable.sort(key=lambda item: (
-        preferences.index(item.get("iso_639_1"))
-        if item.get("iso_639_1") in preferences else len(preferences),
-        -(item.get("vote_average") or 0), -(item.get("width") or 0),
-    ))
+    usable.sort(
+        key=lambda item: (
+            preferences.index(item.get("iso_639_1"))
+            if item.get("iso_639_1") in preferences
+            else len(preferences),
+            -(item.get("vote_average") or 0),
+            -(item.get("width") or 0),
+        )
+    )
     return image_url(usable[0]["file_path"]) if usable else None
 
 
 async def scrape_tmdb_artwork_urls(
-    tmdb_id: int, media_type: MediaType, poster_url: str | None,
+    tmdb_id: int,
+    media_type: MediaType,
+    poster_url: str | None,
 ) -> TmdbArtworkUrls:
     # 不传 language：取得全部语言图片，在本地优先中文，其次无文字、英文和日文。
     data = await _get_json(f"/{media_type}/{tmdb_id}/images")

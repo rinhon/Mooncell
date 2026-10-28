@@ -68,6 +68,9 @@
   --fs-small: 0.8125rem;
   --fs-body: 0.875rem;
   --fs-title: 1.375rem;
+  --poster-grid-columns: repeat(auto-fill, minmax(160px, 1fr));
+  --poster-grid-gap: 20px;
+  --poster-aspect-ratio: 3 / 4;
   --font-mono: "Cascadia Code", "Consolas", monospace;
   --font-display: "Bahnschrift", "Segoe UI", sans-serif;
   --border: rgba(237, 240, 238, 0.18);
@@ -573,22 +576,10 @@ button {
   border-color: var(--border);
 }
 .show-card-grid {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  gap: 20px;
+  --poster-grid-min-width: 400px;
 }
 .show-card-grid > * {
   min-width: 0;
-}
-@media (min-width: 640px) {
-  .show-card-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-}
-@media (min-width: 1280px) {
-  .show-card-grid {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
 }
 .feed-card {
   grid-template-columns: minmax(0, 1fr);
@@ -656,21 +647,16 @@ button {
 .calendar-week-tab[hidden] {
   display: none;
 }
-.calendar-week-tabs .overflow-trigger[data-state="active"] {
-  border-bottom: 2px solid var(--accent);
-}
 .calendar-skeleton-tabs {
   flex-wrap: wrap;
 }
 .show-poster-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 18px;
+  --poster-grid-min-width: 250px;
 }
 .show-poster-tile {
   position: relative;
   display: block;
-  aspect-ratio: 2 / 3;
+  aspect-ratio: var(--poster-aspect-ratio);
   min-width: 0;
   overflow: hidden;
   border-radius: var(--radius-panel);
@@ -706,20 +692,10 @@ a.show-poster-tile:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 4px;
 }
-@media (min-width: 640px) {
-  .show-poster-grid {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 20px;
-  }
-}
-@media (min-width: 900px) {
-  .show-poster-grid {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-  }
-}
-@media (min-width: 1280px) {
-  .show-poster-grid {
-    grid-template-columns: repeat(5, minmax(0, 1fr));
+@media (max-width: 480px) {
+  :root {
+    --poster-grid-columns: repeat(2, minmax(0, 1fr));
+    --poster-grid-gap: 12px;
   }
 }
 .show-row-list {

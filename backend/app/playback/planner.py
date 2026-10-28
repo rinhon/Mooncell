@@ -25,8 +25,12 @@ class PlaybackPlan:
 
 
 def avc_codec(profile: str | None, level: int | None) -> str | None:
-    profile_id = {"Constrained Baseline": "42E0", "Baseline": "4200", "Main": "4D00",
-                  "High": "6400"}.get(profile or "")
+    profile_id = {
+        "Constrained Baseline": "42E0",
+        "Baseline": "4200",
+        "Main": "4D00",
+        "High": "6400",
+    }.get(profile or "")
     if profile_id is None or level is None or not 9 <= level <= 52:
         return None
     return f"avc1.{profile_id}{level:02X}"
@@ -40,19 +44,27 @@ def set_playback_mime_types(info: PlaybackInfo) -> None:
     # 重封装时可将不兼容音轨转成 AAC，因此 HLS 类型独立于原文件音频。
     audio_suffix = ", mp4a.40.2" if info.audio_tracks else ""
     info.hls_mime_type = f'video/mp4; codecs="{codec}{audio_suffix}"'
-    if ("mp4" in info.container.split(",")
-            and info.container_brand in {"isom", "iso2", "avc1", "mp41", "mp42", "M4V "}
-            and abs(info.source_start) < 0.01
-            and abs(info.video_start) < 0.1
-            and all(track.codec == "aac" and track.profile == "LC"
-                    and (track.channels or 0) <= 2 for track in info.audio_tracks)):
+    if (
+        "mp4" in info.container.split(",")
+        and info.container_brand in {"isom", "iso2", "avc1", "mp41", "mp42", "M4V "}
+        and abs(info.source_start) < 0.01
+        and abs(info.video_start) < 0.1
+        and all(
+            track.codec == "aac" and track.profile == "LC" and (track.channels or 0) <= 2
+            for track in info.audio_tracks
+        )
+    ):
         info.native_mime_type = info.hls_mime_type
 
 
 def plan_playback(
-    info: PlaybackInfo, quality: int, audio_track: int | None,
+    info: PlaybackInfo,
+    quality: int,
+    audio_track: int | None,
     capabilities: ClientPlaybackCapabilities | None = None,
-    *, force_transcode: bool = False, max_bitrate: int | None = None,
+    *,
+    force_transcode: bool = False,
+    max_bitrate: int | None = None,
 ) -> PlaybackPlan:
     if quality != 0 and quality not in info.qualities:
         raise MediaError("invalid_quality", "选择的清晰度不可用", 422)
@@ -62,11 +74,18 @@ def plan_playback(
         raise MediaError("invalid_bitrate", "码率上限必须介于 256000 和 200000000 bit/s", 422)
     output_quality = info.qualities[-1] if quality == 0 else quality
     # 为 AAC 及 TS 封装保留预算；即使无音轨也沿用保守预算，不能用总上限直接作视频上限。
-    video_bitrate = (min(6_000_000, max_bitrate * 9 // 10 - AUDIO_BITRATE)
-                     if max_bitrate is not None else None)
-    baseline = PlaybackPlan("transcode", "按客户端能力转码", "application/vnd.apple.mpegurl",
-                            quality, output_quality, video_bitrate=video_bitrate,
-                            total_bitrate=max_bitrate)
+    video_bitrate = (
+        min(6_000_000, max_bitrate * 9 // 10 - AUDIO_BITRATE) if max_bitrate is not None else None
+    )
+    baseline = PlaybackPlan(
+        "transcode",
+        "按客户端能力转码",
+        "application/vnd.apple.mpegurl",
+        quality,
+        output_quality,
+        video_bitrate=video_bitrate,
+        total_bitrate=max_bitrate,
+    )
     if capabilities is None or force_transcode:
         return baseline
     if quality != 0 and quality < info.video_height:
@@ -77,16 +96,36 @@ def plan_playback(
     if selected is None and info.audio_tracks:
         selected = info.audio_tracks[0]
     # HTML video 的文件内音轨切换没有统一保证。仅默认/首轨直放，其余走显式 map。
-    browser_audio = next((track for track in info.audio_tracks if track.default),
-                         info.audio_tracks[0] if info.audio_tracks else None)
+    browser_audio = next(
+        (track for track in info.audio_tracks if track.default),
+        info.audio_tracks[0] if info.audio_tracks else None,
+    )
     selectable = selected is None or (selected == browser_audio and len(info.audio_tracks) <= 1)
-    if (info.native_mime_type and info.native_mime_type in capabilities.native_mime_types
-            and selectable):
-        return PlaybackPlan("direct", "客户端支持原文件格式", "video/mp4",
-                            quality, output_quality, copy_audio=True, total_bitrate=max_bitrate)
+    if (
+        info.native_mime_type
+        and info.native_mime_type in capabilities.native_mime_types
+        and selectable
+    ):
+        return PlaybackPlan(
+            "direct",
+            "客户端支持原文件格式",
+            "video/mp4",
+            quality,
+            output_quality,
+            copy_audio=True,
+            total_bitrate=max_bitrate,
+        )
     if info.hls_mime_type and info.hls_mime_type in capabilities.hls_mime_types:
-        copy_audio = selected is None or (selected.codec == "aac" and selected.profile == "LC"
-                                         and (selected.channels or 0) <= 2)
-        return PlaybackPlan("remux", "复制视频并适配容器或音轨", baseline.mime_type,
-                            quality, output_quality, copy_audio, total_bitrate=max_bitrate)
+        copy_audio = selected is None or (
+            selected.codec == "aac" and selected.profile == "LC" and (selected.channels or 0) <= 2
+        )
+        return PlaybackPlan(
+            "remux",
+            "复制视频并适配容器或音轨",
+            baseline.mime_type,
+            quality,
+            output_quality,
+            copy_audio,
+            total_bitrate=max_bitrate,
+        )
     return baseline

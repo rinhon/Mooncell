@@ -1,11 +1,21 @@
-import { BrowserRouter, Navigate, Route, Routes, useLocation } from "react-router-dom"
-import { lazy, Suspense, type ReactNode } from "react"
+import {
+  BrowserRouter,
+  Navigate,
+  Outlet,
+  Route,
+  Routes,
+  useLocation,
+  useNavigate,
+  type Location,
+} from "react-router-dom"
+import { lazy, Suspense, useEffect, useRef, useState, type ReactNode } from "react"
 import { useQuery } from "@tanstack/react-query"
 import { LoaderCircle, MoonStar } from "lucide-react"
 import { api, type AuthStatus } from "@/lib/api"
 import { useEvents } from "@/hooks/use-events"
 import { DEMO_MODE } from "@/hooks/use-demo-data"
 import { AppShell } from "@/components/app-shell"
+import { PageLoadBoundary } from "@/components/page-load-boundary"
 import { Skeleton } from "@/components/ui/skeleton"
 import { CalendarLoading } from "@/components/calendar-loading"
 import { FeedsLoading } from "@/components/feeds-loading"
@@ -14,11 +24,13 @@ import { ShowsLoading } from "@/components/shows-loading"
 import { DashboardLoading } from "@/components/dashboard-loading"
 import { DownloadsLoading } from "@/components/downloads-loading"
 import { PlaybackLoading } from "@/components/player/playback-loading"
+import { restoreReviewFocus } from "@/components/review-link"
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 
 const DashboardPage = lazy(() => import("@/pages/dashboard").then((module) => ({ default: module.DashboardPage })))
 const AuthScreen = lazy(() => import("@/components/auth-screen").then((module) => ({ default: module.AuthScreen })))
 const FeedsPage = lazy(() => import("@/pages/feeds").then((module) => ({ default: module.FeedsPage })))
-const ReviewPage = lazy(() => import("@/pages/review").then((module) => ({ default: module.ReviewPage })))
+const ReviewDialog = lazy(() => import("@/pages/review").then((module) => ({ default: module.ReviewDialog })))
 const SettingsPage = lazy(() => import("@/pages/settings").then((module) => ({ default: module.SettingsPage })))
 const ShowDetailPage = lazy(() => import("@/pages/show-detail").then((module) => ({ default: module.ShowDetailPage })))
 const ShowsPage = lazy(() => import("@/pages/shows").then((module) => ({ default: module.ShowsPage })))
@@ -36,9 +48,32 @@ function ApplicationFrame({ children }: { children: ReactNode }) {
   return (
     <>
       <div className="ambient-background" aria-hidden="true" />
-      <AppShell>{children}</AppShell>
+      <AppShell>
+        <PageLoadBoundary key={location.pathname} fallback={<RouteLoading />}>
+          {children}
+        </PageLoadBoundary>
+      </AppShell>
     </>
   )
+}
+
+function RouteLoading() {
+  const location = useLocation()
+  if (location.pathname === "/") return <DashboardLoading />
+  if (location.pathname === "/shows") {
+    let view = location.state?.restoreShowList?.view
+    try {
+      view ??= localStorage.getItem("mooncell-shows-view")
+    } catch {
+      /* 存储不可用时使用默认卡片骨架。 */
+    }
+    return <ShowsLoading view={view === "list" || view === "posters" ? view : "cards"} />
+  }
+  if (/^\/shows\/[^/]+\/?$/.test(location.pathname)) return <ShowDetailLoading />
+  if (location.pathname === "/downloads") return <DownloadsLoading />
+  if (location.pathname === "/calendar") return <CalendarLoading />
+  if (location.pathname === "/feeds") return <FeedsLoading />
+  return <PageSkeleton />
 }
 
 function PageSkeleton() {
@@ -49,6 +84,127 @@ function PageSkeleton() {
       <Skeleton className="h-4 w-3/4" />
       <Skeleton className="h-72 w-full" />
     </div>
+  )
+}
+
+function ApplicationRoutes() {
+  const location = useLocation()
+  const navigate = useNavigate()
+  const reviewOpen = location.pathname === "/review"
+  const reviewOpenRef = useRef(reviewOpen)
+  reviewOpenRef.current = reviewOpen
+  const candidate = location.state?.backgroundLocation as Location | undefined
+  const backgroundLocation = candidate?.pathname && candidate.pathname !== "/review" ? candidate : undefined
+  const [reviewMounted, setReviewMounted] = useState(reviewOpen)
+  useEffect(() => {
+    if (reviewOpen) setReviewMounted(true)
+  }, [reviewOpen])
+  function changeReviewOpen(open: boolean) {
+    if (open || !reviewOpen) return
+    if (backgroundLocation) navigate(-1)
+    else navigate("/", { replace: true })
+  }
+  return (
+    <>
+      <Routes location={reviewOpen ? (backgroundLocation ?? "/") : location}>
+        <Route
+          element={
+            <ApplicationFrame>
+              <Suspense fallback={<PageSkeleton />}>
+                <Outlet />
+              </Suspense>
+            </ApplicationFrame>
+          }
+        >
+          <Route
+            path="/watch/:mediaId"
+            element={
+              <Suspense fallback={<PlaybackLoading />}>
+                <WatchPage />
+              </Suspense>
+            }
+          />
+          <Route
+            path="/"
+            element={
+              <Suspense fallback={<DashboardLoading />}>
+                <DashboardPage />
+              </Suspense>
+            }
+          />
+          <Route
+            path="/shows"
+            element={
+              <Suspense fallback={<ShowsLoading />}>
+                <ShowsPage />
+              </Suspense>
+            }
+          />
+          <Route
+            path="/shows/:sourceId"
+            element={
+              <Suspense fallback={<ShowDetailLoading />}>
+                <ShowDetailPage />
+              </Suspense>
+            }
+          />
+          <Route
+            path="/downloads"
+            element={
+              <Suspense fallback={<DownloadsLoading />}>
+                <DownloadsPage />
+              </Suspense>
+            }
+          />
+          <Route path="/organizer" element={OrganizerPage ? <OrganizerPage /> : <Navigate to="/downloads" replace />} />
+          <Route
+            path="/calendar"
+            element={
+              <Suspense fallback={<CalendarLoading />}>
+                <CalendarPage />
+              </Suspense>
+            }
+          />
+          <Route
+            path="/feeds"
+            element={
+              <Suspense fallback={<FeedsLoading />}>
+                <FeedsPage />
+              </Suspense>
+            }
+          />
+          <Route path="/parser" element={<Navigate to="/settings" replace />} />
+          <Route path="/downloaders" element={<Navigate to="/settings" replace />} />
+          <Route path="/settings" element={<SettingsPage />} />
+          <Route path="/logs" element={<LogsPage />} />
+        </Route>
+      </Routes>
+      {(reviewOpen || reviewMounted) && (
+        <Suspense
+          fallback={
+            <Dialog open={reviewOpen} onOpenChange={changeReviewOpen}>
+              <DialogContent
+                className="max-w-6xl"
+                onCloseAutoFocus={(event) => {
+                  if (reviewOpenRef.current) event.preventDefault()
+                  else restoreReviewFocus(event)
+                }}
+              >
+                <DialogHeader>
+                  <DialogTitle>审核收件箱</DialogTitle>
+                  <DialogDescription>确认发布信息与文件集数后继续下载。</DialogDescription>
+                </DialogHeader>
+                <p role="status" className="text-sm text-muted">
+                  正在加载审核条目…
+                </p>
+              </DialogContent>
+            </Dialog>
+          }
+        >
+          <ReviewDialog open={reviewOpen} onOpenChange={changeReviewOpen} onCloseAutoFocus={restoreReviewFocus} />
+        </Suspense>
+      )}
+    </>
   )
 }
 
@@ -90,77 +246,7 @@ export default function App() {
     )
   return (
     <BrowserRouter>
-      <ApplicationFrame>
-        <Suspense fallback={<PageSkeleton />}>
-          <Routes>
-            <Route
-              path="/watch/:mediaId"
-              element={
-                <Suspense fallback={<PlaybackLoading />}>
-                  <WatchPage />
-                </Suspense>
-              }
-            />
-            <Route
-              path="/"
-              element={
-                <Suspense fallback={<DashboardLoading />}>
-                  <DashboardPage />
-                </Suspense>
-              }
-            />
-            <Route
-              path="/shows"
-              element={
-                <Suspense fallback={<ShowsLoading />}>
-                  <ShowsPage />
-                </Suspense>
-              }
-            />
-            <Route
-              path="/shows/:sourceId"
-              element={
-                <Suspense fallback={<ShowDetailLoading />}>
-                  <ShowDetailPage />
-                </Suspense>
-              }
-            />
-            <Route
-              path="/downloads"
-              element={
-                <Suspense fallback={<DownloadsLoading />}>
-                  <DownloadsPage />
-                </Suspense>
-              }
-            />
-            <Route
-              path="/organizer"
-              element={OrganizerPage ? <OrganizerPage /> : <Navigate to="/downloads" replace />}
-            />
-            <Route
-              path="/calendar"
-              element={
-                <Suspense fallback={<CalendarLoading />}>
-                  <CalendarPage />
-                </Suspense>
-              }
-            />
-            <Route
-              path="/feeds"
-              element={
-                <Suspense fallback={<FeedsLoading />}>
-                  <FeedsPage />
-                </Suspense>
-              }
-            />
-            <Route path="/parser" element={<Navigate to="/settings" replace />} />
-            <Route path="/downloaders" element={<Navigate to="/settings" replace />} />
-            <Route path="/review" element={<ReviewPage />} />
-            <Route path="/settings" element={<SettingsPage />} />
-            <Route path="/logs" element={<LogsPage />} />
-          </Routes>
-        </Suspense>
-      </ApplicationFrame>
+      <ApplicationRoutes />
     </BrowserRouter>
   )
 }

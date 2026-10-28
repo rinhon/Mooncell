@@ -1,5 +1,6 @@
 import { Check, CheckCircle2, CircleAlert, Clock3, LoaderCircle, XCircle } from "lucide-react"
 import { Link } from "react-router-dom"
+import { ReviewLink } from "@/components/review-link"
 import type { BackgroundOperation } from "@/lib/api"
 
 const labels = {
@@ -92,9 +93,9 @@ export function NotificationItem({
           </Link>
         )}
         {item.source_id && item.kind === "review_required" && item.status === "blocked" && (
-          <Link to="/review" onClick={follow}>
+          <ReviewLink to="/review" onClick={follow}>
             前往审核
-          </Link>
+          </ReviewLink>
         )}
         {item.source_id ? (
           <Link to={href} onClick={follow}>

@@ -41,7 +41,8 @@ def test_multiple_videos_require_individual_episodes_and_reject_collisions():
     files = [{"name": f"Batch/Example - {ep} [1080p].mkv"} for ep in [1, 2]]
     plan = build_plan(files, "番名", 3, RELEASE)
     assert [f["new"] for f in plan["files"]] == [
-        "Season 03/番名 S03E01.mkv", "Season 03/番名 S03E02.mkv",
+        "Season 03/番名 S03E01.mkv",
+        "Season 03/番名 S03E02.mkv",
     ]
     with pytest.raises(ValueError, match="集数"):
         build_plan([{"name": "a.mkv"}, {"name": "b.mkv"}], "番名", 1, RELEASE)
@@ -70,18 +71,27 @@ async def database(monkeypatch):
         config = DownloaderConfig(name="qB", kind="qbittorrent", base_url="http://qb.test")
         session.add_all([source, config, LibrarySettings(id=1, library_root="/media")])
         await session.flush()
-        session.add(FeedItem(source_id=source.id, title=RELEASE.raw_title,
-                             download_url=f"magnet:?xt=urn:btih:{HASH}", fingerprint="first",
-                             parse_data=RELEASE.model_dump_json()))
+        session.add(
+            FeedItem(
+                source_id=source.id,
+                title=RELEASE.raw_title,
+                download_url=f"magnet:?xt=urn:btih:{HASH}",
+                fingerprint="first",
+                parse_data=RELEASE.model_dump_json(),
+            )
+        )
         await session.commit()
     yield sessions
     await engine.dispose()
 
 
-@pytest.mark.parametrize(("error", "reason"), [
-    (httpx.ReadError(""), "读取下载器响应失败"),
-    (httpx.ConnectError("All connection attempts failed"), "无法连接下载器"),
-])
+@pytest.mark.parametrize(
+    ("error", "reason"),
+    [
+        (httpx.ReadError(""), "读取下载器响应失败"),
+        (httpx.ConnectError("All connection attempts failed"), "无法连接下载器"),
+    ],
+)
 async def test_download_network_failure_is_saved_in_chinese(database, monkeypatch, error, reason):
     async def fail_job(*args):
         raise error
@@ -94,8 +104,11 @@ async def test_download_network_failure_is_saved_in_chinese(database, monkeypatc
     await download_queue.process_queue()
     async with database() as session:
         job = await session.scalar(select(DownloadJob))
-        events = list(await session.scalars(select(DomainEvent).where(
-            DomainEvent.event_type == "download.failed")))
+        events = list(
+            await session.scalars(
+                select(DomainEvent).where(DomainEvent.event_type == "download.failed")
+            )
+        )
         assert reason in job.last_error
         assert type(error).__name__ in job.last_error
         assert len(events) == 1, "重复失败不应重复写入相同日志"
@@ -219,18 +232,31 @@ async def test_accepted_torrent_with_lost_response_is_not_added_twice(database, 
         if endpoint == "login":
             return httpx.Response(200, text="Ok.")
         if endpoint == "info":
-            return httpx.Response(200, json=[{
-                "save_path": f"/media/.mooncell/{HASH}", "state": "metaDL",
-            }] if accepted else [])
+            return httpx.Response(
+                200,
+                json=[
+                    {
+                        "save_path": f"/media/.mooncell/{HASH}",
+                        "state": "metaDL",
+                    }
+                ]
+                if accepted
+                else [],
+            )
         assert endpoint == "add"
         accepted = True
         additions += 1
         raise httpx.ReadTimeout("response lost", request=request)
 
     original_client = httpx.AsyncClient
-    monkeypatch.setattr(download_queue.httpx, "AsyncClient", lambda **kwargs: original_client(
-        **kwargs, transport=httpx.MockTransport(handle),
-    ))
+    monkeypatch.setattr(
+        download_queue.httpx,
+        "AsyncClient",
+        lambda **kwargs: original_client(
+            **kwargs,
+            transport=httpx.MockTransport(handle),
+        ),
+    )
     async with database() as session:
         await download_queue.enqueue_source(session, await session.get(FeedSource, 1))
         await session.commit()
@@ -267,11 +293,14 @@ async def test_http_torrent_is_fetched_with_proxy_and_uploaded(database, monkeyp
         assert endpoint == "add"
         assert request.headers["content-type"].startswith("multipart/form-data;")
         mime = BytesParser(policy=policy.default).parsebytes(
-            b"Content-Type: " + request.headers["content-type"].encode() + b"\r\n\r\n"
+            b"Content-Type: "
+            + request.headers["content-type"].encode()
+            + b"\r\n\r\n"
             + request.content
         )
-        parts = {part.get_param("name", header="content-disposition"): part
-                 for part in mime.iter_parts()}
+        parts = {
+            part.get_param("name", header="content-disposition"): part for part in mime.iter_parts()
+        }
         assert "urls" not in parts, "不能再要求 qB 自行连接种子源站"
         assert parts["torrents"].get_payload(decode=True) == torrent
         assert parts["torrents"].get_filename() == f"{HASH}.torrent"
@@ -321,9 +350,13 @@ async def test_http_torrent_is_fetched_with_proxy_and_uploaded(database, monkeyp
 
 async def test_refresh_304_enqueues_existing_records_idempotently(database, monkeypatch):
     original_client = httpx.AsyncClient
-    monkeypatch.setattr(rss_service.httpx, "AsyncClient", lambda **kwargs: original_client(
-        transport=httpx.MockTransport(lambda request: httpx.Response(304)),
-    ))
+    monkeypatch.setattr(
+        rss_service.httpx,
+        "AsyncClient",
+        lambda **kwargs: original_client(
+            transport=httpx.MockTransport(lambda request: httpx.Response(304)),
+        ),
+    )
     async with database() as session:
         source = await session.get(FeedSource, 1)
         for _ in range(2):
@@ -338,7 +371,11 @@ async def test_refresh_304_enqueues_existing_records_idempotently(database, monk
 @pytest.mark.parametrize("transient_failure", [False, True])
 @pytest.mark.parametrize("bilingual", [False, True])
 async def test_queue_add_rename_move_and_restart(
-    database, monkeypatch, wrapper, transient_failure, bilingual,
+    database,
+    monkeypatch,
+    wrapper,
+    transient_failure,
+    bilingual,
 ):
     async with database() as session:
         await download_queue.enqueue_source(session, await session.get(FeedSource, 1))
@@ -346,8 +383,11 @@ async def test_queue_add_rename_move_and_restart(
     state = {"torrent": None, "files": [{"name": ("Original/" if wrapper else "") + "video.mkv"}]}
     if bilingual:
         state["files"] = [
-            {"index": index, "priority": 1,
-             "name": ("Original/" if wrapper else "") + f"video [{language}].mkv"}
+            {
+                "index": index,
+                "priority": 1,
+                "name": ("Original/" if wrapper else "") + f"video [{language}].mkv",
+            }
             for index, language in [(4, "CHT"), (9, "CHS")]
         ]
     calls = []
@@ -371,8 +411,12 @@ async def test_queue_add_rename_move_and_restart(
             assert data["stopCondition"] == "MetadataReceived"
             assert data["tags"] == "番名"
             assert "rename" not in data
-            state["torrent"] = {"save_path": data["savepath"], "state": "metaDL",
-                                "name": "原始种子名称", "tags": data["tags"]}
+            state["torrent"] = {
+                "save_path": data["savepath"],
+                "state": "metaDL",
+                "name": "原始种子名称",
+                "tags": data["tags"],
+            }
             return httpx.Response(200, text="Ok.")
         if endpoint == "files":
             return httpx.Response(200, json=state["files"])
@@ -398,9 +442,14 @@ async def test_queue_add_rename_move_and_restart(
         return httpx.Response(200)
 
     original_client = httpx.AsyncClient
-    monkeypatch.setattr(download_queue.httpx, "AsyncClient", lambda **kwargs: original_client(
-        base_url="http://qb.test", transport=httpx.MockTransport(handle),
-    ))
+    monkeypatch.setattr(
+        download_queue.httpx,
+        "AsyncClient",
+        lambda **kwargs: original_client(
+            base_url="http://qb.test",
+            transport=httpx.MockTransport(handle),
+        ),
+    )
     await download_queue.process_queue()
     await download_queue.process_queue()
     assert "files" not in calls  # 元数据还没到，不能凭 RSS 标题猜目录。
@@ -440,7 +489,9 @@ async def test_inactive_and_review_items_not_enqueued(database):
 
 @pytest.mark.parametrize("existing", [False, True])
 async def test_first_submission_tags_and_does_not_touch_external_torrent(
-    database, monkeypatch, existing,
+    database,
+    monkeypatch,
+    existing,
 ):
     async with database() as session:
         source = await session.get(FeedSource, 1)
@@ -454,10 +505,19 @@ async def test_first_submission_tags_and_does_not_touch_external_torrent(
         data = {key: values[0] for key, values in parse_qs(request.content.decode()).items()}
         calls.append((endpoint, data))
         if endpoint == "info":
-            return httpx.Response(200, json=[{
-                "save_path": "/manual-downloads", "state": "downloading",
-                "name": "用户自己的任务", "tags": "手动标签",
-            }] if existing else [])
+            return httpx.Response(
+                200,
+                json=[
+                    {
+                        "save_path": "/manual-downloads",
+                        "state": "downloading",
+                        "name": "用户自己的任务",
+                        "tags": "手动标签",
+                    }
+                ]
+                if existing
+                else [],
+            )
         if endpoint == "add":
             assert data["tags"] == "Hello， World"
             assert "rename" not in data
@@ -466,12 +526,18 @@ async def test_first_submission_tags_and_does_not_touch_external_torrent(
         return httpx.Response(200, text="Ok.")
 
     original_client = httpx.AsyncClient
-    monkeypatch.setattr(download_queue.httpx, "AsyncClient", lambda **kwargs: original_client(
-        base_url="http://qb.test", transport=httpx.MockTransport(handle),
-    ))
+    monkeypatch.setattr(
+        download_queue.httpx,
+        "AsyncClient",
+        lambda **kwargs: original_client(
+            base_url="http://qb.test",
+            transport=httpx.MockTransport(handle),
+        ),
+    )
     await download_queue.process_queue()
-    assert [endpoint for endpoint, _ in calls] == (["login", "info"] if existing else
-                                                 ["login", "info", "add"])
+    assert [endpoint for endpoint, _ in calls] == (
+        ["login", "info"] if existing else ["login", "info", "add"]
+    )
     async with database() as session:
         job = await session.scalar(select(DownloadJob))
         assert job.state == ("existing" if existing else "metadata")
@@ -483,7 +549,9 @@ async def test_first_submission_tags_and_does_not_touch_external_torrent(
 
 @pytest.mark.parametrize("previous_state", [None, "metadata", "done", "needs_review"])
 async def test_manual_retry_creates_or_resets_job_and_submits(
-    database, monkeypatch, previous_state,
+    database,
+    monkeypatch,
+    previous_state,
 ):
     from app import api
 
@@ -519,9 +587,14 @@ async def test_manual_retry_creates_or_resets_job_and_submits(
         return httpx.Response(200, text="Ok.")
 
     original_client = httpx.AsyncClient
-    monkeypatch.setattr(download_queue.httpx, "AsyncClient", lambda **kwargs: original_client(
-        base_url="http://qb.test", transport=httpx.MockTransport(respond),
-    ))
+    monkeypatch.setattr(
+        download_queue.httpx,
+        "AsyncClient",
+        lambda **kwargs: original_client(
+            base_url="http://qb.test",
+            transport=httpx.MockTransport(respond),
+        ),
+    )
     await download_queue.process_queue()
     assert calls.count("add") == 1
     async with database() as session:
@@ -580,14 +653,24 @@ async def test_manual_retry_rejects_invalid_records(database, invalid):
         assert await session.scalar(select(DownloadJob)) is None
 
 
-@pytest.mark.parametrize("simple,traditional", [
-    ("CHS", "CHT"), ("GB", "BIG5"), ("简中", "繁中"), ("簡體", "繁體"),
-    ("zh-Hans", "zh-Hant"), ("SC", "TC"),
-])
+@pytest.mark.parametrize(
+    "simple,traditional",
+    [
+        ("CHS", "CHT"),
+        ("GB", "BIG5"),
+        ("简中", "繁中"),
+        ("簡體", "繁體"),
+        ("zh-Hans", "zh-Hant"),
+        ("SC", "TC"),
+    ],
+)
 @pytest.mark.parametrize("folder", [False, True])
 def test_language_markers_in_files_and_folders(simple, traditional, folder):
-    names = ([f"Pack/{lang}/Example - 05 [1080p].mkv" for lang in [simple, traditional]]
-             if folder else [f"Pack/Example - 05 [{lang}].mkv" for lang in [simple, traditional]])
+    names = (
+        [f"Pack/{lang}/Example - 05 [1080p].mkv" for lang in [simple, traditional]]
+        if folder
+        else [f"Pack/Example - 05 [{lang}].mkv" for lang in [simple, traditional]]
+    )
     files = [{"name": name, "index": index} for index, name in enumerate(names)]
     plan = build_plan(files, "番名", 2, RELEASE)
     assert plan["skip_file_ids"] == [1]
@@ -597,31 +680,40 @@ def test_language_markers_in_files_and_folders(simple, traditional, folder):
 
 def test_per_episode_fallback_and_dual_subtitles():
     names = [
-        "Example - 01 [CHS].mkv", "Example - 01 [CHT].mkv",
-        "Example - 02 [CHS].mkv", "Example - 03 [CHS&CHT].mkv",
-        "Example - 01 [CHS].ass", "Example - 01 [CHT].ass",
-        "Example - 02 [CHS].ass", "README.txt",
+        "Example - 01 [CHS].mkv",
+        "Example - 01 [CHT].mkv",
+        "Example - 02 [CHS].mkv",
+        "Example - 03 [CHS&CHT].mkv",
+        "Example - 01 [CHS].ass",
+        "Example - 01 [CHT].ass",
+        "Example - 02 [CHS].ass",
+        "README.txt",
     ]
     plan = build_plan([{"name": n} for n in names], "番名", 1, RELEASE)
     assert plan["skip_file_ids"] == [1, 5]
     assert len(plan["files"]) == 6
 
 
-@pytest.mark.parametrize("languages,chosen", [
-    (["CHS", "CHT"], "CHS"),
-    (["CHS", "简繁内封", "CHT"], "CHS"),
-    (["简繁内封", "CHT"], "简繁内封"),
-    (["CHS&CHT", "CHT"], "CHS&CHT"),
-    (["CHS", "CHS&CHT"], "CHS"),
-    (["CHT"], "CHT"),
-    (["简繁内封"], "简繁内封"),
-])
+@pytest.mark.parametrize(
+    "languages,chosen",
+    [
+        (["CHS", "CHT"], "CHS"),
+        (["CHS", "简繁内封", "CHT"], "CHS"),
+        (["简繁内封", "CHT"], "简繁内封"),
+        (["CHS&CHT", "CHT"], "CHS&CHT"),
+        (["CHS", "CHS&CHT"], "CHS"),
+        (["CHT"], "CHT"),
+        (["简繁内封"], "简繁内封"),
+    ],
+)
 @pytest.mark.parametrize("reverse", [False, True])
 @pytest.mark.parametrize("episode_name", ["Example - 05", "video"])
 def test_simplified_then_dual_then_traditional(languages, chosen, reverse, episode_name):
     languages = list(reversed(languages)) if reverse else languages
-    files = [{"name": f"Pack/{episode_name} [{language}].mkv", "index": i}
-             for i, language in enumerate(languages)]
+    files = [
+        {"name": f"Pack/{episode_name} [{language}].mkv", "index": i}
+        for i, language in enumerate(languages)
+    ]
     plan = build_plan(files, "番名", 2, RELEASE)
     assert len(plan["files"]) == 1
     assert f"[{chosen}]" in plan["files"][0]["old"]
@@ -631,8 +723,11 @@ def test_simplified_then_dual_then_traditional(languages, chosen, reverse, episo
 
 def test_language_selection_does_not_guess_unknown_or_cross_seasons():
     names = [
-        "A S01E01 [CHS].mkv", "A S02E01 [CHT].mkv",
-        "Unmarked - 02.mkv", "Other - 03 [CHT].mkv", "SHOW_BIG.mkv",
+        "A S01E01 [CHS].mkv",
+        "A S02E01 [CHT].mkv",
+        "Unmarked - 02.mkv",
+        "Other - 03 [CHT].mkv",
+        "SHOW_BIG.mkv",
     ]
     assert not language_preference([PurePosixPath(n) for n in names])
 
@@ -646,7 +741,8 @@ async def test_qbittorrent_four_start_stop_compatibility(running, old_endpoint):
         endpoints.append(endpoint)
         return httpx.Response(200 if endpoint == old_endpoint else 404)
 
-    async with httpx.AsyncClient(base_url="http://qb.test",
-                                 transport=httpx.MockTransport(handle)) as client:
+    async with httpx.AsyncClient(
+        base_url="http://qb.test", transport=httpx.MockTransport(handle)
+    ) as client:
         await download_queue.set_running(client, HASH, running)
     assert endpoints == ["start" if running else "stop", old_endpoint]

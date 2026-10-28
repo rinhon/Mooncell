@@ -40,15 +40,23 @@ async def record_calendar_event(event_type: str, season: str, **payload) -> None
     try:
         async with SessionFactory() as session:
             event = DomainEvent(
-                event_type=event_type, resource_type="calendar", resource_id=season,
+                event_type=event_type,
+                resource_type="calendar",
+                resource_id=season,
                 payload=json.dumps(payload, ensure_ascii=False),
             )
             session.add(event)
             await session.commit()
-            await broker.publish(EventMessage(
-                id=event.id, event_type=event_type, resource_type="calendar",
-                resource_id=season, payload=payload, created_at=event.created_at,
-            ))
+            await broker.publish(
+                EventMessage(
+                    id=event.id,
+                    event_type=event_type,
+                    resource_type="calendar",
+                    resource_id=season,
+                    payload=payload,
+                    created_at=event.created_at,
+                )
+            )
     except Exception:
         logger.exception("日历事件写入或广播失败：%s / %s", event_type, season)
 
@@ -86,8 +94,9 @@ def parse_calendar(html: str, season: str) -> list[dict]:
             continue
         title = title_node.get_text(" ", strip=True)
         time_nodes = node.select('p[class^="imgtext"]') or card.select('p[class^="pmfs"]')
-        times = dict.fromkeys(text for time_node in time_nodes
-                              if (text := time_node.get_text(" ", strip=True)))
+        times = dict.fromkeys(
+            text for time_node in time_nodes if (text := time_node.get_text(" ", strip=True))
+        )
         broadcast = " / ".join(times) or "时间待定"
         item_weekday = None if "div_date_" in node.get("class", []) else weekday
         key = (item_weekday, title, broadcast)
@@ -99,8 +108,15 @@ def parse_calendar(html: str, season: str) -> list[dict]:
         src = (img.get("data-src") or img.get("src")) if img else None
         src = src or (link.get("href") if link else None)
         cover = urljoin(f"https://yuc.wiki/{season}/", src) if src else None
-        items.append({"id": len(items) + 1, "title": title, "weekday": item_weekday,
-                      "broadcast_time": broadcast, "cover_source": cover})
+        items.append(
+            {
+                "id": len(items) + 1,
+                "title": title,
+                "weekday": item_weekday,
+                "broadcast_time": broadcast,
+                "cover_source": cover,
+            }
+        )
     if not items:
         raise ValueError("源站尚无可解析的新番，未保存空数据")
     return items
@@ -149,7 +165,9 @@ async def fetch_resource(client: httpx.AsyncClient, url: str, **kwargs) -> httpx
             raise
         logger.warning("日历请求证书校验失败，尝试通过直连重新获取：%s", url)
         async with httpx.AsyncClient(
-            timeout=client.timeout, follow_redirects=client.follow_redirects, trust_env=False,
+            timeout=client.timeout,
+            follow_redirects=client.follow_redirects,
+            trust_env=False,
         ) as direct:
             return await direct.get(url, **kwargs)
 
@@ -187,7 +205,10 @@ async def download_covers(client: httpx.AsyncClient, season: str, items: list[di
     await asyncio.gather(*(download(item) for item in items))
     if errors:
         await record_calendar_event(
-            "calendar.covers.partial", season, count=len(errors), error="；".join(errors),
+            "calendar.covers.partial",
+            season,
+            count=len(errors),
+            error="；".join(errors),
         )
 
 
@@ -215,11 +236,14 @@ async def ensure_season(season: str) -> dict:
                     items = supplement_other_broadcasts(cached["items"], items)
                 path.parent.mkdir(parents=True, exist_ok=True)
                 await download_covers(client, season, items)
-                data = {**(cached or {}), "season": season,
-                        "source_url": f"https://yuc.wiki/{season}/",
-                        "fetched_at": cached["fetched_at"] if cached
-                        else datetime.now(UTC).isoformat(),
-                        "cache_version": CALENDAR_CACHE_VERSION, "items": items}
+                data = {
+                    **(cached or {}),
+                    "season": season,
+                    "source_url": f"https://yuc.wiki/{season}/",
+                    "fetched_at": cached["fetched_at"] if cached else datetime.now(UTC).isoformat(),
+                    "cache_version": CALENDAR_CACHE_VERSION,
+                    "items": items,
+                }
                 temporary = path.with_suffix(".tmp")
                 await asyncio.to_thread(
                     temporary.write_text, json.dumps(data, ensure_ascii=False), encoding="utf-8"
@@ -231,7 +255,9 @@ async def ensure_season(season: str) -> dict:
         except (httpx.HTTPError, ValueError, OSError) as exc:
             _failures[season] = datetime.now(UTC)
             await record_calendar_event(
-                "calendar.fetch.failed", season, error=f"{type(exc).__name__}: {exc}",
+                "calendar.fetch.failed",
+                season,
+                error=f"{type(exc).__name__}: {exc}",
             )
             if cached is not None:
                 return cached
@@ -268,19 +294,32 @@ async def read_calendar(season: str | None = None, session: AsyncSession = Depen
     except (httpx.HTTPError, ValueError, OSError) as exc:
         if is_certificate_error(exc):
             raise HTTPException(
-                503, "日历源站 HTTPS 证书校验失败，直连重试也未成功。"
+                503,
+                "日历源站 HTTPS 证书校验失败，直连重试也未成功。"
                 "请检查系统时间和代理证书；15 分钟后自动重试，重启后端可立即重试。",
             ) from exc
         raise HTTPException(503, "季度新番暂时获取失败，稍后自动重试。") from exc
-    favorites = set(await session.scalars(select(CalendarFavorite.item_id).where(
-        CalendarFavorite.season == season,
-    )))
-    return {**data, "current_season": current_season(), "items": [
-        {**item, "liked": item["id"] in favorites,
-         "cover_url": f"/api/v1/calendar/{season}/covers/{item['id']}"
-         if (cache_dir() / season / f"{item['id']}.img").exists() else None}
-        for item in data["items"]
-    ]}
+    favorites = set(
+        await session.scalars(
+            select(CalendarFavorite.item_id).where(
+                CalendarFavorite.season == season,
+            )
+        )
+    )
+    return {
+        **data,
+        "current_season": current_season(),
+        "items": [
+            {
+                **item,
+                "liked": item["id"] in favorites,
+                "cover_url": f"/api/v1/calendar/{season}/covers/{item['id']}"
+                if (cache_dir() / season / f"{item['id']}.img").exists()
+                else None,
+            }
+            for item in data["items"]
+        ],
+    }
 
 
 class FavoriteUpdate(BaseModel):
@@ -289,7 +328,9 @@ class FavoriteUpdate(BaseModel):
 
 @router.put("/{season}/items/{item_id}/favorite")
 async def set_favorite(
-    season: str, item_id: int, data: FavoriteUpdate,
+    season: str,
+    item_id: int,
+    data: FavoriteUpdate,
     session: AsyncSession = Depends(get_session),
 ):
     try:
@@ -303,13 +344,21 @@ async def set_favorite(
     if not any(item["id"] == item_id for item in calendar["items"]):
         raise HTTPException(404, "番剧不存在")
     if data.liked:
-        await session.execute(insert(CalendarFavorite).values(
-            season=season, item_id=item_id,
-        ).on_conflict_do_nothing())
+        await session.execute(
+            insert(CalendarFavorite)
+            .values(
+                season=season,
+                item_id=item_id,
+            )
+            .on_conflict_do_nothing()
+        )
     else:
-        await session.execute(delete(CalendarFavorite).where(
-            CalendarFavorite.season == season, CalendarFavorite.item_id == item_id,
-        ))
+        await session.execute(
+            delete(CalendarFavorite).where(
+                CalendarFavorite.season == season,
+                CalendarFavorite.item_id == item_id,
+            )
+        )
     await session.commit()
     return {"season": season, "id": item_id, "liked": data.liked}
 

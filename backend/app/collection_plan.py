@@ -37,15 +37,35 @@ def build_collection_plan(files, title, season, release):
     paths = [PurePosixPath(str(f["name"]).replace("\\", "/")) for f in files]
     if any(PureWindowsPath(p).drive for p in paths):
         raise ValueError("种子包含无效文件路径")
+    edits = {}
+    for edit in release.collection_file_overrides:
+        # 历史记录中的文件名仅供兼容读取，不参与当前规范命名。
+        if edit.episode is None:
+            continue
+        path = PurePosixPath(edit.path)
+        if path in edits:
+            raise ValueError("同一文件不能重复修改")
+        if path not in paths:
+            raise ValueError("下载器文件列表已变化，请重新解析磁力")
+        if path.suffix.lower() not in VIDEO_EXTENSIONS or is_extra(path):
+            raise ValueError("只能修改正片视频的集数")
+        edits[path] = edit
     # 伴随字幕单独匹配；其他非正片文件不下载。
     overrides = {
         str(p): None for p in paths if p.suffix.lower() not in VIDEO_EXTENSIONS or is_extra(p)
     }
+    episodes = {}
     for path in paths:
         if path.suffix.lower() in VIDEO_EXTENSIONS and not is_extra(path):
             parsed = parse_release_title(path.stem)
-            if parsed.episode_start is None or parsed.release_kind != "single":
+            edit = edits.get(path)
+            manual_episode = edit.episode if edit else None
+            episode = manual_episode if manual_episode is not None else parsed.episode_start
+            if episode is None or (manual_episode is None and parsed.release_kind != "single"):
                 raise ValueError(f"无法确定视频集数：{path.name}")
+            episodes[path] = episode
+            if edit is not None:
+                overrides[str(path)] = episode
     plan = build_plan(files, title, season, release, overrides)
     wrapper = plan["wrapper"]
 
@@ -54,6 +74,7 @@ def build_collection_plan(files, title, season, release):
 
     targets = {entry["old"]: entry["new"] for entry in plan["files"]}
     videos = [p for p in paths if normalized(p) in targets]
+    plan["episodes"] = [episodes[path] for path in videos]
     skipped = set(plan["skip_file_ids"])
     used = {entry["new"].casefold() for entry in plan["files"]}
     for index, (file, path) in enumerate(zip(files, paths, strict=True)):
@@ -85,5 +106,12 @@ def build_collection_plan(files, title, season, release):
         used.add(target.casefold())
         skipped.discard(int(file.get("index", index)))
         plan["files"].append({"old": normalized(path), "new": target})
+    original_names = {normalized(path).casefold() for path in paths}
+    for entry in plan["files"]:
+        if (
+            entry["new"].casefold() in original_names
+            and entry["new"].casefold() != entry["old"].casefold()
+        ):
+            raise ValueError("整理后的文件名与另一原始文件冲突，请检查集数")
     plan["skip_file_ids"] = sorted(skipped)
     return plan

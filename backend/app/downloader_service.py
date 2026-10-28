@@ -116,7 +116,8 @@ async def test_qbittorrent(
             )
             if not login_ok:
                 return _test_failure(
-                    "qbittorrent", "qBittorrent 拒绝登录，请检查地址和凭据",
+                    "qbittorrent",
+                    "qBittorrent 拒绝登录，请检查地址和凭据",
                 )
             stage = "读取版本"
             version_response = await client.get("/api/v2/app/version")
@@ -154,7 +155,8 @@ async def test_aria2(
             data = response.json()
             if "error" in data:
                 return _test_failure(
-                    "aria2", f"aria2 RPC 返回错误：{data['error'].get('message', '未知错误')}",
+                    "aria2",
+                    f"aria2 RPC 返回错误：{data['error'].get('message', '未知错误')}",
                 )
             return DownloaderTestResult(
                 ok=True,

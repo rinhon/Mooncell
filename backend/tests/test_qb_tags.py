@@ -6,10 +6,14 @@ import pytest
 from app.qb_tags import show_tag, sync_show_tag
 
 
-@pytest.mark.parametrize("title, expected", [
-    ("番剧名称", "番剧名称"), ("  Hello, World  ", "Hello， World"),
-    ("番名\r\n\t第二季", "番名 第二季"),
-])
+@pytest.mark.parametrize(
+    "title, expected",
+    [
+        ("番剧名称", "番剧名称"),
+        ("  Hello, World  ", "Hello， World"),
+        ("番名\r\n\t第二季", "番名 第二季"),
+    ],
+)
 def test_title_produces_one_tag(title, expected):
     assert show_tag(title) == expected
 
@@ -40,8 +44,9 @@ async def test_add_before_remove_and_confirm_preserves_other_tags(previous):
         torrent["tags"] = ", ".join(sorted(tags))
         return httpx.Response(200)
 
-    async with httpx.AsyncClient(base_url="http://qb.test",
-                                 transport=httpx.MockTransport(handle)) as client:
+    async with httpx.AsyncClient(
+        base_url="http://qb.test", transport=httpx.MockTransport(handle)
+    ) as client:
         for _ in range(4):
             if await sync_show_tag(client, "a" * 40, torrent, "新番名, 第二季", previous):
                 break

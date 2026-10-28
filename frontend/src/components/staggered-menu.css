@@ -318,20 +318,6 @@
   color: var(--accent);
 }
 
-.sm-review-badge {
-  display: inline-grid;
-  flex: none;
-  min-width: 22px;
-  height: 22px;
-  padding: 0 4px;
-  place-items: center;
-  border-radius: 999px;
-  color: var(--on-accent);
-  background: var(--accent);
-  font-size: 12px;
-  font-variant-numeric: tabular-nums;
-}
-
 .sm-trigger:focus-visible,
 .sm-close:focus-visible,
 .sm-link:focus-visible,
