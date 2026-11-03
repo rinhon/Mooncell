@@ -3,12 +3,18 @@ import { useCallback, useEffect, useRef, useState } from "react"
 type ImageStatus = "loading" | "loaded" | "error"
 
 const retryDelays = [1000, 3000, 10000]
+const loadedUrls = new Set<string>()
 
 /** 每个资源单独挂载（key={src}）；重试沿用原 URL，保留浏览器的缓存语义。 */
-export function useImageRecovery() {
-  const [result, setResult] = useState({ attempt: 0, status: "loading" as ImageStatus, failed: false })
+export function useImageRecovery(src?: string) {
+  const [result, setResult] = useState(() => ({
+    attempt: 0,
+    status: (src && loadedUrls.has(src) ? "loaded" : "loading") as ImageStatus,
+    failed: false,
+  }))
   const lifecycle = useRef({
     ...result,
+    verified: false,
     active: true,
     retries: 0,
     forwarded: false,
@@ -24,6 +30,7 @@ export function useImageRecovery() {
     current.retries = resetBudget ? 0 : current.retries + 1
     current.attempt += 1
     current.status = "loading"
+    current.verified = false
     current.forwarded = false
     setResult({ attempt: current.attempt, status: current.status, failed: current.failed })
   }, [])
@@ -63,7 +70,13 @@ export function useImageRecovery() {
       const current = lifecycle.current
       // 缓存完成检查和 DOM 事件可能同时发生；旧 attempt 也可能迟到。
       if (!current.active || current.attempt !== result.attempt) return false
-      if (current.status === "loading") {
+      if (status === "loaded") {
+        current.verified = true
+        if (src) loadedUrls.add(src)
+      } else if (src) {
+        loadedUrls.delete(src)
+      }
+      if (current.status === "loading" || (status === "error" && !current.verified)) {
         current.status = status
         current.failed = status === "error"
         if (status === "loaded") current.retries = 0
@@ -74,7 +87,7 @@ export function useImageRecovery() {
       current.forwarded = true
       return true
     },
-    [result.attempt],
+    [result.attempt, src],
   )
   const onLoad = useCallback(() => report("loaded"), [report])
   const onError = useCallback(() => report("error"), [report])

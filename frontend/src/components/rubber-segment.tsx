@@ -153,6 +153,13 @@ const RubberSegment: React.FC<RubberSegmentProps> = ({
     const width = knownWidth ?? (track ? track.clientWidth : 0)
     if (width > 0 && equalSlots) cachedEqualSlotWidths[cacheKey] = width
     const innerWidth = Math.max(0, width - inset * 2)
+    if (
+      equalSlots &&
+      innerWidth > 0 &&
+      slots.current.length === list.length &&
+      Math.abs(innerW.get() - innerWidth) < 0.5
+    )
+      return
     if (equalSlots && list.length > 0 && innerWidth > 0) {
       const slotWidth = innerWidth / list.length
       slots.current = list.map((_, i) => ({ l: i * slotWidth, r: (i + 1) * slotWidth }))

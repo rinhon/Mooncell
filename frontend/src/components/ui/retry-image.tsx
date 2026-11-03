@@ -24,7 +24,7 @@ function RecoveringImage({
   onError,
   ...props
 }: RetryImageProps) {
-  const { attempt, status, failed, ref, onLoad: loaded, onError: failedLoad } = useImageRecovery()
+  const { attempt, status, failed, ref, onLoad: loaded, onError: failedLoad } = useImageRecovery(src)
   return (
     <>
       {status === "loading" && !failed && placeholder}

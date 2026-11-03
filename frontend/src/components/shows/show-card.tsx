@@ -55,7 +55,7 @@ export const ShowCard = memo(function ShowCard(props: ShowDisplayProps) {
                   <ShowCover title={show.name} />
                 )}
               </div>
-              <div className="min-w-0 flex-1 pb-1 text-white drop-shadow-[0_2px_10px_rgba(0,0,0,0.65)]">
+              <div className="min-w-0 flex-1 pb-1 text-white [text-shadow:0_2px_10px_rgba(0,0,0,0.65)]">
                 {show.clearlogo_ready && (
                   <div className="mb-2 h-8 max-w-40">
                     <FadeInImage

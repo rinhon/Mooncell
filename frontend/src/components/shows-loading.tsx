@@ -179,7 +179,7 @@ export function ShowsLoading({
           {view === "list" ? (
             <ShowsListSkeleton count={count} />
           ) : view === "posters" ? (
-            <Masonry className="show-poster-grid" columnWidth={250} animate={false}>
+            <Masonry className="show-poster-grid" columnWidth={250} fixedRatio animate={false}>
               {Array.from({ length: count }, (_, index) => (
                 <Skeleton key={index} className="show-poster-tile" />
               ))}

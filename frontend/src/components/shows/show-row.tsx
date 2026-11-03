@@ -1,4 +1,5 @@
 import { memo, useContext } from "react"
+import { usePageReady } from "@/components/page-load-boundary"
 import { PageMotionContext } from "@/lib/page-motion"
 import { motion, useReducedMotion } from "motion/react"
 import { Link } from "react-router-dom"
@@ -15,14 +16,17 @@ import type { ShowDisplayProps } from "./types"
 
 export const ShowRow = memo(function ShowRow(props: ShowDisplayProps) {
   const { show, index, returnState, openDetail, onItems, onOpenFolder, openingFolder } = props
+  const pageReady = usePageReady()
   const reducedMotion = useReducedMotion()
-  const { animateEntry } = useContext(PageMotionContext)
+  const { animateCards } = useContext(PageMotionContext)
+  const shouldAnimate = !reducedMotion && animateCards
   return (
     <motion.li
-      initial={reducedMotion || !animateEntry ? false : { opacity: 0, y: 18 }}
-      whileInView={{ opacity: 1, y: 0 }}
+      className="transform-gpu"
+      initial={shouldAnimate ? { opacity: 0, y: 24, scale: 0.98, filter: "blur(10px)" } : false}
+      whileInView={pageReady ? { opacity: 1, y: 0, scale: 1, filter: "blur(0px)" } : undefined}
       viewport={{ once: true, amount: 0.15 }}
-      transition={reducedMotion ? { duration: 0 } : { ...spring.gentle, delay: Math.min(index, 6) * 0.06 }}
+      transition={reducedMotion ? { duration: 0 } : { ...spring.gentle, delay: Math.min(index, 6) * 0.05 }}
     >
       <Card className="show-row-card">
         <Link

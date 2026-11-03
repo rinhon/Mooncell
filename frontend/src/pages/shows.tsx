@@ -285,7 +285,7 @@ export function ShowsPage() {
       )}
 
       {view === "posters" && shows.length > 0 && (
-        <Masonry className="show-poster-grid" columnWidth={250} aria-label="番剧海报">
+        <Masonry className="show-poster-grid" columnWidth={250} fixedRatio aria-label="番剧海报">
           {posterTiles}
         </Masonry>
       )}

@@ -13,11 +13,13 @@ export const usePageReady = () => useContext(PageReadyContext).ready
 export function usePageLoadCycle(key: string, fallback?: ReactNode, initializeFallback = false) {
   const { reload } = useContext(PageReadyContext)
   const previous = useRef<string | null>(initializeFallback ? null : key)
+  const fallbackRef = useRef(fallback)
+  fallbackRef.current = fallback
   useLayoutEffect(() => {
     if (previous.current === key) return
     previous.current = key
-    reload(fallback)
-  }, [key, reload, fallback])
+    reload(fallbackRef.current)
+  }, [key, reload])
 }
 
 /** 隐藏挂载内容，让依赖查询和屏外图片先完成；显示后不受后台刷新影响。 */
@@ -25,16 +27,67 @@ export function PageLoadBoundary({ children, fallback }: { children: ReactNode; 
   const client = useQueryClient()
   const contentRef = useRef<HTMLDivElement>(null)
   const focusRef = useRef<HTMLElement | null>(null)
+  const readyRef = useRef(false)
+  const decodedImagesRef = useRef(new Map<string, HTMLImageElement>())
   const [ready, setReady] = useState(false)
   const [cycle, setCycle] = useState(0)
   const [cycleFallback, setCycleFallback] = useState<ReactNode>()
-  const reload = useCallback((nextFallback?: ReactNode) => {
-    const active = document.activeElement
-    if (active instanceof HTMLElement && contentRef.current?.contains(active)) focusRef.current = active
-    setCycleFallback(nextFallback)
-    setReady(false)
-    setCycle((value) => value + 1)
+  readyRef.current = ready
+
+  useLayoutEffect(() => {
+    const cache = decodedImagesRef.current
+    return () => {
+      cache.clear()
+    }
   }, [])
+
+  const rememberDecodedImage = useCallback((image: HTMLImageElement) => {
+    const src = image.currentSrc || image.src
+    if (!src || image.naturalWidth === 0) return
+    let cached = decodedImagesRef.current.get(src)
+    if (!cached) {
+      cached = new Image()
+      cached.decoding = "sync"
+      cached.src = src
+      decodedImagesRef.current.set(src, cached)
+    }
+    if (image.src && !decodedImagesRef.current.has(image.src)) {
+      decodedImagesRef.current.set(image.src, cached)
+    }
+  }, [])
+
+  const isImmediatelyReady = useCallback(
+    (content: HTMLDivElement) => {
+      const pendingData = client
+        .getQueryCache()
+        .findAll()
+        .some((query) => query.isActive() && query.state.data === undefined && query.state.status === "pending")
+      if (pendingData || content.querySelector(loadingSelector)) return false
+      for (const image of content.querySelectorAll("img")) {
+        if (image.loading !== "eager") image.loading = "eager"
+        if (!image.complete) return false
+        if (image.naturalWidth === 0) continue
+        const src = image.currentSrc || image.src
+        if (!decodedImagesRef.current.has(src)) return false
+      }
+      return true
+    },
+    [client],
+  )
+
+  const reload = useCallback(
+    (nextFallback?: ReactNode) => {
+      const content = contentRef.current
+      if (readyRef.current && content && isImmediatelyReady(content)) return
+      const active = document.activeElement
+      if (active instanceof HTMLElement && content?.contains(active)) focusRef.current = active
+      setCycleFallback(nextFallback)
+      readyRef.current = false
+      setReady(false)
+      setCycle((value) => value + 1)
+    },
+    [isImmediatelyReady],
+  )
 
   useLayoutEffect(() => {
     const content = contentRef.current
@@ -55,6 +108,7 @@ export function PageLoadBoundary({ children, fallback }: { children: ReactNode; 
       // 加载失败交由现有图片组件呈现占位、继续后台重试，不无限阻塞页面。
       if (image.naturalWidth === 0) return true
       const src = image.currentSrc || image.src
+      if (decodedImagesRef.current.has(src)) return true
       const previous = decoded.get(image)
       if (previous?.src === src) return previous.ready
       const result = { src, ready: false }
@@ -63,6 +117,7 @@ export function PageLoadBoundary({ children, fallback }: { children: ReactNode; 
         .decode()
         .catch(() => {})
         .then(() => {
+          rememberDecodedImage(image)
           result.ready = true
           schedule()
         })
@@ -93,6 +148,7 @@ export function PageLoadBoundary({ children, fallback }: { children: ReactNode; 
       frame = window.requestAnimationFrame(() => {
         if (stopped || !complete()) return
         cleanup()
+        readyRef.current = true
         setReady(true)
       })
     }
@@ -107,9 +163,10 @@ export function PageLoadBoundary({ children, fallback }: { children: ReactNode; 
     const unsubscribe = client.getQueryCache().subscribe(schedule)
     content.addEventListener("load", schedule, true)
     content.addEventListener("error", schedule, true)
+    complete()
     schedule()
     return cleanup
-  }, [client, cycle])
+  }, [client, cycle, rememberDecodedImage])
 
   useLayoutEffect(() => {
     const content = contentRef.current

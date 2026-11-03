@@ -32,7 +32,7 @@ function RecoveringImage({
   style,
   ...props
 }: FadeInImageProps) {
-  const { attempt, status, failed, ref, onLoad: loaded, onError: failedLoad } = useImageRecovery()
+  const { attempt, status, failed, ref, onLoad: loaded, onError: failedLoad } = useImageRecovery(src)
   const reducedMotion = useReducedMotion()
   const hoverScale = useContext(PosterHoverContext)
   const animateZoom = hoverZoom && hoverScale !== undefined

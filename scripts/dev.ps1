@@ -7,7 +7,7 @@ $PythonPath = Join-Path $BackendDirectory ".venv\Scripts\python.exe"
 $VitePath = Join-Path $FrontendDirectory "node_modules\vite\bin\vite.js"
 $ListenAddress = "0.0.0.0"
 $BackendPort = 8000
-$FrontendPort = 5173
+$FrontendPort = 5505
 
 function Test-TcpPortAvailable {
     param(
@@ -86,7 +86,7 @@ if (-not (Test-Path -LiteralPath $VitePath -PathType Leaf)) {
 }
 
 $SelectedBackendPort = Find-AvailableTcpPort -PreferredPort $BackendPort -FallbackStartPort 8100
-$SelectedFrontendPort = Find-AvailableTcpPort -PreferredPort $FrontendPort -FallbackStartPort 5174
+$SelectedFrontendPort = Find-AvailableTcpPort -PreferredPort $FrontendPort -FallbackStartPort 5506
 
 if ($SelectedBackendPort -ne $BackendPort) {
     Write-Warning "Backend port $BackendPort is unavailable; using $SelectedBackendPort instead."

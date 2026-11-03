@@ -49,6 +49,7 @@ export interface MasonryProps {
   columns?: "auto" | "auto-fit" | number
   columnWidth?: number
   contentHeight?: number
+  fixedRatio?: boolean
   gap?: number
   radius?: number
   animateFrom?: "bottom" | "top" | "left" | "right" | "center" | "random" | "none"
@@ -233,7 +234,7 @@ const place = (
   const contentHeight =
     item.contentSize && Math.abs(item.contentSize.width - w) <= 1
       ? item.contentSize.height
-      : (item.height ?? w * (item.contentRatio ?? 4 / 3)) + (item.extraHeight ?? 0)
+      : (item.height ?? Math.round(w * (item.contentRatio ?? 4 / 3))) + (item.extraHeight ?? 0)
   const h = Math.max(1, item.content === undefined ? w * aspectOf(item, measured) : contentHeight)
   if (commit) for (let k = column; k < column + span; k++) heights[k] = top + h + gap
   return { x: Math.round(column * (size + gap)), y: Math.round(top), w, h }
@@ -299,6 +300,7 @@ export const Masonry = ({
   columns = "auto",
   columnWidth: suppliedColumnWidth,
   contentHeight: suppliedContentHeight,
+  fixedRatio = false,
   gap: suppliedGap,
   radius = 12,
   animateFrom = "bottom",
@@ -323,6 +325,7 @@ export const Masonry = ({
   const pageReady = usePageReady()
   const { animateCards } = useContext(PageMotionContext)
   const childrenFixedHeight = childrenMode && typeof suppliedContentHeight === "number" && suppliedContentHeight > 0
+  const childrenFixedSize = childrenFixedHeight || (childrenMode && Boolean(fixedRatio))
   const [contentSizes, setContentSizes] = useState<Record<string, { width: number; height: number }>>({})
   const [cssMetrics, setCssMetrics] = useState(() => ({
     minWidth: 160,
@@ -342,7 +345,7 @@ export const Masonry = ({
               img: "",
               content,
               height: childrenFixedHeight ? suppliedContentHeight : undefined,
-              contentSize: childrenFixedHeight ? undefined : contentSizes[id],
+              contentSize: childrenFixedSize ? undefined : contentSizes[id],
               contentRatio: cssMetrics.ratio,
               extraHeight,
             }
@@ -353,6 +356,7 @@ export const Masonry = ({
       children,
       suppliedItems,
       childrenFixedHeight,
+      childrenFixedSize,
       suppliedContentHeight,
       contentSizes,
       cssMetrics.ratio,
@@ -431,7 +435,7 @@ export const Masonry = ({
   const revealReady =
     pageReady &&
     (!childrenMode ||
-      childrenFixedHeight ||
+      childrenFixedSize ||
       Boolean(
         layout?.tiles.every((tile) => tile.item.contentSize && Math.abs(tile.item.contentSize.width - tile.w) <= 1),
       ))
@@ -497,7 +501,7 @@ export const Masonry = ({
   }, [])
 
   useIsoLayoutEffect(() => {
-    if (!childrenMode || childrenFixedHeight || !layout) return
+    if (!childrenMode || childrenFixedSize || !layout) return
     const measure = () => {
       const next: Record<string, { width: number; height: number }> = {}
       nodes.current.forEach((node, id) => {
@@ -578,9 +582,10 @@ export const Masonry = ({
       const eased = 1 - Math.pow(1 - Math.max(0, spring.reveal), 3)
       node.style.opacity = String(eased)
       node.style.filter = spring.blur ? `blur(${((1 - eased) * 12).toFixed(2)}px)` : ""
-    } else if (node.style.opacity !== "") {
+    } else if (node.style.opacity !== "" || node.style.filter !== "") {
       node.style.opacity = ""
       node.style.filter = ""
+      node.style.willChange = ""
     }
   }
 
@@ -599,6 +604,17 @@ export const Masonry = ({
       if (!spring.shown) return
       if (spring.dragging) {
         paint(id, spring)
+        return
+      }
+      if (
+        spring.reveal >= 1 &&
+        spring.x === spring.tx &&
+        spring.y === spring.ty &&
+        spring.s === 1 &&
+        spring.vx === 0 &&
+        spring.vy === 0 &&
+        spring.vs === 0
+      ) {
         return
       }
       if (now < spring.start) {
@@ -687,6 +703,8 @@ export const Masonry = ({
         return
       }
       entering.current.add(id)
+      const node = nodes.current.get(id)
+      if (node) node.style.willChange = spring.blur ? "transform, opacity, filter" : "transform, opacity"
       const direction =
         s.animateFrom === "random" ? DIRECTIONS[Math.floor(Math.random() * DIRECTIONS.length)] : s.animateFrom
       const distance = 60 + Math.min(spring.h, 280) * 0.35
@@ -763,11 +781,12 @@ export const Masonry = ({
     if (!layout) return
     const root = rootRef.current
     const instant = reduced()
+    let needsFrame = false
     layout.tiles.forEach((tile) => {
       const node = nodes.current.get(tile.id)
       const contentReady =
         !childrenMode ||
-        childrenFixedHeight ||
+        childrenFixedSize ||
         Boolean(tile.item.contentSize && Math.abs(tile.item.contentSize.width - tile.w) <= 1)
       let spring = springs.current.get(tile.id)
       if (!spring) {
@@ -829,13 +848,21 @@ export const Masonry = ({
         spring.blur = false
         spring.vx = spring.vy = spring.vs = 0
         paint(tile.id, spring)
+      } else if (
+        spring.dragging ||
+        spring.reveal < 1 ||
+        Math.abs(spring.x - spring.tx) >= 0.05 ||
+        Math.abs(spring.y - spring.ty) >= 0.05 ||
+        Math.abs(spring.s - 1) >= 0.0005
+      ) {
+        needsFrame = true
       }
       previousRef.current.set(tile.id, { item: tile.item, w: tile.w, h: tile.h })
     })
     if (root) root.style.height = `${layout.height}px`
     if (instant || !animateCards) visibilityChecked.current = true
     reportEntryAnimation()
-    kick()
+    if (needsFrame) kick()
   })
 
   useEffect(() => {
