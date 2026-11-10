@@ -45,7 +45,12 @@ export function DashboardLoading() {
           <ModuleSkeleton label="正在加载下载任务" />
         </div>
       </div>
-      <div className="dashboard-panel dashboard-recent-shows" role="status" aria-label="正在加载最近添加的番剧" aria-busy="true">
+      <div
+        className="dashboard-panel dashboard-recent-shows"
+        role="status"
+        aria-label="正在加载最近添加的番剧"
+        aria-busy="true"
+      >
         <div className="dashboard-panel-heading" aria-hidden="true">
           <div className="grid gap-2">
             <Skeleton className="h-5 w-24" />
