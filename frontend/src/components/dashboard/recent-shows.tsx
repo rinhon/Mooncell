@@ -21,7 +21,7 @@ export function RecentShows({ query }: { query: ModuleQuery<Show[]> }) {
     .sort((a, b) => b.created_at.localeCompare(a.created_at) || b.id - a.id)
     .slice(0, 5)
   return (
-    <section className="dashboard-recent-shows" aria-labelledby="dashboard-shows-title">
+    <section className="dashboard-panel dashboard-recent-shows" aria-labelledby="dashboard-shows-title">
       <header className="dashboard-panel-heading">
         <div>
           <h2 id="dashboard-shows-title">最近添加</h2>

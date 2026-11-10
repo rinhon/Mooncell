@@ -297,6 +297,12 @@
   min-width: 0;
   max-width: 1064px;
 }
+/* 骨架屏复用海报栅格的断点变量，列宽、间距与正式 Masonry 一致。 */
+.dashboard-poster-skeleton-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(var(--poster-grid-min-width), 1fr));
+  gap: var(--poster-grid-gap);
+}
 .dashboard-poster-link {
   display: flex;
   min-width: 0;

@@ -45,6 +45,24 @@ export function DashboardLoading() {
           <ModuleSkeleton label="正在加载下载任务" />
         </div>
       </div>
+      <div className="dashboard-panel dashboard-recent-shows" role="status" aria-label="正在加载最近添加的番剧" aria-busy="true">
+        <div className="dashboard-panel-heading" aria-hidden="true">
+          <div className="grid gap-2">
+            <Skeleton className="h-5 w-24" />
+            <Skeleton className="h-3 w-32" />
+          </div>
+          <Skeleton className="h-4 w-14 self-start" />
+        </div>
+        <div className="dashboard-poster-grid dashboard-poster-skeleton-grid" aria-hidden="true">
+          {[0, 1, 2, 3, 4].map((index) => (
+            <div key={index} className="dashboard-poster-link">
+              <Skeleton className="dashboard-poster-image w-full" />
+              <Skeleton className="mt-1 h-5 w-4/5" />
+              <Skeleton className="h-4 w-3/5" />
+            </div>
+          ))}
+        </div>
+      </div>
     </MagicBento>
   )
 }
