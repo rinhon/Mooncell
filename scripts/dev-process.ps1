@@ -1,4 +1,103 @@
 # Isolate Windows console control events while forwarding service logs.
+function Get-DevInstanceRoots {
+    param(
+        [Parameter(Mandatory)][string]$ProjectRoot,
+        [Parameter(Mandatory)][AllowEmptyCollection()][object[]]$Processes,
+        [int]$CurrentProcessId = $PID
+    )
+
+    $ById = @{}
+    foreach ($Item in $Processes) { $ById[[int]$Item.ProcessId] = $Item }
+    # Never terminate this invocation or the terminal/agent that launched it.
+    $ProtectedIds = @{}
+    $AncestorId = $CurrentProcessId
+    while ($AncestorId -gt 0 -and -not $ProtectedIds.ContainsKey($AncestorId)) {
+        $ProtectedIds[$AncestorId] = $true
+        if (-not $ById.ContainsKey($AncestorId)) { break }
+        $AncestorId = [int]$ById[$AncestorId].ParentProcessId
+    }
+
+    $Root = [System.IO.Path]::GetFullPath($ProjectRoot).TrimEnd('\', '/')
+    $ScriptPatterns = @{}
+    foreach ($RelativePath in @('scripts\dev.ps1', 'scripts\dev_launch.py',
+                                'scripts\dev_backend.py', 'frontend\node_modules\vite\bin\vite.js')) {
+        # Require a whole argument, not a substring or a path from another clone.
+        $PathPattern = [regex]::Escape((Join-Path $Root $RelativePath)).Replace('\\', '[\\/]')
+        $ScriptPatterns[$RelativePath] = '(?:"' + $PathPattern + '"|' + $PathPattern + ')(?=\s|$)'
+    }
+    $Executable = '^\s*(?:"[^"]+"|\S+)\s+'
+    $MatchesById = @{}
+    foreach ($Item in $Processes) {
+        $ProcessId = [int]$Item.ProcessId
+        if ($ProtectedIds.ContainsKey($ProcessId) -or -not $Item.CommandLine) { continue }
+        $CommandLine = [string]$Item.CommandLine
+        $IsInstance = switch -Regex ([string]$Item.Name) {
+            '^(powershell|pwsh)\.exe$' {
+                # Only a script-mode host is ours; never match text inside -Command.
+                $CommandLine -match ($Executable + '(?:(?:-NoProfile|-NoLogo|-NonInteractive)\s+)*-File\s+' + $ScriptPatterns['scripts\dev.ps1'])
+                break
+            }
+            '^python(?:w|[0-9.]+)?\.exe$' {
+                $CommandLine -match ($Executable + '(?:' + $ScriptPatterns['scripts\dev_launch.py'] + '|' + $ScriptPatterns['scripts\dev_backend.py'] + ')')
+                break
+            }
+            '^node\.exe$' {
+                $CommandLine -match ($Executable + $ScriptPatterns['frontend\node_modules\vite\bin\vite.js'])
+                break
+            }
+            default { $false }
+        }
+        if ($IsInstance) { $MatchesById[$ProcessId] = $Item }
+    }
+    foreach ($Item in $MatchesById.Values) {
+        $AncestorId = [int]$Item.ParentProcessId
+        $Seen = @{}
+        while ($ById.ContainsKey($AncestorId) -and -not $Seen.ContainsKey($AncestorId)) {
+            if ($MatchesById.ContainsKey($AncestorId)) { break }
+            $Seen[$AncestorId] = $true
+            $AncestorId = [int]$ById[$AncestorId].ParentProcessId
+        }
+        if (-not $MatchesById.ContainsKey($AncestorId)) { $Item }
+    }
+}
+
+function Stop-ExistingDevInstances {
+    param([Parameter(Mandatory)][string]$ProjectRoot)
+
+    # Fail closed if process inspection is unavailable: do not silently start duplicates.
+    $Processes = @(Get-CimInstance Win32_Process -ErrorAction Stop)
+    $Roots = @(Get-DevInstanceRoots -ProjectRoot $ProjectRoot -Processes $Processes)
+    foreach ($Root in $Roots) {
+        $Live = Get-CimInstance Win32_Process -Filter "ProcessId = $($Root.ProcessId)" -ErrorAction Stop
+        if ($null -eq $Live -or $Live.CreationDate -ne $Root.CreationDate) { continue }
+        $TreeIds = @{ ([int]$Root.ProcessId) = $true }
+        do {
+            $Added = $false
+            foreach ($Item in $Processes) {
+                if ($TreeIds.ContainsKey([int]$Item.ParentProcessId) -and -not $TreeIds.ContainsKey([int]$Item.ProcessId)) {
+                    $TreeIds[[int]$Item.ProcessId] = $true
+                    $Added = $true
+                }
+            }
+        } while ($Added)
+        if ($TreeIds.ContainsKey($PID)) { throw "Refusing to stop the current launcher process tree." }
+
+        Write-Host "Stopping previous Mooncell instance: $($Root.Name) (PID $($Root.ProcessId))" -ForegroundColor Yellow
+        $KillOutput = & "$env:SystemRoot\System32\taskkill.exe" /PID $Root.ProcessId /T /F 2>&1
+        $KillExitCode = $LASTEXITCODE
+        # Verify identities as well as PIDs, which Windows can reuse after exit.
+        $Remaining = @(Get-CimInstance Win32_Process -ErrorAction Stop | Where-Object {
+            $Candidate = $_
+            $TreeIds.ContainsKey([int]$Candidate.ProcessId) -and @($Processes | Where-Object {
+                $_.ProcessId -eq $Candidate.ProcessId -and $_.CreationDate -eq $Candidate.CreationDate
+            }).Count -gt 0
+        })
+        if ($Remaining.Count -gt 0) {
+            throw "Could not stop previous Mooncell instance (taskkill exit $KillExitCode; remaining PIDs: $($Remaining.ProcessId -join ', ')). $KillOutput"
+        }
+    }
+}
+
 function Stop-ProcessTree {
     param([Parameter(Mandatory)][System.Diagnostics.Process]$Process)
 

@@ -85,6 +85,10 @@ if (-not (Test-Path -LiteralPath $VitePath -PathType Leaf)) {
     throw "Frontend dependencies are missing. Run: pnpm --dir frontend install"
 }
 
+# Clean up the previous launcher and its service trees before choosing ports.
+# Child helpers must not repeat this step or they would stop their own siblings.
+Stop-ExistingDevInstances -ProjectRoot $ProjectRoot
+
 $SelectedBackendPort = Find-AvailableTcpPort -PreferredPort $BackendPort -FallbackStartPort 8100
 $SelectedFrontendPort = Find-AvailableTcpPort -PreferredPort $FrontendPort -FallbackStartPort 5506
 
